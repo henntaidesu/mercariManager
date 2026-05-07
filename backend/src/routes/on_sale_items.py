@@ -283,6 +283,21 @@ def list_on_sale_by_item_id(item_id: str):
     return {"item_id": iid, "total": len(items), "items": items}
 
 
+@router.get("/by-item-ids")
+def list_on_sale_by_item_ids(item_ids: str):
+    """
+    按多个煤炉商品 ID 查询本地 on_sale_items（用于库存页展开批量展示）。
+    item_ids 支持逗号/空白分隔。
+    """
+    ids = _split_mercari_item_ids(item_ids)
+    if not ids:
+        raise HTTPException(status_code=400, detail="item_ids 不能为空")
+    items = OnSaleItemModel.find_all_by_item_ids(ids)
+    _attach_seller_name(items)
+    _attach_inventory_by_item_id(items)
+    return {"item_ids": ids, "total": len(items), "items": items}
+
+
 @router.post("/sync")
 def sync_on_sale(data: SyncOnSaleRequest):
     """

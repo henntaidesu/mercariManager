@@ -82,19 +82,29 @@
         row-key="id"
         :size="isMobile ? 'small' : 'default'"
         @sort-change="onInventorySortChange"
+        @expand-change="onInventoryExpandChange"
       >
         <el-table-column type="expand" width="44">
           <template #default="{ row }">
-            <div class="inventory-expand-wrap">
+            <div class="inventory-expand-wrap" v-loading="getInventoryExpandSlot(row.id)?.loading">
               <el-table
                 v-if="mercariItemIds(row).length"
-                :data="mercariItemIds(row).map((mid, i) => ({ no: i + 1, mid }))"
+                :data="getInventoryExpandRows(row)"
                 size="small"
                 border
                 class="inventory-expand-inner-table"
+                empty-text="暂无在售商品数据"
               >
-                <el-table-column label="序号" prop="no" width="60" align="center" />
-                <el-table-column label="煤炉商品ID" prop="mid" min-width="180" align="left" />
+                <el-table-column label="商品ID" prop="item_id" min-width="130" align="center" />
+                <el-table-column label="标题" prop="name" min-width="220" align="left" show-overflow-tooltip />
+                <el-table-column label="卖家" prop="seller_name" min-width="120" align="center" show-overflow-tooltip />
+                <el-table-column label="价格¥" width="90" align="center">
+                  <template #default="{ row: r }">{{ Number(r.price || 0) }}</template>
+                </el-table-column>
+                <el-table-column label="状态" prop="status" width="110" align="center" />
+                <el-table-column label="更新" width="150" align="center">
+                  <template #default="{ row: r }">{{ formatUnixTs(r.updated) }}</template>
+                </el-table-column>
               </el-table>
               <el-empty v-else description="暂无煤炉商品ID" :image-size="48" />
             </div>
@@ -728,7 +738,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { inventoryApi, categoryApi, warehouseApi, authApi, scanApi, ocrApi, transactionApi, productTypeCategoryMappingApi } from '@/api/index.js'
+import { inventoryApi, categoryApi, warehouseApi, authApi, scanApi, ocrApi, transactionApi, productTypeCategoryMappingApi, onSaleItemApi } from '@/api/index.js'
 import { warehouseShelfLabel } from '@/utils/warehouseLabel.js'
 import ListingFormDialog from '@/components/ListingFormDialog.vue'
 
@@ -766,6 +776,7 @@ const listingDialogVisible = ref(false)
 const listingSeedData = ref(null)
 const listingCategoryMappings = ref([])
 const productTypeCascaderPath = ref([])
+const inventoryExpandById = ref({})
 const scanVisible = ref(false)
 const scanning = ref(false)
 const videoRef = ref()
@@ -1542,6 +1553,61 @@ function mercariItemIds(row) {
   return out
 }
 
+function getInventoryExpandSlot(inventoryId) {
+  return inventoryExpandById.value[inventoryId] || null
+}
+
+function getInventoryExpandRows(row) {
+  const slot = getInventoryExpandSlot(row?.id)
+  if (!slot || !Array.isArray(slot.rows)) return []
+  return slot.rows
+}
+
+function formatUnixTs(sec) {
+  const n = Number(sec)
+  if (!Number.isFinite(n) || n <= 0) return '-'
+  const ms = n > 1e12 ? n : n * 1000
+  const d = new Date(ms)
+  if (Number.isNaN(d.getTime())) return '-'
+  const p2 = (x) => String(x).padStart(2, '0')
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
+}
+
+async function ensureInventoryExpandLoaded(row) {
+  const id = row?.id
+  if (!id) return
+  if (!inventoryExpandById.value[id]) {
+    inventoryExpandById.value[id] = { loading: false, loaded: false, rows: [] }
+  }
+  const slot = inventoryExpandById.value[id]
+  if (slot.loading || slot.loaded) return
+  const itemIds = mercariItemIds(row)
+  if (!itemIds.length) {
+    slot.rows = []
+    slot.loaded = true
+    return
+  }
+  slot.loading = true
+  try {
+    const res = await onSaleItemApi.listByItemIds({ item_ids: itemIds.join(',') })
+    const rows = Array.isArray(res?.items) ? res.items : []
+    const byId = new Map(rows.map((r) => [String(r.item_id || '').trim(), r]))
+    slot.rows = itemIds.map((iid) => byId.get(String(iid).trim())).filter(Boolean)
+    slot.loaded = true
+  } catch {
+    slot.rows = []
+    slot.loaded = true
+  } finally {
+    slot.loading = false
+  }
+}
+
+function onInventoryExpandChange(row, expandedRows) {
+  const opened = Array.isArray(expandedRows) && expandedRows.some((r) => r?.id === row?.id)
+  if (!opened) return
+  ensureInventoryExpandLoaded(row)
+}
+
 const pagedList = computed(() => {
   const start = (currentPage.value - 1) * pageSize
   return sortedInventoryList.value.slice(start, start + pageSize)
@@ -2286,7 +2352,7 @@ onBeforeUnmount(() => {
   min-height: 48px;
 }
 .inventory-expand-inner-table {
-  max-width: 480px;
+  width: 100%;
 }
 
 /* ---- 编辑弹窗：煤炉商品ID 列表编辑器 ---- */

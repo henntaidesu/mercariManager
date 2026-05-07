@@ -284,6 +284,25 @@ class OnSaleItemModel(BaseModel):
         return [dict(zip(keys, row)) for row in rows]
 
     @classmethod
+    def find_all_by_item_ids(cls, item_ids: List[str]) -> List[Dict[str, Any]]:
+        """按多个煤炉商品 ID 批量查询在售缓存表。"""
+        cleaned = [str(i or "").strip() for i in item_ids if str(i or "").strip()]
+        if not cleaned:
+            return []
+        uniq = list(dict.fromkeys(cleaned))
+        db = cls().db
+        keys = list(_ON_SALE_ITEM_LIST_KEYS)
+        placeholders = ",".join(["?"] * len(uniq))
+        sel = f"""
+            SELECT {', '.join(f't.[{k}]' for k in keys)}
+            FROM [on_sale_items] t
+            WHERE TRIM(t.[item_id]) IN ({placeholders})
+            ORDER BY COALESCE(t.[updated], t.[created], 0) DESC, t.[id] DESC
+        """
+        rows = db.execute_query(sel, tuple(uniq))
+        return [dict(zip(keys, row)) for row in rows]
+
+    @classmethod
     def find_list(
         cls,
         keyword: Optional[str] = None,
