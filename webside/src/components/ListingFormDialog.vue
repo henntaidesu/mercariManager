@@ -36,15 +36,19 @@
       <el-form-item label="商品名">
         <el-input v-model="form.name" placeholder="请输入商品名" clearable />
       </el-form-item>
-      <el-form-item label="商品类别">
-        <el-select v-model="form.category_mapping_id" clearable placeholder="请选择商品类别" style="width: 100%">
-          <el-option
-            v-for="m in categoryMappings"
-            :key="m.mapping_id"
-            :label="`${m.product_type || '-'} / ${m.mapping_id}`"
-            :value="m.mapping_id"
-          />
-        </el-select>
+      <el-form-item label="商品类型">
+        <el-cascader
+          v-model="form.category_mapping_path"
+          :options="categoryTypeCascaderOptions"
+          :props="categoryTypeCascaderProps"
+          :show-all-levels="false"
+          clearable
+          filterable
+          placeholder="请选择商品类型（1/2/3级）"
+          style="width: 100%"
+          popper-class="product-type-cascader-popper"
+          @change="handleCategoryTypeChange"
+        />
       </el-form-item>
       <el-form-item label="商品状态">
         <el-select v-model="form.status" placeholder="请选择商品状态" style="width: 100%">
@@ -88,7 +92,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
@@ -102,6 +106,60 @@ const emit = defineEmits(['update:modelValue', 'saved'])
 
 const fileInputRef = ref()
 const form = ref(getDefaultForm())
+const categoryTypeCascaderProps = {
+  value: 'value',
+  label: 'label',
+  children: 'children',
+  emitPath: true,
+  checkStrictly: false,
+}
+
+function ensureNode(children, value, label) {
+  let node = children.find((item) => item.value === value)
+  if (!node) {
+    node = { value, label, children: [] }
+    children.push(node)
+  }
+  return node
+}
+
+const categoryTypeTreeMeta = computed(() => {
+  const roots = []
+  const idToPath = new Map()
+  for (const m of (props.categoryMappings || [])) {
+    const mappingId = String(m?.mapping_id ?? '').trim()
+    const typeName = String(m?.product_type ?? '').trim()
+    if (!mappingId || !typeName) continue
+    const l1 = String(m?.category_level1 ?? '').trim() || '未分类'
+    const l2 = String(m?.category_level2 ?? '').trim()
+    const l3 = String(m?.category_level3 ?? '').trim()
+    const l1Val = `L1:${l1}`
+    const l1Node = ensureNode(roots, l1Val, l1)
+    const l1Path = [l1Val]
+
+    if (!l2) {
+      l1Node.children.push({ value: `PT:${mappingId}`, label: typeName, children: [] })
+      idToPath.set(mappingId, [...l1Path, `PT:${mappingId}`])
+      continue
+    }
+    const l2Val = `L2:${l1}__${l2}`
+    const l2Node = ensureNode(l1Node.children, l2Val, l2)
+    const l2Path = [...l1Path, l2Val]
+    if (!l3) {
+      l2Node.children.push({ value: `PT:${mappingId}`, label: typeName, children: [] })
+      idToPath.set(mappingId, [...l2Path, `PT:${mappingId}`])
+      continue
+    }
+    const l3Val = `L3:${l1}__${l2}__${l3}`
+    const l3Node = ensureNode(l2Node.children, l3Val, l3)
+    const l3Path = [...l2Path, l3Val]
+    l3Node.children.push({ value: `PT:${mappingId}`, label: typeName, children: [] })
+    idToPath.set(mappingId, [...l3Path, `PT:${mappingId}`])
+  }
+  return { roots, idToPath }
+})
+
+const categoryTypeCascaderOptions = computed(() => categoryTypeTreeMeta.value.roots)
 
 const listingStatusOptions = [
   { label: '新品、未使用', value: 'new_unused' },
@@ -135,11 +193,16 @@ watch(
   (visible) => {
     if (!visible) return
     const seed = props.initialData || {}
+    const seedMappingId = seed.category_mapping_id != null ? String(seed.category_mapping_id) : null
+    const seedPath = seedMappingId
+      ? (categoryTypeTreeMeta.value.idToPath.get(seedMappingId) || [])
+      : []
     form.value = {
       ...getDefaultForm(),
       image: seed.image || '',
       name: seed.name || '',
-      category_mapping_id: seed.category_mapping_id ?? null,
+      category_mapping_id: seedMappingId,
+      category_mapping_path: seedPath,
       description: seed.description || ''
     }
   }
@@ -150,6 +213,7 @@ function getDefaultForm() {
     image: '',
     name: '',
     category_mapping_id: null,
+    category_mapping_path: [],
     status: 'new_unused',
     description: '',
     shipping_payer: 'seller',
@@ -158,6 +222,15 @@ function getDefaultForm() {
     shipping_days: '2_3_days',
     sale_type: 'instant_buy'
   }
+}
+
+function handleCategoryTypeChange(path) {
+  const picked = Array.isArray(path) ? path[path.length - 1] : null
+  if (!picked || !String(picked).startsWith('PT:')) {
+    form.value.category_mapping_id = null
+    return
+  }
+  form.value.category_mapping_id = String(picked).slice(3)
 }
 
 function onVisibleChange(v) {

@@ -9,7 +9,6 @@ from .database import DatabaseManager
 from .models import (
     CategoryModel,
     WarehouseModel,
-    ProductTypeModel,
     ProductModel,
     TransactionModel,
     UserModel,
@@ -106,40 +105,6 @@ class DBManager:
         print("[OK] warehouses 组合唯一迁移完成")
         return True
 
-    def _migrate_product_types_to_game_types(self) -> bool:
-        """
-        历史表 product_types 迁移到 game_types。
-        采用 rename，保留历史 id，避免 inventory.product_type_id 失联。
-        """
-        db = self.db
-        has_old = db.table_exists("product_types")
-        has_new = db.table_exists("game_types")
-        if not has_old:
-            return True
-        if has_new:
-            # 已存在新表时，尽量并入旧数据（按 id 去重）
-            try:
-                db.execute_update(
-                    """
-                    INSERT OR IGNORE INTO [game_types] ([id], [name], [description], [created_at])
-                    SELECT [id], [name], [description], [created_at]
-                    FROM [product_types]
-                    """
-                )
-                db.drop_table("product_types")
-                print("[OK] product_types 已并入 game_types")
-                return True
-            except Exception as e:
-                print(f"[错误] product_types 并入 game_types 失败: {e}")
-                return False
-        try:
-            db.execute_update("ALTER TABLE [product_types] RENAME TO [game_types]")
-            print("[OK] product_types 已迁移为 game_types")
-            return True
-        except Exception as e:
-            print(f"[错误] product_types -> game_types 迁移失败: {e}")
-            return False
-
     def _migrate_ptcm_to_independent_module(self) -> bool:
         """
         将 product_type_category_mappings 从 product_type_id 迁移到纯文本 product_type。
@@ -155,17 +120,23 @@ class DBManager:
             return True
         try:
             db.execute_update("ALTER TABLE [product_type_category_mappings] ADD COLUMN [product_type] TEXT")
-            db.execute_update(
-                """
-                UPDATE [product_type_category_mappings]
-                SET [product_type] = (
-                    SELECT gt.[name]
-                    FROM [game_types] gt
-                    WHERE gt.[id] = [product_type_category_mappings].[product_type_id]
+            source_table = None
+            if db.table_exists("game_types"):
+                source_table = "game_types"
+            elif db.table_exists("product_types"):
+                source_table = "product_types"
+            if source_table:
+                db.execute_update(
+                    f"""
+                    UPDATE [product_type_category_mappings]
+                    SET [product_type] = (
+                        SELECT t.[name]
+                        FROM [{source_table}] t
+                        WHERE t.[id] = [product_type_category_mappings].[product_type_id]
+                    )
+                    WHERE [product_type] IS NULL
+                    """
                 )
-                WHERE [product_type] IS NULL
-                """
-            )
             db.execute_update(
                 """
                 UPDATE [product_type_category_mappings]
@@ -269,7 +240,6 @@ class DBManager:
             UserModel,        # 无外键依赖（登录依赖）
             CategoryModel,    # 无外键依赖
             WarehouseModel,   # 无外键依赖
-            ProductTypeModel, # 无外键依赖
             ProductModel,     # 依赖 categories
             TransactionModel, # 依赖 inventory, warehouses
             CostRecordModel,  # 依赖 warehouses（可为空）
@@ -289,8 +259,6 @@ class DBManager:
         if self.db.table_exists("products") and not self.db.table_exists("inventory"):
             print("检测到旧表 products，正在迁移为 inventory ...")
             self.db.execute_update("ALTER TABLE [products] RENAME TO [inventory]")
-        if not self._migrate_product_types_to_game_types():
-            return False
         if not self._migrate_ptcm_to_independent_module():
             return False
         if not self._migrate_ptcm_category_field_to_mapping_id():

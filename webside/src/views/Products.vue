@@ -28,9 +28,18 @@
             <el-select v-model="filterWarehouse" class="search-select-control" placeholder="所有仓库" clearable @change="load">
               <el-option v-for="w in warehouses" :key="w.id" :label="warehouseShelfLabel(w)" :value="w.id" />
             </el-select>
-            <el-select v-model="filterProductType" class="search-select-control" placeholder="商品类型" clearable @change="load">
-              <el-option v-for="t in mappedProductTypes" :key="t.id" :label="t.name" :value="t.id" />
-            </el-select>
+            <el-cascader
+              v-model="filterProductTypePath"
+              :options="productTypeCascaderOptions"
+              :props="productTypeCascaderProps"
+              :show-all-levels="false"
+              class="search-select-control"
+              placeholder="商品类型"
+              popper-class="product-type-cascader-popper"
+              clearable
+              filterable
+              @change="handleFilterProductTypeChange"
+            />
             <el-select v-model="filterOwnerUserId" class="search-select-control" placeholder="所有商品归属" clearable @change="load">
               <el-option v-for="u in ownerUsers" :key="u.id" :label="u.display_name || u.username" :value="u.id" />
             </el-select>
@@ -167,20 +176,21 @@
         </el-table-column>
         <el-table-column label="商品类型" width="120" align="center" header-align="center">
           <template #default="{ row }">
-            <el-select
+            <el-cascader
               v-if="editingProductTypeRowId === row.id"
-              :model-value="row.product_type_id"
-              :ref="(el) => setInlineSelectRef('productType', row.id, el)"
+              :model-value="getInlineProductTypePath(row)"
+              :options="productTypeCascaderOptions"
+              :props="productTypeCascaderProps"
+              :show-all-levels="false"
               size="small"
               class="inventory-inline-select"
               placeholder="选择类型"
-              popper-class="inventory-inline-select-popper"
+              popper-class="product-type-cascader-popper"
+              filterable
+              clearable
               @change="saveProductTypeInline(row, $event)"
               @visible-change="(v) => { if (!v) editingProductTypeRowId = null }"
-            >
-              <el-option label="" :value="null" />
-              <el-option v-for="t in productTypes" :key="t.id" :label="t.name" :value="t.id" />
-            </el-select>
+            />
             <div v-else class="editable-cell" @click="openProductTypeInline(row)">{{ displayProductTypeName(row) }}</div>
           </template>
         </el-table-column>
@@ -189,7 +199,7 @@
             <el-select
               v-if="editingOwnerRowId === row.id"
               :model-value="row.owner_user_id"
-              :ref="(el) => setInlineSelectRef('owner', row.id, el)"
+              :ref="(el) => setInlineOwnerSelectRef(row.id, el)"
               size="small"
               class="inventory-inline-select"
               placeholder="选择归属"
@@ -316,31 +326,18 @@
           </div>
         </el-form-item>
         <el-form-item label="商品类型" prop="product_type_id">
-          <div class="product-field-inline">
-            <template v-if="!productTypeCreateMode">
-              <el-select
-                v-model="form.product_type_id"
-                clearable
-                :filterable="!isIOS"
-                placeholder="请选择商品类型"
-                class="product-field-inline__main"
-              >
-                <el-option v-for="t in productTypes" :key="t.id" :label="t.name" :value="t.id" />
-              </el-select>
-              <el-button type="primary" plain @click="startCreateProductType">新建类型</el-button>
-            </template>
-            <template v-else>
-              <el-input
-                v-model="newProductTypeName"
-                placeholder="输入新商品类型名称"
-                clearable
-                class="product-field-inline__main"
-                @keyup.enter="confirmCreateProductType"
-              />
-              <el-button type="primary" @click="confirmCreateProductType">确认</el-button>
-              <el-button @click="cancelCreateProductType">取消</el-button>
-            </template>
-          </div>
+          <el-cascader
+            v-model="productTypeCascaderPath"
+            :options="productTypeCascaderOptions"
+            :props="productTypeCascaderProps"
+            :show-all-levels="false"
+            clearable
+            filterable
+            placeholder="请选择商品类型（按1/2/3级分类）"
+            class="product-field-inline__main"
+            popper-class="product-type-cascader-popper"
+            @change="handleProductTypeCascaderChange"
+          />
         </el-form-item>
         <el-form-item label="商品归属" prop="owner_user_id">
           <el-select
@@ -731,7 +728,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { inventoryApi, categoryApi, warehouseApi, productTypeApi, authApi, scanApi, ocrApi, transactionApi, productTypeCategoryMappingApi } from '@/api/index.js'
+import { inventoryApi, categoryApi, warehouseApi, authApi, scanApi, ocrApi, transactionApi, productTypeCategoryMappingApi } from '@/api/index.js'
 import { warehouseShelfLabel } from '@/utils/warehouseLabel.js'
 import ListingFormDialog from '@/components/ListingFormDialog.vue'
 
@@ -756,6 +753,7 @@ const keyword = ref('')
 const filterCat = ref(null)
 const filterWarehouse = ref(null)
 const filterProductType = ref(null)
+const filterProductTypePath = ref([])
 const filterOwnerUserId = ref(null)
 const currentPage = ref(1)
 const pageSize = 15
@@ -767,24 +765,7 @@ const fileInputBack = ref()
 const listingDialogVisible = ref(false)
 const listingSeedData = ref(null)
 const listingCategoryMappings = ref([])
-const mappedProductTypes = computed(() => {
-  const typeByName = new Map(
-    (productTypes.value || []).map((t) => [String(t?.name || '').trim(), t]).filter(([name]) => !!name)
-  )
-  const seen = new Set()
-  const out = []
-  for (const m of (listingCategoryMappings.value || [])) {
-    const mappedName = String(m?.product_type || '').trim()
-    if (!mappedName) continue
-    const matched = typeByName.get(mappedName)
-    if (!matched || seen.has(matched.id)) continue
-    seen.add(matched.id)
-    out.push(matched)
-  }
-  // 映射表为空或名称未对齐时，回退到完整商品类型，避免筛选下拉无数据
-  return out.length ? out : (productTypes.value || [])
-})
-
+const productTypeCascaderPath = ref([])
 const scanVisible = ref(false)
 const scanning = ref(false)
 const videoRef = ref()
@@ -797,15 +778,12 @@ const savingInlineCell = ref('')
 const editingCategoryRowId = ref(null)
 const editingProductTypeRowId = ref(null)
 const editingOwnerRowId = ref(null)
-const inlineProductTypeSelectMap = new Map()
 const inlineOwnerSelectMap = new Map()
 const newCategoryName = ref('')
 const newWarehouseName = ref('')
-const newProductTypeName = ref('')
 /** 编辑弹窗：新建分类 / 仓库时，下拉与输入框同位切换 */
 const categoryCreateMode = ref(false)
 const warehouseCreateMode = ref(false)
-const productTypeCreateMode = ref(false)
 /** 编辑弹窗库存数量：纯文本输入，blur / 保存时写回 form.quantity */
 const quantityEdit = ref('0')
 
@@ -937,6 +915,14 @@ const rules = {
     },
   ],
   image_front: [{ validator: (_, val, cb) => val ? cb() : cb(new Error('请拍摄或上传正面图')), trigger: 'change' }],
+}
+
+const productTypeCascaderProps = {
+  value: 'value',
+  label: 'label',
+  children: 'children',
+  emitPath: true,
+  checkStrictly: false,
 }
 
 function updateViewportState() {
@@ -1145,13 +1131,12 @@ function normalizeInlineValue(field, rawValue) {
   return value || null
 }
 
-function setInlineSelectRef(kind, rowId, el) {
-  const map = kind === 'productType' ? inlineProductTypeSelectMap : inlineOwnerSelectMap
+function setInlineOwnerSelectRef(rowId, el) {
   if (!el) {
-    map.delete(rowId)
+    inlineOwnerSelectMap.delete(rowId)
     return
   }
-  map.set(rowId, el)
+  inlineOwnerSelectMap.set(rowId, el)
 }
 
 function openSelectMenuByMap(map, rowId) {
@@ -1174,7 +1159,6 @@ function openSelectMenuByMap(map, rowId) {
 
 function openProductTypeInline(row) {
   editingProductTypeRowId.value = row.id
-  openSelectMenuByMap(inlineProductTypeSelectMap, row.id)
 }
 
 function openOwnerInline(row) {
@@ -1255,7 +1239,10 @@ async function saveCategoryInline(row, categoryId) {
 }
 
 async function saveProductTypeInline(row, productTypeId) {
-  const normalized = productTypeId || null
+  const picked = Array.isArray(productTypeId) ? productTypeId[productTypeId.length - 1] : null
+  const normalized = (picked && String(picked).startsWith('PT:'))
+    ? Number(String(picked).slice(3))
+    : null
   if ((row.product_type_id || null) === normalized) {
     editingProductTypeRowId.value = null
     return
@@ -1269,6 +1256,13 @@ async function saveProductTypeInline(row, productTypeId) {
   } finally {
     editingProductTypeRowId.value = null
   }
+}
+
+function getInlineProductTypePath(row) {
+  const typeId = Number(row?.product_type_id)
+  if (!Number.isFinite(typeId)) return []
+  const path = productTypeTreeMeta.value.idToPath.get(typeId)
+  return path ? [...path] : []
 }
 
 async function saveOwnerInline(row, ownerUserId) {
@@ -1298,28 +1292,101 @@ function cancelCreateCategory() {
   newCategoryName.value = ''
 }
 
-function startCreateProductType() {
-  productTypeCreateMode.value = true
-  newProductTypeName.value = ''
+function buildProductTypeOptionsFromMappings(mappings) {
+  const seen = new Set()
+  const out = []
+  for (const m of (mappings || [])) {
+    const idRaw = String(m?.mapping_id ?? '').trim()
+    const name = String(m?.product_type ?? '').trim()
+    if (!idRaw || !name) continue
+    const id = Number(idRaw)
+    if (!Number.isFinite(id) || seen.has(id)) continue
+    seen.add(id)
+    out.push({ id, name })
+  }
+  return out
 }
 
-function cancelCreateProductType() {
-  productTypeCreateMode.value = false
-  newProductTypeName.value = ''
+function ensureNode(children, value, label) {
+  let node = children.find((item) => item.value === value)
+  if (!node) {
+    node = { value, label, children: [] }
+    children.push(node)
+  }
+  return node
 }
 
-async function confirmCreateProductType() {
-  const name = newProductTypeName.value.trim()
-  if (!name) {
-    ElMessage.warning('请输入商品类型名称')
+const productTypeTreeMeta = computed(() => {
+  const roots = []
+  const idToPath = new Map()
+  for (const m of (listingCategoryMappings.value || [])) {
+    const idRaw = String(m?.mapping_id ?? '').trim()
+    const typeName = String(m?.product_type ?? '').trim()
+    if (!idRaw || !typeName) continue
+    const id = Number(idRaw)
+    if (!Number.isFinite(id)) continue
+    const l1 = String(m?.category_level1 ?? '').trim() || '未分类'
+    const l2 = String(m?.category_level2 ?? '').trim()
+    const l3 = String(m?.category_level3 ?? '').trim()
+
+    const l1Node = ensureNode(roots, `L1:${l1}`, l1)
+    const l1Path = [`L1:${l1}`]
+    if (!l2) {
+      l1Node.children.push({ value: `PT:${id}`, label: typeName, children: [] })
+      idToPath.set(id, [...l1Path, `PT:${id}`])
+      continue
+    }
+
+    const l2Val = `L2:${l1}__${l2}`
+    const l2Node = ensureNode(l1Node.children, l2Val, l2)
+    const l2Path = [...l1Path, l2Val]
+    if (!l3) {
+      l2Node.children.push({ value: `PT:${id}`, label: typeName, children: [] })
+      idToPath.set(id, [...l2Path, `PT:${id}`])
+      continue
+    }
+
+    const l3Val = `L3:${l1}__${l2}__${l3}`
+    const l3Node = ensureNode(l2Node.children, l3Val, l3)
+    const l3Path = [...l2Path, l3Val]
+    l3Node.children.push({ value: `PT:${id}`, label: typeName, children: [] })
+    idToPath.set(id, [...l3Path, `PT:${id}`])
+  }
+  return { roots, idToPath }
+})
+
+const productTypeCascaderOptions = computed(() => productTypeTreeMeta.value.roots)
+
+function syncCascaderPathByProductTypeId(typeId) {
+  const normalized = typeId == null ? null : Number(typeId)
+  if (!Number.isFinite(normalized)) {
+    productTypeCascaderPath.value = []
     return
   }
-  const created = await productTypeApi.create({ name })
-  productTypes.value = await productTypeApi.list()
-  form.value.product_type_id = created?.id ?? form.value.product_type_id
-  newProductTypeName.value = ''
-  productTypeCreateMode.value = false
-  ElMessage.success('商品类型创建成功')
+  const path = productTypeTreeMeta.value.idToPath.get(normalized)
+  productTypeCascaderPath.value = path ? [...path] : []
+}
+
+function handleProductTypeCascaderChange(path) {
+  const picked = Array.isArray(path) ? path[path.length - 1] : null
+  if (!picked || !String(picked).startsWith('PT:')) {
+    form.value.product_type_id = null
+    return
+  }
+  const id = Number(String(picked).slice(3))
+  form.value.product_type_id = Number.isFinite(id) ? id : null
+}
+
+function handleFilterProductTypeChange(path) {
+  const picked = Array.isArray(path) ? path[path.length - 1] : null
+  if (!picked || !String(picked).startsWith('PT:')) {
+    filterProductType.value = null
+    load()
+    return
+  }
+  const id = Number(String(picked).slice(3))
+  filterProductType.value = Number.isFinite(id) ? id : null
+  load()
 }
 
 async function confirmCreateCategory() {
@@ -1483,10 +1550,8 @@ const pagedList = computed(() => {
 function openDialog(row = null) {
   categoryCreateMode.value = false
   warehouseCreateMode.value = false
-  productTypeCreateMode.value = false
   newCategoryName.value = ''
   newWarehouseName.value = ''
-  newProductTypeName.value = ''
   form.value = row
     ? {
         id: row.id,
@@ -1528,6 +1593,7 @@ function openDialog(row = null) {
       }
   syncQuantityEditFromForm()
   syncMercariIdListFromForm()
+  syncCascaderPathByProductTypeId(form.value.product_type_id)
   dialogVisible.value = true
 }
 
@@ -1535,10 +1601,8 @@ watch(dialogVisible, (visible) => {
   if (!visible) {
     categoryCreateMode.value = false
     warehouseCreateMode.value = false
-    productTypeCreateMode.value = false
     newCategoryName.value = ''
     newWarehouseName.value = ''
-    newProductTypeName.value = ''
   }
 })
 
@@ -1558,7 +1622,9 @@ function listProductStub(row) {
     ? {
         image: source.image_front || source.image || '',
         name: source.name || '',
-        category_mapping_id: source.category_mapping_id ?? null,
+        category_mapping_id: source.product_type_id != null
+          ? String(source.product_type_id)
+          : (source.category_mapping_id != null ? String(source.category_mapping_id) : null),
         description: source.description || ''
       }
     : null
@@ -1956,6 +2022,7 @@ async function handleLookupBarcode(barcode) {
   keyword.value = barcode
   filterCat.value = null
   filterProductType.value = null
+  filterProductTypePath.value = []
   filterOwnerUserId.value = null
   await load()
   ElMessage.success(`已定位条形码：${barcode}`)
@@ -2013,6 +2080,7 @@ async function handleImageFindCapture(e) {
       keyword.value = res.product.barcode || res.product.name || ''
       filterCat.value = null
       filterProductType.value = null
+      filterProductTypePath.value = []
       filterOwnerUserId.value = null
       filterWarehouse.value = null
       await load()
@@ -2041,18 +2109,18 @@ onBeforeUnmount(stopLookupScan)
 onMounted(async () => {
   updateViewportState()
   window.addEventListener('resize', updateViewportState)
-  const [cats, whs, types, users, mappings] = await Promise.all([
+  const [cats, whs, users, mappings] = await Promise.all([
     categoryApi.list(),
     warehouseApi.list(),
-    productTypeApi.list(),
     authApi.listUsers(),
     productTypeCategoryMappingApi.list()
   ])
   categories.value = cats
   warehouses.value = whs
-  productTypes.value = types
+  productTypes.value = buildProductTypeOptionsFromMappings(mappings)
   ownerUsers.value = users
   listingCategoryMappings.value = mappings
+  syncCascaderPathByProductTypeId(form.value.product_type_id)
   await Promise.all([load(), loadInventoryStats()])
 })
 
@@ -2422,5 +2490,23 @@ onBeforeUnmount(() => {
 
 .inventory-inline-select-popper {
   min-width: 120px !important;
+}
+
+.product-type-cascader-popper .el-cascader-menu {
+  height: 300px !important;
+}
+
+.product-type-cascader-popper .el-cascader-menu__wrap {
+  height: 300px !important;
+  max-height: 300px !important;
+}
+
+.product-type-cascader-popper .el-scrollbar__wrap {
+  height: 300px !important;
+  max-height: 300px !important;
+}
+
+.product-type-cascader-popper .el-cascader-menu__list {
+  min-height: 300px !important;
 }
 </style>
