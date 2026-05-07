@@ -92,11 +92,24 @@
                     </template>
                   </el-table-column>
                   <el-table-column label="商品名称" prop="product_name" min-width="140" show-overflow-tooltip />
-                  <el-table-column label="条形码" prop="product_barcode" width="130" show-overflow-tooltip />
-                  <el-table-column label="SKU" prop="product_sku" width="100" show-overflow-tooltip />
-                  <el-table-column label="仓库位置" prop="warehouse_name" width="120" show-overflow-tooltip>
+                  <el-table-column label="商品归属" width="110" align="center" show-overflow-tooltip>
+                    <template #default="{ row: line }">
+                      {{ line.product_owner_name || '—' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="仓库" width="110" show-overflow-tooltip>
                     <template #default="{ row: line }">
                       {{ line.warehouse_name || '—' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="货架" width="110" show-overflow-tooltip>
+                    <template #default="{ row: line }">
+                      {{ line.shelf_name || '—' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="货架号" width="100" show-overflow-tooltip>
+                    <template #default="{ row: line }">
+                      {{ line.shelf_code || '—' }}
                     </template>
                   </el-table-column>
                   <el-table-column label="当前库存" width="96" align="center">
@@ -105,6 +118,49 @@
                     </template>
                   </el-table-column>
                   <el-table-column label="本单件数" prop="quantity" width="96" align="center" />
+                  <el-table-column label="待出库" width="88" align="center">
+                    <template #default="{ row: line }">
+                      <el-tag
+                        v-if="Number(outboundPendingQty(line)) > 0"
+                        type="warning"
+                        size="small"
+                      >
+                        {{ outboundPendingQty(line) }}
+                      </el-tag>
+                      <span v-else class="cell-dash">0</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="90" align="center">
+                    <template #default="{ row: line }">
+                      <el-tag
+                        :type="Number(line?.is_stocked_out || 0) === 1 ? 'success' : 'info'"
+                        size="small"
+                      >
+                        {{ Number(line?.is_stocked_out || 0) === 1 ? '已出库' : '待出库' }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="96" align="center">
+                    <template #default="{ row: line }">
+                      <el-popconfirm
+                        title="确认出库？"
+                        confirm-button-text="确认"
+                        cancel-button-text="取消"
+                        @confirm="stockOutLine(row, line)"
+                      >
+                        <template #reference>
+                          <el-button
+                            size="small"
+                            type="primary"
+                            :loading="lineStockingKey === outboundLineKey(row.order_no, line.id)"
+                            :disabled="!canStockOutLine(line)"
+                          >
+                            出库
+                          </el-button>
+                        </template>
+                      </el-popconfirm>
+                    </template>
+                  </el-table-column>
                 </el-table>
                 <el-empty
                   v-else
@@ -385,6 +441,8 @@ const isMobile = ref(false)
 const submitting = ref(false)
 /** 正在 Mercari 拉取详情的行 id */
 const refreshingId = ref(null)
+/** 二级列表：正在执行出库的明细键 order_no:line_id */
+const lineStockingKey = ref('')
 const stats = ref({
   total_count: 0,
   sum_amount: 0,
@@ -896,8 +954,25 @@ function clearOutboundExpandCache(orderNo) {
 /** 出库明细行：后端 line_kind 为 mgmt_id | barcode */
 function outboundLineKindLabel(line) {
   const k = line?.line_kind
+  if (k === 'bundle_title') return '组合标题'
   if (k === 'barcode') return '条码'
   return '管理ID'
+}
+
+function outboundLineKey(orderNo, lineId) {
+  return `${String(orderNo || '').trim()}:${Number(lineId || 0)}`
+}
+
+function outboundPendingQty(line) {
+  return Number(line?.is_stocked_out || 0) === 1 ? 0 : Math.max(0, Number(line?.quantity || 0))
+}
+
+function canStockOutLine(line) {
+  if (Number(line?.is_stocked_out || 0) === 1) return false
+  if (line?.inventory_id == null) return false
+  const stock = Number(line?.stock_quantity || 0)
+  const qty = Math.max(1, Number(line?.quantity || 1))
+  return stock >= qty
 }
 
 async function onOrderExpandChange(row, expandedRows) {
@@ -922,6 +997,38 @@ async function onOrderExpandChange(row, expandedRows) {
       ...expandState.value,
       [ono]: { loading: false, loaded: true, rows: [] },
     }
+  }
+}
+
+async function stockOutLine(orderRow, line) {
+  const orderNo = String(orderRow?.order_no || '').trim()
+  const lineId = Number(line?.id || 0)
+  if (!orderNo || !lineId) return
+  if (!canStockOutLine(line)) return
+  const k = outboundLineKey(orderNo, lineId)
+  lineStockingKey.value = k
+  try {
+    await orderApi.stockOutOutboundLine(lineId, {})
+    ElMessage.success('出库成功')
+    const cur = expandState.value[orderNo]
+    if (cur?.loaded) {
+      const nextRows = (cur.rows || []).map((r) => {
+        if (Number(r.id) !== lineId) return r
+        const newStock = Math.max(0, Number(r.stock_quantity || 0) - Math.max(1, Number(r.quantity || 1)))
+        return {
+          ...r,
+          is_stocked_out: 1,
+          stock_quantity: newStock,
+        }
+      })
+      expandState.value = {
+        ...expandState.value,
+        [orderNo]: { ...cur, rows: nextRows },
+      }
+    }
+    load()
+  } finally {
+    lineStockingKey.value = ''
   }
 }
 

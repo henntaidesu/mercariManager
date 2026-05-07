@@ -6,7 +6,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..base_model import BaseModel
-from .warehouse import WarehouseModel
 
 
 # 以下状态的订单不再占用待出库数量（与业务终态一致）
@@ -91,7 +90,6 @@ class OrderOutboundLineModel(BaseModel):
         if not ono:
             return []
         db = cls().db
-        wh_l = WarehouseModel.sql_display_label("w")
         sql = f"""
             SELECT
                 l.id,
@@ -107,10 +105,14 @@ class OrderOutboundLineModel(BaseModel):
                 p.barcode AS product_barcode,
                 p.sku AS product_sku,
                 p.quantity AS stock_quantity,
-                {wh_l} AS warehouse_name
+                COALESCE(u.display_name, u.username) AS product_owner_name,
+                COALESCE(NULLIF(TRIM(w.[warehouse]), ''), '默认仓库') AS warehouse_name,
+                NULLIF(TRIM(w.[shelf_name]), '') AS shelf_name,
+                NULLIF(TRIM(w.[name]), '') AS shelf_code
             FROM [{cls.get_table_name()}] l
             LEFT JOIN [inventory] p ON p.id = l.inventory_id
             LEFT JOIN [warehouses] w ON w.id = p.warehouse_id
+            LEFT JOIN [users] u ON u.id = p.owner_user_id
             WHERE l.order_no = ?
             ORDER BY l.sort_index ASC, l.id ASC
         """
@@ -129,6 +131,9 @@ class OrderOutboundLineModel(BaseModel):
             "product_barcode",
             "product_sku",
             "stock_quantity",
+            "product_owner_name",
             "warehouse_name",
+            "shelf_name",
+            "shelf_code",
         ]
         return [dict(zip(keys, r)) for r in rows]

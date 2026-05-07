@@ -9,6 +9,7 @@ SQLite：`order_date`、`order_updated_at`、`purchase_time` 均为 INTEGER，�
 
 from typing import Any, Dict, List, Optional, Tuple
 from ..base_model import BaseModel
+from .order_outbound_line import TERMINAL_ORDER_STATUSES
 
 
 class OrderModel(BaseModel):
@@ -290,23 +291,40 @@ class OrderModel(BaseModel):
         )
 
         total = db.execute_query(f"SELECT COUNT(*) {base_sql}", tuple(params))[0][0]
+        term_ph = ",".join("?" * len(TERMINAL_ORDER_STATUSES))
+        pending_sql = f"""
+            COALESCE((
+                SELECT SUM(COALESCE(l.[quantity], 1))
+                FROM [order_outbound_lines] l
+                WHERE l.[order_no] = o.[order_no]
+                  AND COALESCE(l.[is_stocked_out], 0) = 0
+            ), 0)
+        """
+        pending_case_sql = f"""
+            CASE
+                WHEN o.[status] IN ({term_ph}) THEN 0
+                ELSE ({pending_sql})
+            END
+        """
         select_sql = f"""
             SELECT o.id, o.order_no, o.order_date, o.order_updated_at, o.purchase_time, o.customer_name, o.data_user,
                    o.status, o.amount,
                    o.service_fee, o.net_income, o.carrier_display_name, o.request_class_display_name,
                    o.shipping_fee, o.tracking_no, o.transaction_evidence_id, o.remark, o.description,
-                   o.inventory_synced, o.inventory_synced_quantity, o.thumbnails
+                   o.inventory_synced, o.inventory_synced_quantity, o.thumbnails,
+                   {pending_case_sql} AS pending_outbound_qty
             {base_sql}
             ORDER BY COALESCE(o.purchase_time, o.order_updated_at, o.order_date) DESC, o.id DESC
             LIMIT ? OFFSET ?
         """
-        rows = db.execute_query(select_sql, tuple(params + [page_size, (page - 1) * page_size]))
+        bind = tuple(TERMINAL_ORDER_STATUSES) + tuple(params) + (page_size, (page - 1) * page_size)
+        rows = db.execute_query(select_sql, bind)
         keys = [
             'id', 'order_no', 'order_date', 'order_updated_at', 'purchase_time', 'customer_name', 'data_user', 'status',
             'amount',
             'service_fee', 'net_income', 'carrier_display_name', 'request_class_display_name',
             'shipping_fee', 'tracking_no', 'transaction_evidence_id', 'remark', 'description',
-            'inventory_synced', 'inventory_synced_quantity', 'thumbnails',
+            'inventory_synced', 'inventory_synced_quantity', 'thumbnails', 'pending_outbound_qty',
         ]
         return {
             'total': total,
