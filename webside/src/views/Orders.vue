@@ -195,46 +195,51 @@
                   </template>
                 </el-empty>
                 <div class="order-packaging-wrap" v-loading="packagingState[row.order_no]?.loading">
-                  <div class="order-packaging-head">
-                    <div class="order-packaging-title">
-                      包装材料
-                      <span class="order-packaging-total">
-                        （成本合计：{{ Math.round(Number(packagingState[row.order_no]?.total_amount || 0)) }}）
-                      </span>
-                    </div>
-                    <el-button size="small" type="primary" @click="openPackagingDialog(row)">
-                      添加包装材料
-                    </el-button>
-                  </div>
                   <el-table
-                    v-if="(packagingState[row.order_no]?.rows || []).length"
-                    :data="packagingState[row.order_no].rows"
+                    :data="packagingDisplayRows(row.order_no)"
                     size="small"
                     border
                   >
-                    <el-table-column label="物品名称" prop="item_name" min-width="180" show-overflow-tooltip />
+                    <el-table-column label="物品名称" min-width="180" show-overflow-tooltip>
+                      <template #default="{ row: expense }">
+                        {{ expense.__placeholder ? '-' : (expense.item_name || '-') }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="承担人" min-width="110" align="center">
+                      <template #default="{ row: expense }">
+                        {{ expense.__placeholder ? '-' : (expense.owner || '未分配') }}
+                      </template>
+                    </el-table-column>
                     <el-table-column label="数量" prop="quantity" width="90" align="center" />
                     <el-table-column label="单价" width="100" align="center">
                       <template #default="{ row: expense }">
-                        {{ Math.round(Number(expense.unit_price || 0)) }}
+                        {{ expense.__placeholder ? '-' : Math.round(Number(expense.unit_price || 0)) }}
                       </template>
                     </el-table-column>
                     <el-table-column label="金额" width="100" align="center">
                       <template #default="{ row: expense }">
-                        {{ Math.round(expenseAmount(expense)) }}
+                        {{ expense.__placeholder ? '-' : Math.round(expenseAmount(expense)) }}
                       </template>
                     </el-table-column>
                     <el-table-column label="记录时间" width="168" align="center">
                       <template #default="{ row: expense }">
-                        {{ formatExpenseTs(expense.record_time) }}
+                        {{ expense.__placeholder ? '-' : formatExpenseTs(expense.record_time) }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="120" align="center">
+                      <template #default="{ row: expense }">
+                        <el-button
+                          v-if="expense.__placeholder"
+                          size="small"
+                          type="primary"
+                          @click="openPackagingDialog(row)"
+                        >
+                          添加包装材料
+                        </el-button>
+                        <span v-else class="cell-dash">-</span>
                       </template>
                     </el-table-column>
                   </el-table>
-                  <el-empty
-                    v-else-if="packagingState[row.order_no]?.loaded"
-                    description="暂无包装材料记录"
-                    class="order-empty-compact"
-                  />
                 </div>
               </template>
             </div>
@@ -1299,6 +1304,12 @@ function onPackagingItemChange(itemName) {
   packagingForm.value.unit_price = Number(meta.amount || 0)
 }
 
+function packagingDisplayRows(orderNo) {
+  const rows = packagingState.value?.[String(orderNo || '').trim()]?.rows || []
+  if (rows.length) return rows
+  return [{ __placeholder: true }]
+}
+
 async function loadPackagingExpenses(orderNo) {
   const ono = String(orderNo || '').trim()
   if (!ono) return
@@ -1753,7 +1764,8 @@ onBeforeUnmount(() => {
 .order-packaging-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 8px;
 }
@@ -1761,9 +1773,6 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: #cfd8e6;
   font-weight: 600;
-}
-.order-packaging-total {
-  color: #f56c6c;
 }
 .form-hint {
   font-size: 12px;

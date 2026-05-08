@@ -119,6 +119,83 @@ def _apply_order_net_income_cost(order_no: Optional[str], expense_total: int):
         raise HTTPException(status_code=500, detail="更新订单净收益失败")
 
 
+def _resolve_order_owner_value_weights(order_no: str):
+    """
+    根据订单出库明细解析「归属人 -> 商品价值权重」。
+    权重口径：inventory.price * outbound_line.quantity（仅统计 inventory_id 有效行）。
+    owner 统一使用 users.username，便于前端按用户名筛选。
+    """
+    ono = (order_no or "").strip()
+    if not ono:
+        return []
+    rows = CostExpenseModel().db.execute_query(
+        """
+        SELECT
+            COALESCE(NULLIF(TRIM(u.[username]), ''), '') AS owner_username,
+            COALESCE(p.[price], 0) AS product_price,
+            COALESCE(l.[quantity], 1) AS line_qty
+        FROM [order_outbound_lines] l
+        LEFT JOIN [inventory] p ON p.[id] = l.[inventory_id]
+        LEFT JOIN [users] u ON u.[id] = p.[owner_user_id]
+        WHERE l.[order_no] = ?
+          AND l.[inventory_id] IS NOT NULL
+        """,
+        (ono,),
+    )
+    grouped = {}
+    for owner_raw, price_raw, qty_raw in rows:
+        owner = str(owner_raw or "").strip()
+        if not owner:
+            continue
+        try:
+            price = int(price_raw or 0)
+        except (TypeError, ValueError):
+            price = 0
+        try:
+            qty = int(qty_raw or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        weight = max(0, price) * max(1, qty)
+        if weight <= 0:
+            continue
+        grouped[owner] = int(grouped.get(owner, 0)) + int(weight)
+    return [{"owner": k, "weight": int(v)} for k, v in grouped.items() if int(v) > 0]
+
+
+def _split_int_by_weights(total: int, owner_weights):
+    """
+    按权重把整数总量拆分到多人（结果均为整数，且总和严格等于 total）。
+    采用最大余数法分配尾差。
+    """
+    amount = int(total or 0)
+    if amount <= 0 or not owner_weights:
+        return []
+    sum_w = sum(int(it.get("weight") or 0) for it in owner_weights)
+    if sum_w <= 0:
+        return []
+    floors = []
+    fracs = []
+    for it in owner_weights:
+        w = int(it.get("weight") or 0)
+        raw = amount * (float(w) / float(sum_w))
+        f = int(raw)
+        floors.append(f)
+        fracs.append(raw - f)
+    remain = amount - sum(floors)
+    alloc = floors[:]
+    if remain > 0:
+        idxs = sorted(range(len(fracs)), key=lambda i: fracs[i], reverse=True)
+        for i in idxs[:remain]:
+            alloc[i] += 1
+    out = []
+    for i, it in enumerate(owner_weights):
+        share = int(alloc[i] or 0)
+        if share <= 0:
+            continue
+        out.append({"owner": str(it.get("owner") or "").strip(), "share": share})
+    return out
+
+
 @router.get("")
 def list_cost_expenses(
     type: Optional[str] = None,
@@ -177,31 +254,75 @@ def create_cost_expense(data: CostExpenseCreate):
     source_original_quantity = int(source.quantity or 0)
     synced_type = _sync_expense_type_from_source(item_name)
     bound_order_no = _ensure_order_exists(data.order_no)
-    row = CostExpenseModel(
-        type=synced_type,
-        item_name=item_name,
-        quantity=expense_quantity,
-        unit_price=_validate_positive_int(data.unit_price, "单价"),
-        owner=(data.owner or "").strip() or None,
-        order_no=bound_order_no,
-        record_time=int(data.record_time) if data.record_time is not None else _default_london_ts(),
-    )
-    expense_total = int(row.quantity or 0) * int(row.unit_price or 0)
+    unit_price = _validate_positive_int(data.unit_price, "单价")
+    expense_total = int(expense_quantity) * int(unit_price)
+    record_time = int(data.record_time) if data.record_time is not None else _default_london_ts()
+    owner_rows = []
+    if bound_order_no:
+        owner_weights = _resolve_order_owner_value_weights(bound_order_no)
+        qty_split_rows = _split_int_by_weights(expense_quantity, owner_weights)
+        owner_rows = [
+            {
+                "owner": it.get("owner"),
+                "quantity": int(it.get("share") or 0),
+            }
+            for it in qty_split_rows
+            if int(it.get("share") or 0) > 0
+        ]
+    if not owner_rows:
+        owner_rows = [{
+            "owner": (data.owner or "").strip() or None,
+            "quantity": expense_quantity,
+        }]
+
+    created_rows = []
     source.quantity = source_original_quantity - expense_quantity
     if not source.save():
         raise HTTPException(status_code=500, detail="自动扣减库存包材失败")
-    if not row.save():
-        source.quantity = source_original_quantity
-        source.save()
-        raise HTTPException(status_code=500, detail="保存失败")
     try:
-        _apply_order_net_income_cost(bound_order_no, expense_total)
+        for owner_item in owner_rows:
+            share_qty = int(owner_item.get("quantity") or 0)
+            if share_qty <= 0:
+                continue
+            row = CostExpenseModel(
+                type=synced_type,
+                item_name=item_name,
+                # quantity 按归属价值比例拆分；unit_price 保持原单价
+                quantity=share_qty,
+                unit_price=unit_price,
+                owner=owner_item.get("owner"),
+                order_no=bound_order_no,
+                record_time=record_time,
+            )
+            if not row.save():
+                raise HTTPException(status_code=500, detail="保存失败")
+            created_rows.append(row)
     except Exception:
-        row.delete()
+        for obj in created_rows:
+            try:
+                obj.delete()
+            except Exception:
+                pass
         source.quantity = source_original_quantity
         source.save()
         raise
-    return row.to_dict()
+    try:
+        _apply_order_net_income_cost(bound_order_no, expense_total)
+    except Exception:
+        for obj in created_rows:
+            try:
+                obj.delete()
+            except Exception:
+                pass
+        source.quantity = source_original_quantity
+        source.save()
+        raise
+    if len(created_rows) == 1:
+        return created_rows[0].to_dict()
+    return {
+        "split_count": len(created_rows),
+        "items": [r.to_dict() for r in created_rows],
+    }
 
 
 @router.put("/{cid}")

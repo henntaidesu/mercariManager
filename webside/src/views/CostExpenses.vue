@@ -3,9 +3,15 @@
     <el-card shadow="never" class="search-card">
       <el-row :gutter="12" align="middle">
         <el-col :xs="24" :md="16" class="search-left-group">
-          <el-select v-model="filters.type" placeholder="支出类型" clearable @change="onFilterChange">
+          <el-select v-model="filters.type" placeholder="使用类型" clearable @change="onFilterChange">
             <el-option v-for="item in typeOptions" :key="item" :label="item" :value="item" />
           </el-select>
+          <el-input
+            v-model="filters.order_no"
+            clearable
+            placeholder="订单号"
+            @change="onFilterChange"
+          />
           <el-select v-model="filters.owner" placeholder="归属人" clearable @change="onFilterChange">
             <el-option v-for="u in users" :key="u.id" :label="u.display_name || u.username" :value="u.username" />
           </el-select>
@@ -20,7 +26,7 @@
           />
         </el-col>
         <el-col :xs="24" :md="8" class="search-actions">
-          <el-button type="primary" @click="openCreate">新增成本支出</el-button>
+          <el-button type="primary" @click="openCreate">新增包材使用记录</el-button>
         </el-col>
       </el-row>
     </el-card>
@@ -28,6 +34,9 @@
     <el-card shadow="never" class="table-card">
       <el-table :data="list" v-loading="loading" stripe>
         <el-table-column label="类型" prop="type" min-width="120" />
+        <el-table-column label="订单号" prop="order_no" min-width="150">
+          <template #default="{ row }">{{ row.order_no || '-' }}</template>
+        </el-table-column>
         <el-table-column label="物品名称" prop="item_name" min-width="160" />
         <el-table-column label="数量" prop="quantity" width="100" align="center" />
         <el-table-column label="单价" width="120" align="right">
@@ -72,8 +81,11 @@
       </div>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑成本支出' : '新增成本支出'" width="520px" destroy-on-close>
+    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑包材使用记录' : '新增包材使用记录'" width="520px" destroy-on-close>
       <el-form :model="form" :rules="rules" ref="formRef" label-width="88px">
+        <el-form-item label="订单号">
+          <el-input v-model="form.order_no" clearable placeholder="可选：填写后会关联订单" />
+        </el-form-item>
         <el-form-item label="物品名称" prop="item_name">
           <el-select
             v-model="form.item_name"
@@ -147,6 +159,7 @@ const typeOptions = ['快递费', '包装材料']
 const filters = ref({
   type: '',
   owner: '',
+  order_no: '',
 })
 
 const createDefaultForm = () => ({
@@ -156,6 +169,7 @@ const createDefaultForm = () => ({
   quantity: 1,
   unit_price: null,
   owner: '',
+  order_no: '',
   record_time: Date.now(),
 })
 
@@ -182,6 +196,9 @@ async function load() {
     }
     if (filters.value.type) params.type = filters.value.type
     if (filters.value.owner) params.owner = filters.value.owner
+    if (String(filters.value.order_no || '').trim()) {
+      params.order_no = String(filters.value.order_no || '').trim()
+    }
     if (dateRange.value?.length === 2) {
       params.start_time = Math.floor(Number(dateRange.value[0]) / 1000)
       params.end_time = Math.floor(Number(dateRange.value[1]) / 1000)
@@ -232,6 +249,7 @@ function openEdit(row) {
     quantity: Number(row.quantity || 1),
     unit_price: Number(row.unit_price || 0),
     owner: row.owner || '',
+    order_no: row.order_no || '',
     record_time: Number(row.record_time || 0) * 1000,
   }
   dialogVisible.value = true
@@ -246,6 +264,7 @@ async function submit() {
       quantity: Number(form.value.quantity || 0),
       unit_price: Number(form.value.unit_price || 0),
       owner: String(form.value.owner || '').trim() || null,
+      order_no: String(form.value.order_no || '').trim() || null,
       record_time: Math.floor(Number(form.value.record_time || Date.now()) / 1000),
     }
     if (form.value.id) {

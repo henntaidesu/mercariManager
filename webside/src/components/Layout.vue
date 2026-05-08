@@ -140,7 +140,7 @@ const menuItems = [
   { path: '/on-sale-items', title: '在售商品', icon: 'ShoppingBag' },
   { path: '/transactions', title: '库存记录', icon: 'List' },
   { path: '/cost-records', title: '库存包材', icon: 'Money' },
-  { path: '/cost-expenses', title: '成本支出', icon: 'Wallet' },
+  { path: '/cost-expenses', title: '包材使用记录', icon: 'Wallet' },
   { path: '/meilu-accounts', title: '煤炉账号', icon: 'User' },
   { path: '/warehouses', title: '仓库管理', icon: 'OfficeBuilding' },
   { path: '/categories', title: '游戏分类', icon: 'Collection' },
