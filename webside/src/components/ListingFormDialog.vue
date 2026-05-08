@@ -69,7 +69,18 @@
         </el-select>
       </el-form-item>
       <el-form-item label="发货地址">
-        <el-input v-model="form.shipping_from" placeholder="例如：东京都" clearable />
+        <el-cascader
+          v-model="form.shipping_from_path"
+          :options="shippingFromCascaderOptions"
+          :props="shippingFromCascaderProps"
+          :show-all-levels="false"
+          clearable
+          filterable
+          placeholder="请选择发货地（地区 / 都道府県）"
+          style="width: 100%"
+          popper-class="product-type-cascader-popper"
+          @change="handleShippingFromChange"
+        />
       </el-form-item>
       <el-form-item label="最大发货天数">
         <el-select v-model="form.shipping_days" placeholder="请选择最大发货天数" style="width: 100%">
@@ -94,6 +105,15 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import {
+  MERCARI_AREAS,
+  JP_REGION_OPTIONS,
+  getRegionIdForAreaId,
+  normalizeShippingFromSeed
+} from '@/constants/mercariJapanAreas.js'
+
+const SHIPPING_FROM_AREA_PREFIX = 'AREA:'
+const SHIPPING_FROM_REGION_PREFIX = 'REGION:'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -106,12 +126,47 @@ const emit = defineEmits(['update:modelValue', 'saved'])
 
 const fileInputRef = ref()
 const form = ref(getDefaultForm())
+
 const categoryTypeCascaderProps = {
   value: 'value',
   label: 'label',
   children: 'children',
   emitPath: true,
   checkStrictly: false,
+}
+
+const shippingFromCascaderProps = {
+  value: 'value',
+  label: 'label',
+  children: 'children',
+  emitPath: true,
+  checkStrictly: false,
+}
+
+/** 发货地两级级联：一级=日本地域，二级=都道府県（叶子值=AREA:<id>） */
+const shippingFromCascaderOptions = computed(() => {
+  return JP_REGION_OPTIONS.map((r) => ({
+    value: `${SHIPPING_FROM_REGION_PREFIX}${r.id}`,
+    label: r.label,
+    children: r.areaIds
+      .map((aid) => {
+        const a = MERCARI_AREAS.find((x) => x.id === aid)
+        return a
+          ? { value: `${SHIPPING_FROM_AREA_PREFIX}${a.id}`, label: a.name }
+          : null
+      })
+      .filter(Boolean)
+  }))
+})
+
+function buildShippingFromPath(areaId) {
+  if (!areaId) return []
+  const regionId = getRegionIdForAreaId(areaId)
+  if (!regionId) return []
+  return [
+    `${SHIPPING_FROM_REGION_PREFIX}${regionId}`,
+    `${SHIPPING_FROM_AREA_PREFIX}${areaId}`
+  ]
 }
 
 function ensureNode(children, value, label) {
@@ -197,13 +252,16 @@ watch(
     const seedPath = seedMappingId
       ? (categoryTypeTreeMeta.value.idToPath.get(seedMappingId) || [])
       : []
+    const areaId = normalizeShippingFromSeed(seed.shipping_from)
     form.value = {
       ...getDefaultForm(),
       image: seed.image || '',
       name: seed.name || '',
       category_mapping_id: seedMappingId,
       category_mapping_path: seedPath,
-      description: seed.description || ''
+      description: seed.description || '',
+      shipping_from: areaId,
+      shipping_from_path: buildShippingFromPath(areaId)
     }
   }
 )
@@ -218,7 +276,10 @@ function getDefaultForm() {
     description: '',
     shipping_payer: 'seller',
     shipping_method: 'undecided',
+    /** Mercari areas[].id，与煤炉 API 发货地一致 */
     shipping_from: '',
+    /** el-cascader 的路径值：[REGION:xxx, AREA:xxx] */
+    shipping_from_path: [],
     shipping_days: '2_3_days',
     sale_type: 'instant_buy'
   }
@@ -231,6 +292,15 @@ function handleCategoryTypeChange(path) {
     return
   }
   form.value.category_mapping_id = String(picked).slice(3)
+}
+
+function handleShippingFromChange(path) {
+  const picked = Array.isArray(path) ? path[path.length - 1] : null
+  if (!picked || !String(picked).startsWith(SHIPPING_FROM_AREA_PREFIX)) {
+    form.value.shipping_from = ''
+    return
+  }
+  form.value.shipping_from = String(picked).slice(SHIPPING_FROM_AREA_PREFIX.length)
 }
 
 function onVisibleChange(v) {

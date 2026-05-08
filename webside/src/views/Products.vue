@@ -108,6 +108,9 @@
                     </el-tag>
                   </template>
                 </el-table-column>
+                <el-table-column label="在售数量" width="90" align="center">
+                  <template #default="{ row: r }">{{ Number(r.inventory_on_sale_quantity ?? 0) }}</template>
+                </el-table-column>
                 <el-table-column label="更新" width="150" align="center">
                   <template #default="{ row: r }">{{ formatUnixTs(r.updated) }}</template>
                 </el-table-column>
@@ -243,31 +246,23 @@
             {{ Math.round(Number(row.price || 0)) }}
           </template>
         </el-table-column>
-        <el-table-column label="库存数量" prop="quantity" width="110" align="center" header-align="center" sortable="custom">
+        <el-table-column label="库存" prop="quantity" width="80" align="center" header-align="center" sortable="custom">
           <template #default="{ row }">
             <el-tag :type="quantityTagType(row.quantity)" size="small">
               {{ row.quantity || 0 }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="待出库数量" prop="pending_outbound_qty" width="110" align="center" header-align="center">
+        <el-table-column label="在售" prop="on_sale_quantity" width="80" align="center" header-align="center" sortable="custom">
+          <template #default="{ row }">{{ Number(row.on_sale_quantity ?? 0) }}</template>
+        </el-table-column>
+        <el-table-column label="待出" prop="pending_outbound_qty" width="80" align="center" header-align="center" sortable="custom">
           <template #default="{ row }">
             <el-tag v-if="Number(row.pending_outbound_qty || 0) > 0" type="warning" size="small">
               {{ Number(row.pending_outbound_qty || 0) }}
             </el-tag>
             <span v-else class="cell-muted">{{ Number(row.pending_outbound_qty || 0) }}</span>
           </template>
-        </el-table-column>
-        <el-table-column label="煤炉商品ID" width="130" align="center" header-align="center">
-          <template #default="{ row }">
-            <span v-if="!mercariItemIds(row).length" class="cell-muted">-</span>
-            <el-tag v-else size="small" type="primary" effect="plain">
-              {{ mercariItemIds(row).length }} 个ID
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="在售数量" prop="on_sale_quantity" width="88" align="center" header-align="center">
-          <template #default="{ row }">{{ Number(row.on_sale_quantity ?? 0) }}</template>
         </el-table-column>
         <el-table-column label="操作" :width="isMobile ? 140 : 160" align="center" header-align="center" :fixed="isMobile ? false : 'right'">
           <template #default="{ row }">
@@ -1525,6 +1520,20 @@ const sortedInventoryList = computed(() => {
     if (prop === 'quantity') {
       const va = Number(a.quantity) || 0
       const vb = Number(b.quantity) || 0
+      if (va < vb) return -1 * mult
+      if (va > vb) return 1 * mult
+      return 0
+    }
+    if (prop === 'on_sale_quantity') {
+      const va = Number(a.on_sale_quantity) || 0
+      const vb = Number(b.on_sale_quantity) || 0
+      if (va < vb) return -1 * mult
+      if (va > vb) return 1 * mult
+      return 0
+    }
+    if (prop === 'pending_outbound_qty') {
+      const va = Number(a.pending_outbound_qty) || 0
+      const vb = Number(b.pending_outbound_qty) || 0
       if (va < vb) return -1 * mult
       if (va > vb) return 1 * mult
       return 0

@@ -10,11 +10,76 @@
 import json
 import math
 import time
+import re
 from typing import Any, Dict, List, Optional
 
 from .get_order.get_on_sale.on_sale_list import fetch_on_sale_list_items
 from .sync_data import _resolve_account_and_seller
 from ..db_manage.models.on_sale_item import OnSaleItemModel
+from ..db_manage.database import DatabaseManager
+
+_MERCARI_ID_SEP_RE = re.compile(r"[\n,，、\s]+")
+
+
+def _split_mercari_item_ids(raw: Any) -> List[str]:
+    s = str(raw or "").strip()
+    if not s:
+        return []
+    out: List[str] = []
+    seen = set()
+    for part in _MERCARI_ID_SEP_RE.split(s):
+        t = str(part or "").strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
+
+
+def _is_active_on_sale(status: Optional[str], is_delete: int = 0) -> bool:
+    """仅 status=on_sale 且未软删除，视为在售。"""
+    s = (status or "").strip()
+    return int(is_delete or 0) == 0 and s == "on_sale"
+
+
+def _apply_inventory_on_sale_delta_by_item_ids(item_ids: set[str], delta: int) -> int:
+    """
+    按煤炉 item_id 批量调整 inventory.on_sale_quantity（支持正负），返回影响行数。
+    说明：inventory.mercari_item_id 可能是一行多 ID，需拆分匹配。
+    """
+    if not item_ids or delta == 0:
+        return 0
+    db = DatabaseManager()
+    rows = db.execute_query(
+        """
+        SELECT [id], [mercari_item_id], [on_sale_quantity]
+        FROM [inventory]
+        WHERE TRIM(IFNULL([mercari_item_id], '')) != ''
+        """
+    )
+    affected = 0
+    wanted = {str(x).strip() for x in item_ids if str(x).strip()}
+    if not wanted:
+        return 0
+    for iid_raw, mids_raw, osq_raw in rows:
+        mids = _split_mercari_item_ids(mids_raw)
+        if not mids:
+            continue
+        overlap = any(mid in wanted for mid in mids)
+        if not overlap:
+            continue
+        old_qty = int(osq_raw or 0)
+        next_qty = old_qty + int(delta)
+        if next_qty < 0:
+            next_qty = 0
+        if next_qty == old_qty:
+            continue
+        changed = db.execute_update(
+            "UPDATE [inventory] SET [on_sale_quantity] = ? WHERE [id] = ?",
+            (next_qty, int(iid_raw)),
+        )
+        affected += int(changed or 0)
+    return affected
 
 
 def _opt_int(v: Any) -> Optional[int]:
@@ -143,7 +208,19 @@ def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> Dict[st
     soft_deleted_ids = existed_id_set - incoming_ids
     marked_deleted = 0
     restored = 0
+    inventory_on_sale_inc = 0
+    inventory_on_sale_dec = 0
     err_list: List[Dict[str, str]] = []
+    before_by_item_id: Dict[str, Dict[str, Any]] = {
+        str(r.item_id or "").strip(): {
+            "status": (str(getattr(r, "status", "") or "").strip() or None),
+            "is_delete": int(getattr(r, "is_delete", 0) or 0),
+        }
+        for r in existed_rows
+        if str(getattr(r, "item_id", "") or "").strip()
+    }
+    activated_item_ids: set[str] = set()
+    deactivated_item_ids: set[str] = set()
     stats: Dict[str, Any] = {
         "seller_id": seller_key,
         "api_item_count": len(items),
@@ -152,6 +229,8 @@ def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> Dict[st
         "skipped": 0,
         "marked_deleted": 0,
         "restored": 0,
+        "inventory_on_sale_inc": 0,
+        "inventory_on_sale_dec": 0,
         "errors": err_list,
     }
 
@@ -164,13 +243,23 @@ def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> Dict[st
             row["is_delete"] = 0
             before = OnSaleItemModel.find_all(where="[item_id] = ?", params=(row["item_id"],), limit=1)
             was_deleted = bool(before and int(getattr(before[0], "is_delete", 0) or 0) == 1)
+            old = before_by_item_id.get(str(row["item_id"]).strip()) or {}
+            old_active = _is_active_on_sale(old.get("status"), int(old.get("is_delete", 0) or 0))
+            new_active = _is_active_on_sale(row.get("status"), 0)
             r = upsert_on_sale_item_row(row)
             if r == "inserted":
                 stats["inserted"] += 1
+                if new_active:
+                    activated_item_ids.add(str(row["item_id"]).strip())
             elif r == "updated":
                 stats["updated"] += 1
                 if was_deleted:
                     restored += 1
+                iid_key = str(row["item_id"]).strip()
+                if old_active and not new_active:
+                    deactivated_item_ids.add(iid_key)
+                elif (not old_active) and new_active:
+                    activated_item_ids.add(iid_key)
             else:
                 stats["skipped"] += 1
         except Exception as exc:
@@ -186,9 +275,21 @@ def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> Dict[st
         )
         params = (int(time.time()), seller_key, *sorted(soft_deleted_ids))
         marked_deleted = OnSaleItemModel().db.execute_update(sql, params)
+        deactivated_item_ids.update(soft_deleted_ids)
+
+    # 同步 inventory.on_sale_quantity：
+    # 1) 在售 -> 非在售（暂停/删除/软删除）扣减；
+    # 2) 非在售 -> 在售（恢复）补回。
+    # 逐 item_id 每次按 1 件调整，与在售列表 item 粒度一致。
+    if deactivated_item_ids:
+        inventory_on_sale_dec = _apply_inventory_on_sale_delta_by_item_ids(deactivated_item_ids, -1)
+    if activated_item_ids:
+        inventory_on_sale_inc = _apply_inventory_on_sale_delta_by_item_ids(activated_item_ids, +1)
 
     stats["marked_deleted"] = marked_deleted
     stats["restored"] = restored
+    stats["inventory_on_sale_inc"] = inventory_on_sale_inc
+    stats["inventory_on_sale_dec"] = inventory_on_sale_dec
     stats["has_next"] = meta.get("has_next", False)
     stats["total_item_count"] = meta.get("total_item_count", len(items))
     return stats
