@@ -189,28 +189,45 @@ def upsert_on_sale_item_row(row: Dict[str, Any]) -> str:
 def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> Dict[str, Any]:
     """
     从煤炉拉取在售列表（items/get_items，on_sale,stop）并同步本地：
+
     - 列表中存在：按 item_id 新增/更新，且 is_delete=0
     - 本地存在但新列表中不存在：标记 is_delete=1（软删除）
+
+    inventory.on_sale_quantity 释放规则（每次以 1 件为粒度）：
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ 触发条件                         │ 操作                        │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ status: on_sale → stop           │ on_sale_quantity -= 1       │
+    │ 商品从 API 消失（is_delete=1）   │ 若之前 on_sale，-= 1       │
+    │ status: stop/deleted → on_sale   │ on_sale_quantity += 1       │
+    └─────────────────────────────────────────────────────────────────┘
+    下限为 0，不会出现负数。
     """
     aid, sid = _resolve_account_and_seller(account_id)
     seller_key = str(int(sid))
     items, meta = fetch_on_sale_list_items(seller_id=sid, account_id=aid)
+
     incoming_ids = {
         str(it.get("id") or "").strip()
         for it in items
         if str(it.get("id") or "").strip()
     }
+
+    # 仅查询 is_delete=0 的记录（find_all 默认已排除软删数据）
     existed_rows = OnSaleItemModel.find_all(
         where="TRIM([seller_id]) = TRIM(?)",
         params=(seller_key,),
     )
-    existed_id_set = {str(r.item_id or "").strip() for r in existed_rows if str(r.item_id or "").strip()}
+    existed_id_set = {
+        str(r.item_id or "").strip()
+        for r in existed_rows
+        if str(r.item_id or "").strip()
+    }
+
+    # API 未返回但本地仍存在（is_delete=0）→ 需软删除
     soft_deleted_ids = existed_id_set - incoming_ids
-    marked_deleted = 0
-    restored = 0
-    inventory_on_sale_inc = 0
-    inventory_on_sale_dec = 0
-    err_list: List[Dict[str, str]] = []
+
+    # 记录同步前各商品的状态，用于判断是否真正"从在售变非在售"
     before_by_item_id: Dict[str, Dict[str, Any]] = {
         str(r.item_id or "").strip(): {
             "status": (str(getattr(r, "status", "") or "").strip() or None),
@@ -219,8 +236,13 @@ def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> Dict[st
         for r in existed_rows
         if str(getattr(r, "item_id", "") or "").strip()
     }
-    activated_item_ids: set[str] = set()
-    deactivated_item_ids: set[str] = set()
+
+    activated_item_ids: set[str] = set()    # 非在售 → 在售，需 +1
+    deactivated_item_ids: set[str] = set()  # 在售 → 非在售，需 -1
+
+    marked_deleted = 0
+    restored = 0
+    err_list: List[Dict[str, str]] = []
     stats: Dict[str, Any] = {
         "seller_id": seller_key,
         "api_item_count": len(items),
@@ -234,37 +256,55 @@ def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> Dict[st
         "errors": err_list,
     }
 
+    # ── 处理 API 返回的商品 ──────────────────────────────────────────── #
     for item in items:
         try:
             row = mercari_list_item_to_row(item, seller_key)
             if not row:
                 stats["skipped"] += 1
                 continue
+
             row["is_delete"] = 0
-            before = OnSaleItemModel.find_all(where="[item_id] = ?", params=(row["item_id"],), limit=1)
-            was_deleted = bool(before and int(getattr(before[0], "is_delete", 0) or 0) == 1)
-            old = before_by_item_id.get(str(row["item_id"]).strip()) or {}
-            old_active = _is_active_on_sale(old.get("status"), int(old.get("is_delete", 0) or 0))
+            iid_key = str(row["item_id"]).strip()
+
+            old = before_by_item_id.get(iid_key) or {}
+            old_active = _is_active_on_sale(
+                old.get("status"),
+                int(old.get("is_delete", 0) or 0),
+            )
             new_active = _is_active_on_sale(row.get("status"), 0)
+
+            # 判断本次操作前是否已软删除（用于统计 restored）
+            before_rec = OnSaleItemModel.find_all(
+                where="[item_id] = ?", params=(iid_key,), limit=1
+            )
+            was_deleted = bool(
+                before_rec and int(getattr(before_rec[0], "is_delete", 0) or 0) == 1
+            )
+
             r = upsert_on_sale_item_row(row)
             if r == "inserted":
                 stats["inserted"] += 1
+                # 新增且处于在售状态 → 补增库存计数
                 if new_active:
-                    activated_item_ids.add(str(row["item_id"]).strip())
+                    activated_item_ids.add(iid_key)
             elif r == "updated":
                 stats["updated"] += 1
                 if was_deleted:
                     restored += 1
-                iid_key = str(row["item_id"]).strip()
+                # 状态变化：在售 ↔ 暂停/其他
                 if old_active and not new_active:
+                    # on_sale → stop / 其他非在售状态
                     deactivated_item_ids.add(iid_key)
-                elif (not old_active) and new_active:
+                elif not old_active and new_active:
+                    # stop / 其他 → on_sale（恢复在售）
                     activated_item_ids.add(iid_key)
             else:
                 stats["skipped"] += 1
         except Exception as exc:
             err_list.append({"item_id": str(item.get("id", "")), "error": str(exc)})
 
+    # ── 软删除：本地存在但 API 已不返回的商品 ───────────────────────── #
     if soft_deleted_ids:
         placeholders = ",".join(["?"] * len(soft_deleted_ids))
         sql = (
@@ -275,21 +315,30 @@ def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> Dict[st
         )
         params = (int(time.time()), seller_key, *sorted(soft_deleted_ids))
         marked_deleted = OnSaleItemModel().db.execute_update(sql, params)
-        deactivated_item_ids.update(soft_deleted_ids)
 
-    # 同步 inventory.on_sale_quantity：
-    # 1) 在售 -> 非在售（暂停/删除/软删除）扣减；
-    # 2) 非在售 -> 在售（恢复）补回。
-    # 逐 item_id 每次按 1 件调整，与在售列表 item 粒度一致。
+        # 只有之前真正处于 on_sale 的商品才需要释放在售数量
+        # （已是 stop 的商品在上一次 on_sale→stop 同步时已扣减过，不再重复）
+        truly_deactivated_by_deletion = {
+            iid for iid in soft_deleted_ids
+            if _is_active_on_sale(
+                (before_by_item_id.get(iid) or {}).get("status"),
+                int((before_by_item_id.get(iid) or {}).get("is_delete", 0) or 0),
+            )
+        }
+        deactivated_item_ids.update(truly_deactivated_by_deletion)
+
+    # ── 同步 inventory.on_sale_quantity ─────────────────────────────── #
     if deactivated_item_ids:
-        inventory_on_sale_dec = _apply_inventory_on_sale_delta_by_item_ids(deactivated_item_ids, -1)
+        stats["inventory_on_sale_dec"] = _apply_inventory_on_sale_delta_by_item_ids(
+            deactivated_item_ids, -1
+        )
     if activated_item_ids:
-        inventory_on_sale_inc = _apply_inventory_on_sale_delta_by_item_ids(activated_item_ids, +1)
+        stats["inventory_on_sale_inc"] = _apply_inventory_on_sale_delta_by_item_ids(
+            activated_item_ids, +1
+        )
 
     stats["marked_deleted"] = marked_deleted
     stats["restored"] = restored
-    stats["inventory_on_sale_inc"] = inventory_on_sale_inc
-    stats["inventory_on_sale_dec"] = inventory_on_sale_dec
     stats["has_next"] = meta.get("has_next", False)
     stats["total_item_count"] = meta.get("total_item_count", len(items))
     return stats
