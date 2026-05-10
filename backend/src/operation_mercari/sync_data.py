@@ -100,9 +100,9 @@ def sync_open_orders(
     account_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    同步 Mercari 订单到本地订单管理表：
-    1）出售中（trading）；2）已售完历史（sold_out）。
-    由「获取历史数据」等入口统一触发。
+    同步 Mercari 订单到本地订单管理表（「获取历史数据」）：
+    1）WebDriver 打开 ``/mypage/listings/in_progress``，MITM 截获 trading 列表；
+    2）WebDriver 打开 ``/mypage/listings/completed``，MITM 截获 sold_out 列表。
 
     若 orders 中已存在 data_user 与当前卖家 ID 一致的任意记录，则拒绝执行（与 history_sync_precheck 一致）。
 

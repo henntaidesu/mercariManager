@@ -8,6 +8,11 @@ from pydantic import BaseModel as PydanticModel
 from ..db_manage.database import DatabaseManager
 from ..db_manage.models.on_sale_item import OnSaleItemModel
 from ..db_manage.models.warehouse import WarehouseModel
+from ..web_drive.account_serial_queue import (
+    queue_key_for_meilu_account,
+    resolve_meilu_account_id,
+    run_meilu_serial,
+)
 from ..operation_mercari.on_sale_item_detail_sync import fetch_detail_and_sync_inventory
 from ..operation_mercari.on_sale_items_sync import sync_on_sale_items_from_mercari
 from ..operation_mercari.sync_data import resolve_account_id_by_seller_id
@@ -307,9 +312,15 @@ def sync_on_sale(data: SyncOnSaleRequest):
     列表接口默认仅返回 is_delete=0 数据。须已启动 mitmdump（与出品/抓包共用）。
     """
     try:
-        result = sync_on_sale_items_from_mercari(account_id=data.account_id)
+        aid = resolve_meilu_account_id(data.account_id)
+        result = run_meilu_serial(
+            queue_key_for_meilu_account(aid),
+            lambda: sync_on_sale_items_from_mercari(account_id=aid),
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"同步失败: {exc}") from exc
     return {"success": True, "data": result}
@@ -345,9 +356,15 @@ def fetch_on_sale_item_detail(data: FetchOnSaleDetailRequest):
             )
 
     try:
-        payload = fetch_detail_and_sync_inventory(item_id, account_id=account_id)
+        qk = queue_key_for_meilu_account(int(account_id))
+        payload = run_meilu_serial(
+            qk,
+            lambda: fetch_detail_and_sync_inventory(item_id, account_id=account_id),
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"获取详情失败: {exc}") from exc
 

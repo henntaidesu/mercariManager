@@ -16,6 +16,7 @@ import asyncio
 import os
 import shutil
 import threading
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from .paths import profile_dir_for, profiles_root, validate_account_key
@@ -45,8 +46,50 @@ class _DriveThreadState:
 class EdgeWebDriveManager:
     """管理多账号 Edge 持久化会话（每账号独立 profile 目录）。"""
 
+    # 同一 profile 目录只能被一个线程「关→开」；否则 Windows 下易出现 SingletonLock / 句柄未释放，
+    # Edge 瞬间退出（exitCode≈21）并报 Target ... has been closed。
+    _profile_outer_locks: Dict[str, threading.Lock] = {}
+    _profile_outer_locks_guard = threading.Lock()
+
     def __init__(self) -> None:
         self._tls = threading.local()
+
+    @classmethod
+    def _outer_lock_for_profile(cls, account_key: str) -> threading.Lock:
+        with cls._profile_outer_locks_guard:
+            if account_key not in cls._profile_outer_locks:
+                cls._profile_outer_locks[account_key] = threading.Lock()
+            return cls._profile_outer_locks[account_key]
+
+    @staticmethod
+    def _profile_release_delay_sec() -> float:
+        try:
+            return float((os.environ.get("WEB_DRIVE_PROFILE_RELEASE_DELAY_SEC") or "0.45").strip())
+        except ValueError:
+            return 0.45
+
+    @staticmethod
+    def _launch_retry_delays_sec() -> List[float]:
+        raw = (os.environ.get("WEB_DRIVE_LAUNCH_RETRY_DELAYS_SEC") or "0,0.7,1.4").strip()
+        out: List[float] = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                out.append(float(part))
+            except ValueError:
+                pass
+        return out if out else [0.0, 0.7, 1.4]
+
+    @asynccontextmanager
+    async def _serialize_profile(self, account_key: str):
+        lock = self._outer_lock_for_profile(account_key)
+        await asyncio.to_thread(lock.acquire)
+        try:
+            yield
+        finally:
+            lock.release()
 
     def _ts(self) -> _DriveThreadState:
         s = getattr(self._tls, "state", None)
@@ -198,6 +241,22 @@ class EdgeWebDriveManager:
         proxy_server: Optional[str] = None,
     ) -> Dict[str, Any]:
         key = validate_account_key(account_key)
+        async with self._serialize_profile(key):
+            return await self._open_session_impl(
+                key,
+                headless=headless,
+                start_url=start_url,
+                proxy_server=proxy_server,
+            )
+
+    async def _open_session_impl(
+        self,
+        key: str,
+        *,
+        headless: bool = False,
+        start_url: Optional[str] = None,
+        proxy_server: Optional[str] = None,
+    ) -> Dict[str, Any]:
         s = self._prepare_async()
         async with s.lock:  # type: ignore[union-attr]
             for k in list(s.contexts.keys()):
@@ -249,13 +308,26 @@ class EdgeWebDriveManager:
                 launch_kw["proxy"] = {"server": ps}
                 # 本地 mitmproxy 动态签发站点证书，未将 mitm CA 导入系统前 Edge 会报 ERR_CERT_AUTHORITY_INVALID
                 launch_kw["ignore_https_errors"] = True
-            try:
-                self._purge_non_auth_cache(udir)
-                context = await pw.chromium.launch_persistent_context(**launch_kw)
-            except Exception as exc:
+
+            delays = self._launch_retry_delays_sec()
+            last_exc: Optional[BaseException] = None
+            context = None
+            for attempt, delay_sec in enumerate(delays):
+                if delay_sec > 0:
+                    await asyncio.sleep(delay_sec)
+                try:
+                    if attempt == 0:
+                        self._purge_non_auth_cache(udir)
+                    context = await pw.chromium.launch_persistent_context(**launch_kw)
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+            if context is None:
                 raise RuntimeError(
-                    f"启动 Edge 失败（请确认已安装 Microsoft Edge，并已执行 playwright install msedge）: {exc}"
-                ) from exc
+                    f"启动 Edge 失败（请确认已安装 Microsoft Edge，并已执行 playwright install msedge；"
+                    f"或关闭其它占用该账号 profile 的 Edge 窗口后重试；已重试 {len(delays)} 次）: {last_exc}"
+                ) from last_exc
 
             s.contexts[key] = context
             if start_url:
@@ -271,16 +343,19 @@ class EdgeWebDriveManager:
 
     async def close_session(self, account_key: str) -> Dict[str, Any]:
         key = validate_account_key(account_key)
-        s = self._prepare_async()
-        async with s.lock:  # type: ignore[union-attr]
-            ctx = s.contexts.pop(key, None)
-            if ctx is None:
-                return {"account_key": key, "closed": False}
-            try:
-                if self._is_context_alive(ctx):
-                    await ctx.close()
-            except Exception:
-                pass
+        async with self._serialize_profile(key):
+            s = self._prepare_async()
+            async with s.lock:  # type: ignore[union-attr]
+                ctx = s.contexts.pop(key, None)
+                if ctx is None:
+                    return {"account_key": key, "closed": False}
+                try:
+                    if self._is_context_alive(ctx):
+                        await ctx.close()
+                except Exception:
+                    pass
+            # 释放 user_data_dir 文件锁，避免紧接着 launch_persistent_context 时 Edge 秒退
+            await asyncio.sleep(self._profile_release_delay_sec())
             return {"account_key": key, "closed": True}
 
     async def click_xpath(

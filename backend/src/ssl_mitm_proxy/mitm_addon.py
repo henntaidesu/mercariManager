@@ -19,6 +19,7 @@ from src.ssl_mitm_proxy.capture_config import (  # noqa: E402
     atomic_write_capture_file,
     atomic_write_item_get_response,
     atomic_write_on_sale_list_response,
+    atomic_write_sold_out_list_response,
     atomic_write_trading_list_response,
     atomic_write_transaction_evidence_response,
     canonical_mercari_item_id,
@@ -152,20 +153,27 @@ class MercariCapture:
                 sid = str(meta.get("seller_id") or "").strip()
                 if not sid.isdigit():
                     return
-                atomic_write_trading_list_response(
-                    sid,
-                    {
-                        "ts": int(time.time() * 1000),
-                        "seller_id": sid,
-                        "request_url": str(meta.get("full_url") or url),
-                        "http_status": code,
-                        "body": body_json,
-                    },
-                )
-                _log_line(
-                    f"[MITM] items/get_items 出售中(trading)响应已写入 seller_id={sid} "
-                    f"result={body_json.get('result') if isinstance(body_json, dict) else '?'}"
-                )
+                status_vals = list(meta.get("status_values") or [])
+                payload = {
+                    "ts": int(time.time() * 1000),
+                    "seller_id": sid,
+                    "request_url": str(meta.get("full_url") or url),
+                    "http_status": code,
+                    "body": body_json,
+                    "status_values": status_vals,
+                }
+                if "sold_out" in status_vals:
+                    atomic_write_sold_out_list_response(sid, payload)
+                    _log_line(
+                        f"[MITM] items/get_items 已售完(sold_out)响应已写入 seller_id={sid} "
+                        f"result={body_json.get('result') if isinstance(body_json, dict) else '?'}"
+                    )
+                else:
+                    atomic_write_trading_list_response(sid, payload)
+                    _log_line(
+                        f"[MITM] items/get_items 出售中(trading)响应已写入 seller_id={sid} "
+                        f"result={body_json.get('result') if isinstance(body_json, dict) else '?'}"
+                    )
                 return
 
             if ctype == "transaction_evidences_get" and dpop == "dpop_info":

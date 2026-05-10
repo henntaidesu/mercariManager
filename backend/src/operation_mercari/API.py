@@ -10,6 +10,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel as PydanticModel
 
+from ..web_drive.account_serial_queue import (
+    GLOBAL_QUEUE_KEY,
+    queue_key_for_meilu_account,
+    resolve_meilu_account_id,
+    run_meilu_serial,
+)
 from .sync_data import (
     batch_refresh_orders_info,
     history_sync_precheck,
@@ -30,9 +36,15 @@ def api_sync_new_data(data: SyncOrdersRequest):
     订单页「更新列表」：WebDriver 打开取引中一覧 + MITM 截获 trading 列表；仅增量入库尚未存在的出售中单，倒序写入。
     """
     try:
-        result = sync_new_data(account_id=data.account_id)
+        aid = resolve_meilu_account_id(data.account_id)
+        result = run_meilu_serial(
+            queue_key_for_meilu_account(aid),
+            lambda: sync_new_data(account_id=aid),
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"同步失败: {exc}") from exc
 
@@ -46,9 +58,21 @@ def api_batch_refresh_info(data: SyncOrdersRequest):
     account_id：可选；指定则只处理该账号 seller_id 对应的订单。
     """
     try:
-        result = batch_refresh_orders_info(account_id=data.account_id)
+        if data.account_id is not None:
+            qk = queue_key_for_meilu_account(int(data.account_id))
+            result = run_meilu_serial(
+                qk,
+                lambda: batch_refresh_orders_info(account_id=int(data.account_id)),
+            )
+        else:
+            result = run_meilu_serial(
+                GLOBAL_QUEUE_KEY,
+                lambda: batch_refresh_orders_info(account_id=None),
+            )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"批量刷新失败: {exc}") from exc
 
@@ -78,9 +102,15 @@ def sync_orders(data: SyncOrdersRequest):
     - 卖家ID: 从煤炉账号配置中读取（不再由接口传入）。
     """
     try:
-        result = sync_open_orders(account_id=data.account_id)
+        aid = resolve_meilu_account_id(data.account_id)
+        result = run_meilu_serial(
+            queue_key_for_meilu_account(aid),
+            lambda: sync_open_orders(account_id=aid),
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"同步失败: {exc}") from exc
 
