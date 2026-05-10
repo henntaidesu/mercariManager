@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-在售商品列表：从 Mercari items/get_items 拉取后，执行“新增/更新 + 软删除标记”同步。
+在售商品列表：通过账号 WebDriver + MITM 截获 items/get_items 响应后，
+执行“新增/更新 + 软删除标记”同步。
 
-使用在售专用 URL（status=on_sale,stop 等）与 DPoP_OnSale-List（dpop_on_sale_list），
-见 get_on_sale.on_sale_list.fetch_on_sale_list_items。
+数据获取见 get_on_sale.on_sale_list.fetch_on_sale_list_items（不再直连 API）。
 金额入库：日元整数，价格向下取整（math.floor）。
 """
 
@@ -188,7 +188,7 @@ def upsert_on_sale_item_row(row: Dict[str, Any]) -> str:
 
 def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> Dict[str, Any]:
     """
-    从煤炉拉取在售列表（items/get_items，on_sale,stop）并同步本地：
+    从煤炉拉取在售列表（网页出品一覧触发的 items/get_items，on_sale,stop）并同步本地：
 
     - 列表中存在：按 item_id 新增/更新，且 is_delete=0
     - 本地存在但新列表中不存在：标记 is_delete=1（软删除）

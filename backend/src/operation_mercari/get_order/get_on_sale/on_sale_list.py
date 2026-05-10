@@ -1,22 +1,37 @@
 # -*- coding: utf-8 -*-
 """
-Mercari 在售商品列表：GET items/get_items（status=on_sale,stop 与指定查询参数）。
+Mercari 在售商品列表：通过账号对应 WebDriver 打开
+``https://jp.mercari.com/mypage/listings``（经 SSL 中间人代理），
+由 mitmproxy 截获 ``GET https://api.mercari.jp/items/get_items``（status 含 on_sale/stop）
+的响应体，不再直接 HTTP 调用 API。
 
-DPoP：须使用账号 JSON 中 ``dpop_on_sale_list``（``DPOP_FOR_ON_SALE_LIST``），
-针对下方 ``build_on_sale_list_url`` 生成的完整 URL（含 GET 方法与查询串）绑定。
+浏览器 profile 键与账号管理 MITM 抓包一致：``meilu_{account_id}``。
+截获完成后会在 ``finally`` 中关闭该账号浏览器会话。
+环境变量 ``WEB_DRIVE_MERCARI_HEADLESS`` 或 ``WEB_DRIVE_ON_SALE_SYNC_HEADLESS``：默认 ``1`` 为无头。
 """
 
+from __future__ import annotations
+
+import asyncio
+import os
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
-from ...mercari_req_scheduling import DPOP_FOR_ON_SALE_LIST, send_request
+from ....ssl_mitm_proxy.capture_config import (
+    clear_on_sale_list_response_file,
+    read_on_sale_list_response,
+)
+from ....ssl_mitm_proxy.runner import default_mitm_proxy_url, start_mitm_proxy
+from ....web_drive import get_web_drive_manager
 
 _API_BASE = "https://api.mercari.jp/items/get_items"
+LISTINGS_PAGE_URL = "https://jp.mercari.com/mypage/listings"
 
 
 def build_on_sale_list_url(seller_id: int) -> str:
     """
-    与抓包一致的查询参数（seller_id 可变，其余固定）。
+    与页面触发的查询参数一致（seller_id 可变，其余固定），便于对照抓包。
     """
     params = {
         "order_by": "desc",
@@ -32,27 +47,110 @@ def build_on_sale_list_url(seller_id: int) -> str:
     return f"{_API_BASE}?{urlencode(params)}"
 
 
+def _on_sale_sync_headless() -> bool:
+    v = (
+        os.environ.get("WEB_DRIVE_MERCARI_HEADLESS")
+        or os.environ.get("WEB_DRIVE_ON_SALE_SYNC_HEADLESS")
+        or "1"
+    ).strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+async def _wait_on_sale_mitm_response(
+    *,
+    seller_key: str,
+    since_ms: int,
+    wait_seconds: int,
+) -> Dict[str, Any]:
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        data = read_on_sale_list_response(seller_key)
+        if data and int(data.get("ts") or 0) >= since_ms:
+            return data
+        await asyncio.sleep(0.35)
+    raise RuntimeError(
+        f"{wait_seconds}s 内未截获在售列表 API 响应（请确认 mitmdump 已启动、"
+        f"账号已登录且 seller_id={seller_key} 与页面一致）"
+    )
+
+
+async def _fetch_on_sale_via_browser_impl(
+    account_id: int,
+    seller_id: int,
+    *,
+    timeout: int,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    r = start_mitm_proxy()
+    if r.get("error"):
+        raise RuntimeError(f"MITM 代理不可用: {r['error']}")
+
+    seller_key = str(int(seller_id))
+    clear_on_sale_list_response_file(seller_key)
+    since_ms = int(time.time() * 1000)
+
+    mgr = get_web_drive_manager()
+    key = f"meilu_{account_id}"
+    proxy = default_mitm_proxy_url()
+    headless = _on_sale_sync_headless()
+
+    try:
+        await mgr.close_session(key)
+        await mgr.open_session(
+            key,
+            headless=headless,
+            start_url=LISTINGS_PAGE_URL,
+            proxy_server=proxy,
+        )
+        await _wait_on_sale_mitm_response(
+            seller_key=seller_key,
+            since_ms=since_ms,
+            wait_seconds=timeout,
+        )
+    finally:
+        # 数据已由 MITM 写入磁盘后立即关闭浏览器，避免长时间占用会话
+        try:
+            await mgr.close_session(key)
+        except Exception:
+            pass
+
+    wrapped = read_on_sale_list_response(seller_key) or {}
+    body = wrapped.get("body")
+    if not isinstance(body, dict):
+        raise RuntimeError(f"截获数据格式异常: {wrapped!r}")
+    if body.get("result") != "OK":
+        raise RuntimeError(f"API 返回异常: {body}")
+
+    items: List[Dict[str, Any]] = body.get("data") or []
+    meta: Dict[str, Any] = body.get("meta") or {}
+    return items, meta
+
+
 def fetch_on_sale_list_items(
     seller_id: int,
     account_id: Optional[int] = None,
-    timeout: int = 60,
+    timeout: int = 90,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    请求在售列表 API，返回 (data 数组, meta)。
+    使用对应账号的 Edge 会话（经 MITM）打开出品一覧页，从代理截获的
+    ``items/get_items`` 响应中解析 ``data`` 与 ``meta``。
 
-    :raises RuntimeError: HTTP/JSON 错误或 result!=OK
+    :raises RuntimeError: 未配置 account_id、MITM/浏览器失败或响应 result!=OK
     """
-    url = build_on_sale_list_url(seller_id)
-    response = send_request(
-        "GET",
-        url,
-        account_id=account_id,
-        dpop_for=DPOP_FOR_ON_SALE_LIST,
-        timeout=timeout,
-    )
-    if response.get("result") != "OK":
-        raise RuntimeError(f"API 返回异常: {response}")
+    if account_id is None:
+        raise RuntimeError(
+            "在售列表改为网页+MITM 截获后，必须提供 account_id（同步入口会传入煤炉账号主键）"
+        )
 
-    items: List[Dict[str, Any]] = response.get("data") or []
-    meta: Dict[str, Any] = response.get("meta") or {}
-    return items, meta
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            _fetch_on_sale_via_browser_impl(
+                int(account_id),
+                int(seller_id),
+                timeout=int(timeout),
+            )
+        )
+    raise RuntimeError(
+        "fetch_on_sale_list_items 须在无运行中 event loop 的线程内调用（例如 FastAPI 同步路由）"
+    )

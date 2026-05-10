@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-在售商品 items/get 详情 → 解析说明中的管理番号 / バーコード → 回写 inventory.mercari_item_id、on_sale_quantity。
+在售商品详情：经网页 ``jp.mercari.com/item/m…`` + MITM 截获 items/get 响应，
+解析说明中的管理番号 / バーコード → 回写 inventory.mercari_item_id、on_sale_quantity。
 """
 
 from __future__ import annotations
@@ -180,7 +181,7 @@ def fetch_detail_and_sync_inventory(
     account_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    拉取 items/get，并尝试将 data.id 与在售数量写入匹配到的库存行。
+    通过浏览器打开商品页并由 MITM 截获 items/get，将 data.id 与在售数量写入匹配到的库存行。
 
     :return: { api: 原始响应, sync: { updated, inventory_id, mercari_item_id, on_sale_quantity, message } }
     """

@@ -301,9 +301,10 @@ def list_on_sale_by_item_ids(item_ids: str):
 @router.post("/sync")
 def sync_on_sale(data: SyncOnSaleRequest):
     """
-    从煤炉拉取在售列表（items/get_items，status=on_sale,stop 等）并同步本地：
+    从煤炉拉取在售列表并同步本地：使用对应账号 Edge（meilu_{id} profile）经 MITM 打开
+    jp.mercari.com/mypage/listings，截获 api.mercari.jp/items/get_items 响应。
     新列表中不存在的本地记录不物理删除，而是标记 is_delete=1（软删除）。
-    列表接口默认仅返回 is_delete=0 数据。须配置 dpop_on_sale_list。
+    列表接口默认仅返回 is_delete=0 数据。须已启动 mitmdump（与出品/抓包共用）。
     """
     try:
         result = sync_on_sale_items_from_mercari(account_id=data.account_id)
@@ -317,8 +318,9 @@ def sync_on_sale(data: SyncOnSaleRequest):
 @router.post("/fetch-detail")
 def fetch_on_sale_item_detail(data: FetchOnSaleDetailRequest):
     """
-    GET api.mercari.jp/items/get（完整 include_* 查询串），须配置 dpop_item_get_info。
-    解析 data.description 中的「管理ID / 管理番号 / バーコード」，匹配库存后写入 mercari_item_id、on_sale_quantity。
+    使用对应账号 Edge（MITM）打开 ``https://jp.mercari.com/item/m{item_id}``，
+    截获 api.mercari.jp/items/get 响应；解析 data.description 中的「管理ID / 管理番号 / バーコード」，
+    匹配库存后写入 mercari_item_id、on_sale_quantity。须已启动 mitmdump。
     """
     item_id = (data.item_id or "").strip()
     if not item_id:
