@@ -319,10 +319,15 @@
     <el-dialog
       v-model="dialogVisible"
       :title="form.id ? '编辑商品' : '新增商品'"
-      :width="isMobile ? '94vw' : '580px'"
+      :width="productEditDialogWidth"
       class="product-dialog"
       destroy-on-close
     >
+      <div
+        class="product-edit-dialog-layout"
+        :class="{ 'product-edit-dialog-layout--combined': showCombinedEditDetail }"
+      >
+        <div class="product-edit-dialog-layout__form">
       <el-form :model="form" :rules="rules" ref="formRef">
         <!-- 条形码行 -->
         <el-form-item label="条形码" prop="barcode">
@@ -574,6 +579,57 @@
           </el-form-item>
         </template>
       </el-form>
+        </div>
+        <aside
+          v-if="showCombinedEditDetail"
+          class="product-edit-dialog-layout__aside"
+          v-loading="combinedEditDetailLoading"
+        >
+          <div class="combined-edit-aside-title">组合组成明细</div>
+          <p class="combined-edit-aside-sub">
+            单套用量如下；当前组合库存 <strong>{{ Number(form.quantity ?? 0) }}</strong> 套。
+          </p>
+          <div class="combined-edit-aside-list">
+            <div
+              v-for="row in combinedEditDetailRows"
+              :key="row.inventory_id"
+              class="combined-edit-aside-item"
+            >
+              <div class="combined-edit-aside-item__thumb">
+                <el-image
+                  v-if="row.image_front"
+                  class="combined-edit-aside-item__img"
+                  :src="thumbUrl(row.image_front)"
+                  :preview-src-list="[row.image_front]"
+                  :hide-on-click-modal="true"
+                  :preview-teleported="true"
+                  :z-index="4000"
+                  fit="cover"
+                  referrerpolicy="no-referrer"
+                >
+                  <template #error>
+                    <span class="combined-edit-aside-item__img-fallback">-</span>
+                  </template>
+                </el-image>
+                <div v-else class="combined-edit-aside-item__img-placeholder">无图</div>
+              </div>
+              <div class="combined-edit-aside-item__body">
+                <div class="combined-edit-aside-item__title">
+                  管理 {{ row.inventory_id }} · {{ row.name || '—' }}
+                </div>
+                <div class="combined-edit-aside-item__meta">
+                  <span>每套用量 <strong>{{ row.per_combo_quantity }}</strong></span>
+                  <span v-if="row.loadError" class="combined-edit-aside-item__err">{{ row.loadError }}</span>
+                  <span v-else>当前库存 <strong>{{ row.current_quantity ?? '—' }}</strong></span>
+                </div>
+              </div>
+            </div>
+            <div v-if="!combinedEditDetailLoading && combinedEditDetailRows.length === 0" class="combined-edit-aside-empty">
+              未解析到组成数据（可能缺少 combined_items 记录）
+            </div>
+          </div>
+        </aside>
+      </div>
       <template #footer>
         <div class="product-dialog-footer">
           <div class="product-dialog-footer__left">
@@ -609,7 +665,7 @@
       @closed="onProductImgCameraClosed"
     >
       <div class="scan-box">
-        <div v-if="inventoryCameraDevices.length > 1" class="camera-device-row">
+        <div v-if="inventoryCameraDevices.length > 0" class="camera-device-row">
           <span class="camera-device-label">摄像头</span>
           <el-select
             v-model="productImgCameraSelectId"
@@ -677,7 +733,7 @@
       v-model="combinedProductDialogVisible"
       title="组合商品"
       :width="isMobile ? '94vw' : '720px'"
-      class="product-dialog"
+      class="product-dialog combined-product-dialog"
       destroy-on-close
     >
       <el-form :model="combinedProductForm" label-width="112px" class="combined-product-form">
@@ -703,6 +759,26 @@
         <el-form-item label="组成商品" required>
           <div class="combined-product-items">
             <div v-for="item in combinedProductRows" :key="item.id" class="combined-product-item">
+              <div class="combined-product-item__thumb">
+                <el-image
+                  v-if="item.image_front || item.image"
+                  class="combined-product-item__img"
+                  :src="thumbUrl(item.image_front || item.image)"
+                  :preview-src-list="[item.image_front || item.image]"
+                  :hide-on-click-modal="true"
+                  :preview-teleported="true"
+                  :z-index="4000"
+                  fit="cover"
+                  referrerpolicy="no-referrer"
+                >
+                  <template #error>
+                    <span class="combined-product-item__thumb-fallback">-</span>
+                  </template>
+                </el-image>
+                <div v-else class="combined-product-item__thumb-placeholder">
+                  <span>无正面图</span>
+                </div>
+              </div>
               <div class="combined-product-item__main">
                 <div class="combined-product-item__name">
                   管理 {{ item.id }} · {{ item.name || '-' }}
@@ -776,7 +852,7 @@
     >
       <!-- 扫码中：显示摄像头（多摄像头时可选设备，选择会记住到本机） -->
       <div v-show="contState === 'scanning'" class="scan-box">
-        <div v-if="inventoryCameraDevices.length > 1" class="camera-device-row">
+        <div v-if="inventoryCameraDevices.length > 0" class="camera-device-row">
           <span class="camera-device-label">摄像头</span>
           <el-select
             v-model="inventoryCameraSelectId"
@@ -1274,17 +1350,29 @@ async function getInventoryCameraStream(preferredDeviceId = null) {
   throw lastErr
 }
 
-async function refreshInventoryCameraDeviceList() {
+/**
+ * 刷新可选摄像头列表。部分浏览器在授权前 enumerate 为空或不全；若仍为空可传入当前预览流补一条「当前摄像头」。
+ */
+async function refreshInventoryCameraDeviceList(fallbackStream = null) {
   if (!navigator.mediaDevices?.enumerateDevices) {
     inventoryCameraDevices.value = []
     return
   }
   const list = await navigator.mediaDevices.enumerateDevices()
   const inputs = list.filter((d) => d.kind === 'videoinput')
-  inventoryCameraDevices.value = inputs.map((d, i) => ({
+  let mapped = inputs.map((d, i) => ({
     deviceId: d.deviceId,
     label: (d.label && String(d.label).trim()) ? d.label : `摄像头 ${i + 1}`,
   }))
+  if (!mapped.length && fallbackStream?.getVideoTracks) {
+    const track = fallbackStream.getVideoTracks()[0]
+    const id = track?.getSettings?.()?.deviceId
+    if (id) {
+      const lb = track.label && String(track.label).trim()
+      mapped = [{ deviceId: id, label: lb || '当前摄像头' }]
+    }
+  }
+  inventoryCameraDevices.value = mapped
 }
 
 function syncInventoryCameraSelectFromStream(stream) {
@@ -1307,7 +1395,7 @@ async function onContCameraDeviceChanged(deviceId) {
     await new Promise((resolve) => {
       videoEl.onloadedmetadata = resolve
     })
-    await refreshInventoryCameraDeviceList()
+    await refreshInventoryCameraDeviceList(contStream)
     syncInventoryCameraSelectFromStream(contStream)
     const okDev = contStream.getVideoTracks()[0]?.getSettings?.()?.deviceId
     if (okDev) writeSavedInventoryCameraDeviceId(okDev)
@@ -1319,7 +1407,7 @@ async function onContCameraDeviceChanged(deviceId) {
       await new Promise((resolve) => {
         videoEl.onloadedmetadata = resolve
       })
-      await refreshInventoryCameraDeviceList()
+      await refreshInventoryCameraDeviceList(contStream)
       syncInventoryCameraSelectFromStream(contStream)
       const fbDev = contStream.getVideoTracks()[0]?.getSettings?.()?.deviceId
       if (fbDev) writeSavedInventoryCameraDeviceId(fbDev)
@@ -1345,7 +1433,24 @@ const form = ref({
   listing_title: '',
   listing_body: '',
   image_front: null,
-  image_back: null
+  image_back: null,
+  /** 仅展示：组合商品标记（提交前会从 payload 剔除） */
+  is_combined: 0,
+  combined_items: null
+})
+
+/** 编辑组合商品时右侧「组成明细」 */
+const combinedEditDetailLoading = ref(false)
+const combinedEditDetailRows = ref([])
+
+const showCombinedEditDetail = computed(
+  () => Boolean(form.value?.id) && Number(form.value?.is_combined || 0) === 1
+)
+
+const productEditDialogWidth = computed(() => {
+  if (isMobile.value) return '96vw'
+  if (showCombinedEditDetail.value) return 'min(1080px, 98vw)'
+  return '580px'
 })
 
 const rules = {
@@ -2254,6 +2359,69 @@ const pagedList = computed(() => {
   return sortedInventoryList.value.slice(start, start + pageSize)
 })
 
+function parseCombinedItemsPayload(raw) {
+  if (!raw) return []
+  if (Array.isArray(raw)) {
+    return raw
+      .map((x) => {
+        if (!x || typeof x !== 'object') return null
+        const inventory_id = Number(x.inventory_id)
+        const quantity = Number(x.quantity)
+        if (!Number.isFinite(inventory_id) || inventory_id <= 0) return null
+        if (!Number.isFinite(quantity) || quantity <= 0) return null
+        return { inventory_id, quantity }
+      })
+      .filter(Boolean)
+  }
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw)
+      return parseCombinedItemsPayload(p)
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+async function loadCombinedEditDetailForRow(row) {
+  combinedEditDetailRows.value = []
+  if (!row || Number(row.is_combined || 0) !== 1) return
+  const parsed = parseCombinedItemsPayload(row.combined_items)
+  if (!parsed.length) return
+  combinedEditDetailLoading.value = true
+  try {
+    const rows = await Promise.all(
+      parsed.map(async ({ inventory_id, quantity }) => {
+        try {
+          const p = await inventoryApi.get(inventory_id)
+          const img = p?.image_front || p?.image || null
+          return {
+            inventory_id,
+            per_combo_quantity: quantity,
+            name: p?.name || '',
+            image_front: img,
+            current_quantity: p?.quantity ?? 0,
+            loadError: null
+          }
+        } catch {
+          return {
+            inventory_id,
+            per_combo_quantity: quantity,
+            name: '',
+            image_front: null,
+            current_quantity: null,
+            loadError: '无法加载该库存条目'
+          }
+        }
+      })
+    )
+    combinedEditDetailRows.value = rows
+  } finally {
+    combinedEditDetailLoading.value = false
+  }
+}
+
 function openDialog(row = null) {
   resetNoBarcodeImageUploadState()
   noBarcodeEntryMode.value = false
@@ -2261,6 +2429,8 @@ function openDialog(row = null) {
   warehouseCreateMode.value = false
   newCategoryName.value = ''
   newWarehouseName.value = ''
+  combinedEditDetailRows.value = []
+  combinedEditDetailLoading.value = false
   form.value = row
     ? {
         id: row.id,
@@ -2279,7 +2449,9 @@ function openDialog(row = null) {
         listing_title: row.listing_title ?? '',
         listing_body: row.listing_body ?? '',
         image_front: row.image_front || row.image || null,
-        image_back: row.image_back || null
+        image_back: row.image_back || null,
+        is_combined: Number(row.is_combined || 0),
+        combined_items: row.combined_items ?? null
       }
     : {
         id: null,
@@ -2298,7 +2470,9 @@ function openDialog(row = null) {
         listing_title: '',
         listing_body: '',
         image_front: null,
-        image_back: null
+        image_back: null,
+        is_combined: 0,
+        combined_items: null
       }
   syncQuantityEditFromForm()
   syncPriceEditFromForm()
@@ -2306,6 +2480,9 @@ function openDialog(row = null) {
   syncCascaderPathByProductTypeId(form.value.product_type_id)
   syncWarehouseCascaderPathByWarehouseId(form.value.warehouse_id)
   dialogVisible.value = true
+  if (row && Number(row.is_combined || 0) === 1) {
+    loadCombinedEditDetailForRow(row)
+  }
 }
 
 watch(dialogVisible, (visible) => {
@@ -2316,6 +2493,8 @@ watch(dialogVisible, (visible) => {
     warehouseCreateMode.value = false
     newCategoryName.value = ''
     newWarehouseName.value = ''
+    combinedEditDetailRows.value = []
+    combinedEditDetailLoading.value = false
   }
 })
 
@@ -2814,7 +2993,7 @@ async function onProductImgCameraDeviceChanged(deviceId) {
     await new Promise((resolve) => {
       v.onloadedmetadata = resolve
     })
-    await refreshInventoryCameraDeviceList()
+    await refreshInventoryCameraDeviceList(productImgStream)
     syncInventoryCameraSelectFromStream(productImgStream)
     productImgCameraSelectId.value = inventoryCameraSelectId.value
     const okDev = productImgStream.getVideoTracks()[0]?.getSettings?.()?.deviceId
@@ -2827,7 +3006,7 @@ async function onProductImgCameraDeviceChanged(deviceId) {
       await new Promise((resolve) => {
         v.onloadedmetadata = resolve
       })
-      await refreshInventoryCameraDeviceList()
+      await refreshInventoryCameraDeviceList(productImgStream)
       syncInventoryCameraSelectFromStream(productImgStream)
       productImgCameraSelectId.value = inventoryCameraSelectId.value
       const fbDev = productImgStream.getVideoTracks()[0]?.getSettings?.()?.deviceId
@@ -2862,7 +3041,7 @@ async function openProductImageSource(side) {
       await new Promise((resolve) => {
         v.onloadedmetadata = () => resolve()
       })
-      await refreshInventoryCameraDeviceList()
+      await refreshInventoryCameraDeviceList(productImgStream)
       syncInventoryCameraSelectFromStream(productImgStream)
       productImgCameraSelectId.value = inventoryCameraSelectId.value
       const curDev = productImgStream.getVideoTracks()[0]?.getSettings?.()?.deviceId
@@ -3032,6 +3211,9 @@ async function submit() {
     if (payload.on_sale_quantity != null) {
       payload.on_sale_quantity = Math.max(0, Math.round(Number(payload.on_sale_quantity)))
     }
+    delete payload.is_combined
+    delete payload.combined_items
+    delete payload.sku
     if (payload.id) {
       await inventoryApi.update(payload.id, payload)
     } else {
@@ -3178,7 +3360,7 @@ async function openContScan() {
     contStream = await getInventoryCameraStream(savedCam)
     contVideoRef.value.srcObject = contStream
     await new Promise((resolve) => { contVideoRef.value.onloadedmetadata = resolve })
-    await refreshInventoryCameraDeviceList()
+    await refreshInventoryCameraDeviceList(contStream)
     syncInventoryCameraSelectFromStream(contStream)
     const curDev = contStream.getVideoTracks()[0]?.getSettings?.()?.deviceId
     if (curDev) writeSavedInventoryCameraDeviceId(curDev)
@@ -3453,6 +3635,138 @@ onBeforeUnmount(() => {
 .product-qty-input :deep(input) {
   text-align: center;
 }
+/* 编辑商品弹窗：组合商品左右分栏，右侧组成明细 */
+.product-edit-dialog-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.product-edit-dialog-layout--combined {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 20px;
+}
+.product-edit-dialog-layout__form {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.product-edit-dialog-layout__aside {
+  flex: 0 0 312px;
+  width: 312px;
+  max-width: 100%;
+  padding: 12px 14px 14px;
+  border-radius: 8px;
+  border: 1px solid #28354a;
+  background: #18233a;
+  box-sizing: border-box;
+  align-self: stretch;
+}
+.combined-edit-aside-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #e6edf7;
+  margin-bottom: 6px;
+}
+.combined-edit-aside-sub {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+.combined-edit-aside-sub strong {
+  color: #c8d8f0;
+}
+.combined-edit-aside-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(52vh, 520px);
+  overflow-y: auto;
+}
+.combined-edit-aside-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #28354a;
+  background: #131c2f;
+}
+.combined-edit-aside-item__thumb {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+}
+.combined-edit-aside-item__img {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  border: 1px solid #28354a;
+  overflow: hidden;
+  display: block;
+}
+.combined-edit-aside-item__img :deep(.el-image__inner) {
+  object-fit: cover;
+}
+.combined-edit-aside-item__img-fallback,
+.combined-edit-aside-item__img-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  border: 1px dashed #3d4d66;
+  background: #0b1220;
+  font-size: 11px;
+  color: #64748b;
+  box-sizing: border-box;
+}
+.combined-edit-aside-item__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.combined-edit-aside-item__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e6edf7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.combined-edit-aside-item__meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.combined-edit-aside-item__meta strong {
+  color: #c8d8f0;
+}
+.combined-edit-aside-item__err {
+  color: #f56c6c;
+}
+.combined-edit-aside-empty {
+  font-size: 12px;
+  color: #64748b;
+  padding: 12px 4px;
+  text-align: center;
+}
+@media (max-width: 768px) {
+  .product-edit-dialog-layout--combined {
+    flex-direction: column;
+  }
+  .product-edit-dialog-layout__aside {
+    flex: none;
+    width: 100%;
+  }
+  .combined-edit-aside-list {
+    max-height: none;
+  }
+}
+
 .table-card { border-radius: 8px; }
 /* 与订单页 #/orders 列表缩略图一致 */
 .order-thumb {
@@ -3827,38 +4141,82 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.combined-product-items {
+/* 组合商品弹窗：与全局暗色对话框一致，组成行内展示正面缩略图 */
+.combined-product-dialog .combined-product-items {
   width: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.combined-product-item {
+.combined-product-dialog .combined-product-item {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border: 1px solid #ebeef5;
+  border: 1px solid #28354a;
   border-radius: 8px;
-  background: #fafafa;
+  background: #18233a;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2) inset;
 }
-.combined-product-item__main {
+.combined-product-dialog .combined-product-item__thumb {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+}
+.combined-product-dialog .combined-product-item__img {
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  border: 1px solid #28354a;
+  overflow: hidden;
+  display: block;
+}
+.combined-product-dialog .combined-product-item__img :deep(.el-image__inner) {
+  object-fit: cover;
+}
+.combined-product-dialog .combined-product-item__thumb-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  font-size: 12px;
+  color: #64748b;
+  background: #131c2f;
+}
+.combined-product-dialog .combined-product-item__thumb-placeholder {
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  border: 1px dashed #3d4d66;
+  background: #131c2f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.25;
+  padding: 2px;
+  box-sizing: border-box;
+}
+.combined-product-dialog .combined-product-item__main {
   flex: 1 1 auto;
   min-width: 0;
 }
-.combined-product-item__name {
+.combined-product-dialog .combined-product-item__name {
   font-weight: 600;
-  color: #303133;
+  color: #e6edf7;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.combined-product-item__meta {
+.combined-product-dialog .combined-product-item__meta {
   margin-top: 4px;
   font-size: 12px;
-  color: #909399;
+  color: #94a3b8;
 }
-.combined-product-item__qty {
+.combined-product-dialog .combined-product-item__qty {
   width: 96px;
   flex: 0 0 auto;
 }
