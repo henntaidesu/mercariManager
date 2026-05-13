@@ -20,38 +20,41 @@
     <el-card shadow="never" class="search-card">
       <el-row :gutter="0" align="middle" class="search-row">
         <el-col :xs="24" :md="14" class="search-left-group">
-          <el-input v-model="keyword" class="search-input-control" placeholder="搜索商品名称" clearable @change="load" prefix-icon="Search" />
-          <div class="search-filters-row">
-            <el-select v-model="filterCat" class="search-select-control" placeholder="所有游戏分类" clearable @change="load">
-              <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
-            </el-select>
-            <el-cascader
-              v-model="filterWarehousePath"
-              :options="warehouseCascaderOptions"
-              :props="warehouseCascaderProps"
-              :show-all-levels="false"
-              class="search-select-control"
-              placeholder="仓库 / 货架名称 / 货架号"
-              popper-class="product-type-cascader-popper"
-              clearable
-              filterable
-              @change="handleFilterWarehouseChange"
-            />
-            <el-cascader
-              v-model="filterProductTypePath"
-              :options="productTypeCascaderOptions"
-              :props="productTypeCascaderProps"
-              :show-all-levels="false"
-              class="search-select-control"
-              placeholder="商品类型"
-              popper-class="product-type-cascader-popper"
-              clearable
-              filterable
-              @change="handleFilterProductTypeChange"
-            />
-            <el-select v-model="filterOwnerUserId" class="search-select-control" placeholder="所有商品归属" clearable @change="load">
-              <el-option v-for="u in ownerUsers" :key="u.id" :label="u.display_name || u.username" :value="u.id" />
-            </el-select>
+          <div class="search-left-row1">
+            <el-input v-model="keyword" class="search-input-control" placeholder="搜索商品名称" clearable @change="load" prefix-icon="Search" />
+            <div class="search-filters-row">
+              <el-select v-model="filterCat" class="search-select-control" placeholder="所有游戏分类" clearable @change="load">
+                <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
+              </el-select>
+              <el-cascader
+                v-model="filterWarehousePath"
+                :options="warehouseCascaderOptions"
+                :props="warehouseCascaderProps"
+                :show-all-levels="false"
+                class="search-select-control"
+                placeholder="仓库 / 货架名称 / 货架号"
+                popper-class="product-type-cascader-popper"
+                clearable
+                filterable
+                @change="handleFilterWarehouseChange"
+              />
+              <el-cascader
+                v-model="filterProductTypePath"
+                :options="productTypeCascaderOptions"
+                :props="productTypeCascaderProps"
+                :show-all-levels="false"
+                class="search-select-control"
+                placeholder="商品类型"
+                popper-class="product-type-cascader-popper"
+                clearable
+                filterable
+                @change="handleFilterProductTypeChange"
+              />
+              <el-select v-model="filterOwnerUserId" class="search-select-control" placeholder="所有商品归属" clearable @change="load">
+                <el-option v-for="u in ownerUsers" :key="u.id" :label="u.display_name || u.username" :value="u.id" />
+              </el-select>
+              <el-checkbox v-model="hideNoWarehouseSlot" class="search-filter-checkbox" @change="() => load()">隐藏无在库</el-checkbox>
+            </div>
           </div>
         </el-col>
         <el-col :xs="24" :md="10" class="search-actions" :class="{ 'search-actions--ios': isIOS }">
@@ -421,33 +424,19 @@
           <el-col :xs="24" :sm="16">
             <el-form-item label="所属货架" prop="warehouse_id">
               <div class="product-field-inline">
-                <template v-if="!warehouseCreateMode">
-                  <el-cascader
-                    v-model="warehouseCascaderPath"
-                    :options="warehouseCascaderOptions"
-                    :props="warehouseCascaderProps"
-                    :show-all-levels="false"
-                    clearable
-                    :filterable="!isIOS"
-                    placeholder="请选择：仓库 → 货架名称 → 货架号"
-                    class="product-field-inline__main"
-                    style="width: 100%"
-                    popper-class="product-type-cascader-popper"
-                    @change="handleWarehouseCascaderChange"
-                  />
-                  <el-button type="primary" plain @click="startCreateWarehouse">新建仓库</el-button>
-                </template>
-                <template v-else>
-                  <el-input
-                    v-model="newWarehouseName"
-                    placeholder="输入新仓库名称"
-                    clearable
-                    class="product-field-inline__main"
-                    @keyup.enter="confirmCreateWarehouse"
-                  />
-                  <el-button type="primary" @click="confirmCreateWarehouse">确认</el-button>
-                  <el-button @click="cancelCreateWarehouse">取消</el-button>
-                </template>
+                <el-cascader
+                  v-model="warehouseCascaderPath"
+                  :options="warehouseCascaderOptions"
+                  :props="warehouseCascaderProps"
+                  :show-all-levels="false"
+                  clearable
+                  :filterable="!isIOS"
+                  placeholder="请选择：仓库 → 货架名称 → 货架号"
+                  class="product-field-inline__main"
+                  style="width: 100%"
+                  popper-class="product-type-cascader-popper"
+                  @change="handleWarehouseCascaderChange"
+                />
               </div>
             </el-form-item>
           </el-col>
@@ -1087,6 +1076,8 @@ const filterWarehousePath = ref([])
 const filterProductType = ref(null)
 const filterProductTypePath = ref([])
 const filterOwnerUserId = ref(null)
+/** 默认开启：隐藏未分配仓库/货架（warehouse_id 为空）的条目；取消勾选则一并列出 */
+const hideNoWarehouseSlot = ref(true)
 const currentPage = ref(1)
 const pageSize = 15
 const dialogVisible = ref(false)
@@ -1174,10 +1165,8 @@ const editingProductTypeRowId = ref(null)
 const editingOwnerRowId = ref(null)
 const inlineOwnerSelectMap = new Map()
 const newCategoryName = ref('')
-const newWarehouseName = ref('')
-/** 编辑弹窗：新建分类 / 仓库时，下拉与输入框同位切换 */
+/** 编辑弹窗：新建分类时，下拉与输入框同位切换 */
 const categoryCreateMode = ref(false)
-const warehouseCreateMode = ref(false)
 /** 编辑弹窗库存数量：纯文本输入，blur / 保存时写回 form.quantity */
 const quantityEdit = ref('0')
 /** 编辑弹窗单价：纯文本整数，blur / 保存时写回 form.price */
@@ -1285,6 +1274,17 @@ const INVENTORY_CAMERA_STORAGE_KEY = 'mercari.inventory.preferredCameraDeviceId'
 const inventoryCameraDevices = ref([])
 const inventoryCameraSelectId = ref('')
 const NO_BARCODE_FORM_CACHE_KEY = 'mercari.inventory.noBarcode.lastSelections'
+
+/** 无码入库：商品归属默认用当前登录用户 id（与 /api/auth/login 返回的 user.id 一致） */
+function getCurrentAuthUserId() {
+  try {
+    const u = JSON.parse(localStorage.getItem('auth_user') || '{}')
+    const n = Number(u.id)
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null
+  } catch {
+    return null
+  }
+}
 
 function toNullableInt(v) {
   const n = Number(v)
@@ -2114,32 +2114,6 @@ async function confirmCreateCategory() {
   ElMessage.success('分类创建成功')
 }
 
-function startCreateWarehouse() {
-  warehouseCreateMode.value = true
-  newWarehouseName.value = ''
-}
-
-function cancelCreateWarehouse() {
-  warehouseCreateMode.value = false
-  newWarehouseName.value = ''
-}
-
-async function confirmCreateWarehouse() {
-  const name = newWarehouseName.value.trim()
-  if (!name) {
-    ElMessage.warning('请输入仓库名称')
-    return
-  }
-  const created = await warehouseApi.create({ name })
-  warehouses.value = await warehouseApi.list()
-  form.value.warehouse_id = created?.id ?? form.value.warehouse_id
-  syncWarehouseCascaderPathByWarehouseId(form.value.warehouse_id)
-  newWarehouseName.value = ''
-  warehouseCreateMode.value = false
-  ElMessage.success('仓库创建成功')
-  formRef.value?.validateField('warehouse_id')
-}
-
 /** 从指定 video 元素抓一帧，返回 Blob（JPEG） */
 function captureFrame(videoElRef = videoRef) {
   const video = videoElRef.value
@@ -2160,7 +2134,9 @@ async function load(options = {}) {
   if (filterWarehouse.value) params.warehouse_id = filterWarehouse.value
   if (filterProductType.value) params.product_type_id = filterProductType.value
   if (filterOwnerUserId.value) params.owner_user_id = filterOwnerUserId.value
-  if (listingPickMode.value) params.in_stock_only = true
+  if (hideNoWarehouseSlot.value) params.warehouse_assigned_only = true
+  /** 列表默认不展示 quantity 为 0 的条目（与组合商品多选一致） */
+  params.in_stock_only = true
   list.value = await inventoryApi.list(params).finally(() => (loading.value = false))
   if (resetPage) {
     inventorySortProp.value = ''
@@ -2488,9 +2464,7 @@ function openDialog(row = null) {
   resetNoBarcodeImageUploadState()
   noBarcodeEntryMode.value = false
   categoryCreateMode.value = false
-  warehouseCreateMode.value = false
   newCategoryName.value = ''
-  newWarehouseName.value = ''
   combinedEditDetailRows.value = []
   combinedEditDetailLoading.value = false
   form.value = row
@@ -2552,9 +2526,7 @@ watch(dialogVisible, (visible) => {
     resetNoBarcodeImageUploadState()
     noBarcodeEntryMode.value = false
     categoryCreateMode.value = false
-    warehouseCreateMode.value = false
     newCategoryName.value = ''
-    newWarehouseName.value = ''
     combinedEditDetailRows.value = []
     combinedEditDetailLoading.value = false
   }
@@ -2580,6 +2552,10 @@ function openNoBarcodeEntry() {
     form.value.warehouse_id = cached.warehouse_id
     syncCascaderPathByProductTypeId(form.value.product_type_id)
     syncWarehouseCascaderPathByWarehouseId(form.value.warehouse_id)
+  }
+  const selfUid = getCurrentAuthUserId()
+  if (selfUid != null) {
+    form.value.owner_user_id = selfUid
   }
   const uuid = (typeof crypto !== 'undefined' && crypto.randomUUID)
     ? crypto.randomUUID()
@@ -3678,14 +3654,26 @@ onBeforeUnmount(() => {
 }
 .search-left-group {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+.search-left-row1 {
+  display: flex;
+  flex-direction: row;
   align-items: center;
   justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 20px;
+  width: 100%;
 }
 .search-filters-row {
   display: flex;
   flex-direction: row;
   align-items: center;
+  flex-wrap: wrap;
   gap: 20px;
   flex-shrink: 0;
 }
@@ -3697,6 +3685,14 @@ onBeforeUnmount(() => {
 .search-filters-row .search-select-control {
   width: 180px;
   max-width: 180px;
+}
+.search-filters-row .search-filter-checkbox {
+  flex: 0 0 auto;
+  margin-right: 0;
+  white-space: nowrap;
+}
+.search-filters-row .search-filter-checkbox :deep(.el-checkbox__label) {
+  padding-left: 6px;
 }
 .product-field-inline {
   display: flex;
@@ -4094,6 +4090,13 @@ onBeforeUnmount(() => {
     gap: 8px;
     width: 100%;
   }
+  .search-left-row1 {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+  }
   .search-input-control {
     width: 100%;
     max-width: none;
@@ -4101,7 +4104,7 @@ onBeforeUnmount(() => {
   .search-filters-row {
     display: flex;
     flex-direction: row;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 8px;
     width: 100%;
   }
@@ -4110,6 +4113,11 @@ onBeforeUnmount(() => {
     width: 0;
     min-width: 0;
     max-width: none;
+  }
+  .search-filters-row .search-filter-checkbox {
+    flex: 1 0 100%;
+    width: 100%;
+    margin-top: 2px;
   }
   .search-actions {
     justify-content: stretch;
