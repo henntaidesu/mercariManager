@@ -269,6 +269,9 @@
             {{ Math.round(Number(row.price || 0)) }}
           </template>
         </el-table-column>
+        <el-table-column label="成本（¥）" prop="cost_cny" width="112" align="center" header-align="center" sortable="custom">
+          <template #default="{ row }">{{ formatCostCny(row.cost_cny) }}</template>
+        </el-table-column>
         <el-table-column label="库存" prop="quantity" width="80" align="center" header-align="center" sortable="custom">
           <template #default="{ row }">
             <el-tag :type="quantityTagType(row.quantity)" size="small">
@@ -409,6 +412,20 @@
             </el-form-item>
           </el-col>
         </el-row>
+        <el-form-item label="成本（¥）" prop="cost_cny">
+          <el-input-number
+            v-model="form.cost_cny"
+            :min="0"
+            :max="99999999"
+            :precision="2"
+            :step="0.01"
+            :controls="false"
+            placeholder="人民币，可小数"
+            class="product-cost-cny-input"
+            style="width: 100%"
+            clearable
+          />
+        </el-form-item>
         <el-form-item label="商品归属" prop="owner_user_id">
           <el-select
             v-model="form.owner_user_id"
@@ -743,6 +760,21 @@
           <el-col :xs="24" :sm="12">
             <el-form-item label="单价">
               <el-input v-model="combinedProductForm.price" inputmode="numeric" placeholder="组合商品单价" />
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :sm="12">
+            <el-form-item label="成本（¥）">
+              <el-input-number
+                v-model="combinedProductForm.cost_cny"
+                :min="0"
+                :max="99999999"
+                :precision="2"
+                :step="0.01"
+                :controls="false"
+                placeholder="人民币"
+                style="width: 100%"
+                clearable
+              />
             </el-form-item>
           </el-col>
         </el-row>
@@ -1126,6 +1158,7 @@ const combinedProductForm = ref({
   name: '',
   quantity: 1,
   price: 0,
+  cost_cny: null,
   description: ''
 })
 /** 组合商品「在列表中选择」模式 */
@@ -1461,6 +1494,7 @@ const form = ref({
   product_type_id: null,
   warehouse_id: null,
   price: 0,
+  cost_cny: null,
   quantity: 1,
   mercari_item_id: '',
   on_sale_quantity: 0,
@@ -1504,6 +1538,17 @@ const rules = {
       validator: (_, val, cb) => {
         const n = Number(val)
         if (Number.isNaN(n) || n < 0) cb(new Error('单价须为大于等于 0 的数字'))
+        else cb()
+      },
+      trigger: 'blur',
+    },
+  ],
+  cost_cny: [
+    {
+      validator: (_, val, cb) => {
+        if (val == null || val === '') return cb()
+        const n = Number(val)
+        if (Number.isNaN(n) || n < 0) cb(new Error('成本须为大于等于 0 的数字'))
         else cb()
       },
       trigger: 'blur',
@@ -2219,6 +2264,15 @@ const sortedInventoryList = computed(() => {
       if (va > vb) return 1 * mult
       return 0
     }
+    if (prop === 'cost_cny') {
+      const va = Number(a.cost_cny)
+      const vb = Number(b.cost_cny)
+      const na = Number.isFinite(va) ? va : -1
+      const nb = Number.isFinite(vb) ? vb : -1
+      if (na < nb) return -1 * mult
+      if (na > nb) return 1 * mult
+      return 0
+    }
     if (prop === 'quantity') {
       const va = Number(a.quantity) || 0
       const vb = Number(b.quantity) || 0
@@ -2267,6 +2321,37 @@ function quantityTagType(q) {
   if (n === 0) return 'danger'
   if (n <= 3) return 'warning'
   return 'success'
+}
+
+/** 列表/展示：人民币成本，固定两位小数；空为「—」 */
+function formatCostCny(v) {
+  if (v == null || v === '') return '—'
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return n.toFixed(2)
+}
+
+/** 提交 API：人民币成本，最多两位小数；空为 null */
+function normalizeCostCnyForPayload(v) {
+  if (v == null || v === '') return null
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 0) return null
+  return Math.round(n * 100) / 100
+}
+
+function sumRowsCostCny(rows) {
+  if (!Array.isArray(rows) || !rows.length) return null
+  let sum = 0
+  let any = false
+  for (const r of rows) {
+    const n = Number(r?.cost_cny)
+    if (Number.isFinite(n) && n > 0) {
+      sum += n
+      any = true
+    }
+  }
+  if (!any) return null
+  return Math.round(sum * 100) / 100
 }
 
 /**
@@ -2497,6 +2582,10 @@ function openDialog(row = null) {
         owner_user_id: row.owner_user_id || null,
         warehouse_id: row.warehouse_id || null,
         price: Math.round(Number(row.price ?? 0)),
+        cost_cny: (() => {
+          const c = Number(row.cost_cny)
+          return Number.isFinite(c) && c >= 0 ? Math.round(c * 100) / 100 : null
+        })(),
         quantity: row.quantity ?? 0,
         mercari_item_id: row.mercari_item_id ?? '',
         on_sale_quantity: Number(row.on_sale_quantity ?? 0),
@@ -2518,6 +2607,7 @@ function openDialog(row = null) {
         owner_user_id: null,
         warehouse_id: null,
         price: 0,
+        cost_cny: null,
         quantity: 1,
         mercari_item_id: '',
         on_sale_quantity: 0,
@@ -2662,6 +2752,7 @@ function openCombinedProductDialog(rows) {
     name: `${rows.map((r) => String(r.name || '').trim()).filter(Boolean).join(' + ') || '组合商品'} 组合`,
     quantity: 1,
     price: rows.reduce((sum, r) => sum + Math.round(Number(r.price ?? 0)), 0),
+    cost_cny: sumRowsCostCny(rows),
     description: '',
     category_id: sameCategory ? first.category_id : null,
     product_type_id: sameType ? first.product_type_id : null,
@@ -2710,6 +2801,7 @@ async function submitCombinedProduct() {
     name,
     quantity: comboQty,
     price: Math.max(0, Math.round(Number(combinedProductForm.value.price ?? 0))),
+    cost_cny: normalizeCostCnyForPayload(combinedProductForm.value.cost_cny),
     description: desc || null,
     category_id: combinedProductForm.value.category_id || null,
     product_type_id: combinedProductForm.value.product_type_id || null,
@@ -3273,6 +3365,7 @@ async function submit() {
   try {
     const payload = { ...form.value }
     payload.price = Math.round(Number(payload.price ?? 0))
+    payload.cost_cny = normalizeCostCnyForPayload(payload.cost_cny)
     if (payload.mercari_item_id !== undefined && payload.mercari_item_id !== null) {
       payload.mercari_item_id = String(payload.mercari_item_id).trim() || null
     }

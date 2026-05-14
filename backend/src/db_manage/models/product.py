@@ -66,6 +66,12 @@ class ProductModel(BaseModel):
                 'not_null': False,
                 'default': 0,
             },
+            # 人民币成本（小数），与 price（日元整数）分列存储
+            'cost_cny': {
+                'type': 'REAL',
+                'not_null': False,
+                'default': None,
+            },
             'quantity': {
                 'type': 'INTEGER',
                 'not_null': False,

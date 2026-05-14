@@ -62,7 +62,8 @@ _HEADER_FIELD_LABELS = [
 
 class MeiluAccountCreate(PydanticModel):
     account_name: str
-    value: Dict[str, Any]
+    """省略或全空时存 {}，后续可通过 MITM 等写入完整请求头。"""
+    value: Optional[Dict[str, Any]] = None
     login_id: Optional[str] = None
     seller_id: Optional[str] = None
     status: str = "active"
@@ -298,10 +299,20 @@ def list_meilu_accounts(
     )
 
 
+def _value_json_for_create(data: MeiluAccountCreate) -> str:
+    raw = data.value
+    if not raw or not isinstance(raw, dict):
+        return json.dumps({}, ensure_ascii=False)
+    if not any(str(v or "").strip() for v in raw.values()):
+        return json.dumps({}, ensure_ascii=False)
+    headers = _norm_headers_dict(raw)
+    return json.dumps(headers, ensure_ascii=False)
+
+
 @router.post("")
 def create_meilu_account(data: MeiluAccountCreate):
     _validate_status(data.status)
-    headers = _norm_headers_dict(data.value)
+    value_json = _value_json_for_create(data)
     name = _norm_required_text(data.account_name, "账号名称")
     lid = (data.login_id or "").strip() or name
     io, fi = _norm_auto_fetch(_normalize_is_open(data.is_open), data.fetch_interval)
@@ -310,7 +321,7 @@ def create_meilu_account(data: MeiluAccountCreate):
         login_id=lid,
         seller_id=_norm_seller_id(data.seller_id),
         login_password=None,
-        value=json.dumps(headers, ensure_ascii=False),
+        value=value_json,
         status=data.status,
         remark=data.remark,
         is_open=io,

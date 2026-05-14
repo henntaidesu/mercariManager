@@ -19,6 +19,20 @@ router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 public_router = APIRouter(prefix="/api/inventory", tags=["inventory-public"])
 db = DatabaseManager()
 
+
+def _coerce_optional_cost_cny(v):
+    """人民币成本：可空；合法时为非负小数，最多四位小数。"""
+    if v is None or v == "":
+        return None
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    if x < 0 or x > 1e9:
+        return None
+    return round(x, 4)
+
+
 PRODUCT_COLUMNS = [
     "id",
     "name",
@@ -28,6 +42,7 @@ PRODUCT_COLUMNS = [
     "product_type_id",
     "owner_user_id",
     "price",
+    "cost_cny",
     "quantity",
     "mercari_item_id",
     "on_sale_quantity",
@@ -59,6 +74,7 @@ class ProductCreate(PydanticModel):
     owner_user_id: Optional[int] = None
     warehouse_id: Optional[int] = None
     price: int = 0
+    cost_cny: Optional[float] = None
     quantity: Optional[int] = 1
     description: Optional[str] = None
     listing_title: Optional[str] = None
@@ -78,6 +94,11 @@ class ProductCreate(PydanticModel):
         except (TypeError, ValueError):
             return 0
 
+    @field_validator('cost_cny', mode='before')
+    @classmethod
+    def _cost_cny_create(cls, v):
+        return _coerce_optional_cost_cny(v)
+
 
 class CombinedProductComponent(PydanticModel):
     inventory_id: int
@@ -91,6 +112,7 @@ class CombinedProductCreate(PydanticModel):
     owner_user_id: Optional[int] = None
     warehouse_id: Optional[int] = None
     price: int = 0
+    cost_cny: Optional[float] = None
     quantity: int = 1
     description: Optional[str] = None
     listing_title: Optional[str] = None
@@ -109,6 +131,11 @@ class CombinedProductCreate(PydanticModel):
         except (TypeError, ValueError):
             return 0
 
+    @field_validator('cost_cny', mode='before')
+    @classmethod
+    def _cost_cny_combo(cls, v):
+        return _coerce_optional_cost_cny(v)
+
 
 class ProductUpdate(PydanticModel):
     name: Optional[str] = None
@@ -118,6 +145,7 @@ class ProductUpdate(PydanticModel):
     owner_user_id: Optional[int] = None
     warehouse_id: Optional[int] = None
     price: Optional[int] = None
+    cost_cny: Optional[float] = None
     quantity: Optional[int] = None
     description: Optional[str] = None
     listing_title: Optional[str] = None
@@ -136,6 +164,11 @@ class ProductUpdate(PydanticModel):
             return int(round(float(v)))
         except (TypeError, ValueError):
             return None
+
+    @field_validator('cost_cny', mode='before')
+    @classmethod
+    def _cost_cny_update(cls, v):
+        return _coerce_optional_cost_cny(v)
 
 
 def _row_to_product_detail(row: tuple) -> dict:
@@ -491,10 +524,10 @@ def create_combined_product(data: CombinedProductCreate, claims: dict = Depends(
             cur.execute(
                 """
                 INSERT INTO [inventory] (
-                    name, barcode, category_id, product_type_id, owner_user_id, warehouse_id, price, quantity,
+                    name, barcode, category_id, product_type_id, owner_user_id, warehouse_id, price, cost_cny, quantity,
                     mercari_item_id, on_sale_quantity, pending_outbound_qty, is_combined, combined_items,
                     description, listing_title, listing_body, image, image_front, image_back
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     name,
@@ -504,6 +537,7 @@ def create_combined_product(data: CombinedProductCreate, claims: dict = Depends(
                     data.owner_user_id,
                     data.warehouse_id,
                     data.price,
+                    data.cost_cny,
                     combo_quantity,
                     None,
                     0,
@@ -651,10 +685,10 @@ def create_product(data: ProductCreate, claims: dict = Depends(require_auth)):
         new_id = db.execute_insert(
             """
             INSERT INTO [inventory] (
-                name, barcode, category_id, product_type_id, owner_user_id, warehouse_id, price, quantity,
+                name, barcode, category_id, product_type_id, owner_user_id, warehouse_id, price, cost_cny, quantity,
                 mercari_item_id, on_sale_quantity, pending_outbound_qty,
                 description, listing_title, listing_body, image, image_front, image_back
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data.name,
@@ -664,6 +698,7 @@ def create_product(data: ProductCreate, claims: dict = Depends(require_auth)):
                 data.owner_user_id,
                 data.warehouse_id,
                 data.price,
+                data.cost_cny,
                 data.quantity,
                 (data.mercari_item_id or "").strip() or None,
                 int(data.on_sale_quantity) if data.on_sale_quantity is not None else 0,
@@ -729,7 +764,8 @@ def update_product(pid: int, data: ProductUpdate, claims: dict = Depends(require
         if new_owner_user_id is not None and not _user_exists(new_owner_user_id):
             raise HTTPException(status_code=400, detail="商品归属用户不存在")
     allowed_fields = {
-        "name", "barcode", "category_id", "product_type_id", "owner_user_id", "warehouse_id", "price", "quantity",
+        "name", "barcode", "category_id", "product_type_id", "owner_user_id", "warehouse_id", "price", "cost_cny",
+        "quantity",
         "mercari_item_id", "on_sale_quantity",
         "description", "listing_title", "listing_body", "image", "image_front", "image_back",
     }
