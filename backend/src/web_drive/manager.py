@@ -34,13 +34,15 @@ def get_web_drive_manager() -> "EdgeWebDriveManager":
 class _DriveThreadState:
     """单个 OS 线程内的浏览器状态（Lock / Playwright / 会话表）。"""
 
-    __slots__ = ("lock", "playwright", "playwright_loop", "contexts")
+    __slots__ = ("lock", "playwright", "playwright_loop", "contexts", "session_meta")
 
     def __init__(self) -> None:
         self.lock: Optional[asyncio.Lock] = None
         self.playwright: Any = None
         self.playwright_loop: Optional[asyncio.AbstractEventLoop] = None
         self.contexts: Dict[str, Any] = {}
+        # account_key -> {"interactive": bool, "headless": bool}
+        self.session_meta: Dict[str, Dict[str, bool]] = {}
 
 
 class EdgeWebDriveManager:
@@ -206,6 +208,26 @@ class EdgeWebDriveManager:
                 pass
 
     @staticmethod
+    def _prune_dead_sessions(s: _DriveThreadState) -> None:
+        for k in list(s.contexts.keys()):
+            c = s.contexts.get(k)
+            if c is not None and EdgeWebDriveManager._is_context_alive(c):
+                continue
+            s.contexts.pop(k, None)
+            s.session_meta.pop(k, None)
+
+    @staticmethod
+    def _session_meta(s: _DriveThreadState, key: str) -> Dict[str, bool]:
+        return s.session_meta.get(key, {})
+
+    @staticmethod
+    def _is_interactive_session(s: _DriveThreadState, key: str) -> bool:
+        ctx = s.contexts.get(key)
+        if ctx is None or not EdgeWebDriveManager._is_context_alive(ctx):
+            return False
+        return bool(s.session_meta.get(key, {}).get("interactive"))
+
+    @staticmethod
     def _is_context_alive(ctx: Any) -> bool:
         """用户手动关窗后 Playwright 上下文已关闭，但字典里可能仍留着引用。"""
         if ctx is None:
@@ -227,11 +249,14 @@ class EdgeWebDriveManager:
                 pages = len(ctx.pages)
             except Exception:
                 continue
+            meta = self._session_meta(s, key)
             out.append(
                 {
                     "account_key": key,
                     "profile_dir": os.path.join(profiles_root(), key),
                     "open_pages": pages,
+                    "interactive": bool(meta.get("interactive")),
+                    "headless": bool(meta.get("headless")),
                 }
             )
         return out
@@ -243,15 +268,57 @@ class EdgeWebDriveManager:
         headless: bool = False,
         start_url: Optional[str] = None,
         proxy_server: Optional[str] = None,
+        interactive: Optional[bool] = None,
     ) -> Dict[str, Any]:
+        """
+        :param interactive: 用户手动打开的可见会话（不会被 MITM 自动化 ``close_session_if_automation`` 关闭）。
+            默认：``headless=False`` 时为 True，``headless=True`` 时为 False。
+        """
         key = validate_account_key(account_key)
+        if interactive is None:
+            interactive = not headless
         async with self._serialize_profile(key):
             return await self._open_session_impl(
                 key,
                 headless=headless,
                 start_url=start_url,
                 proxy_server=proxy_server,
+                interactive=interactive,
             )
+
+    def is_interactive_session_running(self, account_key: str) -> bool:
+        """主 profile（``meilu_{id}``）上是否有用户手动打开的有头会话。"""
+        key = validate_account_key(account_key)
+        s = self._ts()
+        self._prune_dead_sessions(s)
+        return self._is_interactive_session(s, key)
+
+    async def ensure_session_for_mitm(
+        self,
+        account_key: str,
+        *,
+        start_url: Optional[str],
+        proxy_server: Optional[str],
+        headless: bool,
+    ) -> Dict[str, Any]:
+        """
+        MITM 用：在 ``meilu_{id}__auto`` 独立 profile 上启动新的无头（或指定 headless）会话。
+        不触碰 ``meilu_{id}`` 上有头用户窗口。
+        """
+        key = validate_account_key(account_key)
+        async with self._serialize_profile(key):
+            await self._close_session_unlocked(key, force=True)
+            return await self._open_session_impl(
+                key,
+                headless=headless,
+                start_url=start_url,
+                proxy_server=proxy_server,
+                interactive=False,
+            )
+
+    async def close_session_if_automation(self, account_key: str) -> Dict[str, Any]:
+        """关闭 ``__auto`` 自动化会话；主 profile 有头会话请用 ``close_session``。"""
+        return await self.close_session(account_key, force=True)
 
     async def _open_session_impl(
         self,
@@ -260,38 +327,52 @@ class EdgeWebDriveManager:
         headless: bool = False,
         start_url: Optional[str] = None,
         proxy_server: Optional[str] = None,
+        interactive: bool = False,
     ) -> Dict[str, Any]:
         s = self._prepare_async()
         async with s.lock:  # type: ignore[union-attr]
-            for k in list(s.contexts.keys()):
-                c = s.contexts.get(k)
-                if c is not None and not self._is_context_alive(c):
-                    s.contexts.pop(k, None)
+            self._prune_dead_sessions(s)
 
             ctx = s.contexts.get(key)
+            meta = self._session_meta(s, key)
 
-            if ctx is not None:
+            if ctx is not None and self._is_context_alive(ctx):
+                if interactive and not meta.get("interactive"):
+                    try:
+                        await ctx.close()
+                    except Exception:
+                        pass
+                    s.contexts.pop(key, None)
+                    s.session_meta.pop(key, None)
+                    ctx = None
+            ctx = s.contexts.get(key)
+            if ctx is not None and self._is_context_alive(ctx):
                 if start_url:
                     try:
                         await self._navigate_one_tab(ctx, start_url)
                     except Exception:
                         s.contexts.pop(key, None)
+                        s.session_meta.pop(key, None)
                         ctx = None
                 else:
-                    return {
+                    out = {
                         "account_key": key,
                         "already_running": True,
                         "profile_dir": profile_dir_for(key),
                         "profiles_root": profiles_root(),
+                        "interactive": bool(meta.get("interactive")),
                     }
+                    return out
 
-            if ctx is not None:
-                return {
+            if ctx is not None and self._is_context_alive(ctx):
+                out = {
                     "account_key": key,
                     "already_running": True,
                     "profile_dir": profile_dir_for(key),
                     "profiles_root": profiles_root(),
+                    "interactive": bool(meta.get("interactive")),
                 }
+                return out
 
             pw = await self._ensure_playwright(s)
             udir = profile_dir_for(key)
@@ -334,6 +415,7 @@ class EdgeWebDriveManager:
                 ) from last_exc
 
             s.contexts[key] = context
+            s.session_meta[key] = {"interactive": bool(interactive), "headless": bool(headless)}
             if start_url:
                 await self._navigate_one_tab(context, start_url)
 
@@ -343,24 +425,53 @@ class EdgeWebDriveManager:
                 "profile_dir": udir,
                 "profiles_root": profiles_root(),
                 "proxy_server": ps or None,
+                "interactive": bool(interactive),
             }
 
-    async def close_session(self, account_key: str) -> Dict[str, Any]:
+    async def _close_session_unlocked(
+        self,
+        key: str,
+        *,
+        only_automation: bool = False,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        s = self._prepare_async()
+        closed = False
+        async with s.lock:  # type: ignore[union-attr]
+            self._prune_dead_sessions(s)
+            meta = self._session_meta(s, key)
+            if only_automation and not force and meta.get("interactive"):
+                return {
+                    "account_key": key,
+                    "closed": False,
+                    "skipped": "interactive",
+                }
+            ctx = s.contexts.pop(key, None)
+            s.session_meta.pop(key, None)
+            if ctx is None:
+                return {"account_key": key, "closed": False}
+            try:
+                if self._is_context_alive(ctx):
+                    await ctx.close()
+                    closed = True
+            except Exception:
+                pass
+        if closed:
+            await asyncio.sleep(self._profile_release_delay_sec())
+        return {"account_key": key, "closed": closed}
+
+    async def close_session(
+        self,
+        account_key: str,
+        *,
+        only_automation: bool = False,
+        force: bool = False,
+    ) -> Dict[str, Any]:
         key = validate_account_key(account_key)
         async with self._serialize_profile(key):
-            s = self._prepare_async()
-            async with s.lock:  # type: ignore[union-attr]
-                ctx = s.contexts.pop(key, None)
-                if ctx is None:
-                    return {"account_key": key, "closed": False}
-                try:
-                    if self._is_context_alive(ctx):
-                        await ctx.close()
-                except Exception:
-                    pass
-            # 释放 user_data_dir 文件锁，避免紧接着 launch_persistent_context 时 Edge 秒退
-            await asyncio.sleep(self._profile_release_delay_sec())
-            return {"account_key": key, "closed": True}
+            return await self._close_session_unlocked(
+                key, only_automation=only_automation, force=force
+            )
 
     async def click_xpath(
         self,
@@ -423,6 +534,7 @@ class EdgeWebDriveManager:
                         await ctx.close()
                     except Exception:
                         pass
+            s.session_meta.clear()
             if s.playwright is not None:
                 try:
                     await s.playwright.stop()

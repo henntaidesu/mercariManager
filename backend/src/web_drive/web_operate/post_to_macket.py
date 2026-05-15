@@ -442,6 +442,7 @@ async def post_to_market(
         headless=False,
         start_url=SELL_CREATE_URL,
         proxy_server=ps,
+        interactive=True,
     )
 
     s = manager._prepare_async()
@@ -746,7 +747,7 @@ async def post_to_market(
         if report:
             report("close_browser", "出品成功，正在关闭浏览器…")
         try:
-            await manager.close_session(account_key)
+            await manager.close_session(account_key, force=True)
             result["browser_closed"] = True
             log.info("[post_to_market] 出品成功，已关闭浏览器会话: %s", account_key)
             print(f"[出品] 出品成功，已关闭浏览器: {account_key}", flush=True)

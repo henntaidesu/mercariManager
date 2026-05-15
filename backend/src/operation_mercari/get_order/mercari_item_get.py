@@ -20,8 +20,7 @@ from ...ssl_mitm_proxy.capture_config import (
     clear_item_get_response_file,
     read_item_get_response,
 )
-from ...ssl_mitm_proxy.runner import default_mitm_proxy_url, start_mitm_proxy
-from ...web_drive import get_web_drive_manager
+from ...web_drive.mitm_session import mitm_automation_browser
 
 _ITEM_GET_BASE = "https://api.mercari.jp/items/get"
 # 与 App / 测试样例一致的查询参数（顺序固定便于抓包对照）
@@ -91,41 +90,25 @@ async def _fetch_mercari_item_get_via_browser_impl(
     *,
     timeout: int,
 ) -> Dict[str, Any]:
-    r = start_mitm_proxy()
-    if r.get("error"):
-        raise RuntimeError(f"MITM 代理不可用: {r['error']}")
-
     cid = canonical_mercari_item_id(item_id)
     if not cid:
         raise RuntimeError("item_id 不能为空")
 
     clear_item_get_response_file(cid)
     since_ms = int(time.time() * 1000)
-
-    mgr = get_web_drive_manager()
-    key = f"meilu_{account_id}"
-    proxy = default_mitm_proxy_url()
     headless = _mitm_browser_headless()
     page_url = mercari_item_page_url(cid)
 
-    try:
-        await mgr.close_session(key)
-        await mgr.open_session(
-            key,
-            headless=headless,
-            start_url=page_url,
-            proxy_server=proxy,
-        )
+    async with mitm_automation_browser(
+        account_id,
+        start_url=page_url,
+        headless=headless,
+    ):
         await _wait_item_get_mitm_response(
             item_id=cid,
             since_ms=since_ms,
             wait_seconds=timeout,
         )
-    finally:
-        try:
-            await mgr.close_session(key)
-        except Exception:
-            pass
 
     wrapped = read_item_get_response(cid) or {}
     body = wrapped.get("body")

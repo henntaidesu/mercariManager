@@ -19,8 +19,7 @@ from ....ssl_mitm_proxy.capture_config import (
     clear_sold_out_list_response_file,
     read_sold_out_list_response,
 )
-from ....ssl_mitm_proxy.runner import default_mitm_proxy_url, start_mitm_proxy
-from ....web_drive import get_web_drive_manager
+from ....web_drive.mitm_session import mitm_automation_browser
 from ..get_in_progress_order.get_order_info import apply_item_info_to_order
 from ..get_in_progress_order.get_order_list import _item_to_order_data, _upsert_order
 
@@ -70,37 +69,21 @@ async def _fetch_sold_out_list_via_browser_impl(
     *,
     timeout: int,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    r = start_mitm_proxy()
-    if r.get("error"):
-        raise RuntimeError(f"MITM 代理不可用: {r['error']}")
-
     seller_key = str(int(seller_id))
     clear_sold_out_list_response_file(seller_key)
     since_ms = int(time.time() * 1000)
-
-    mgr = get_web_drive_manager()
-    key = f"meilu_{account_id}"
-    proxy = default_mitm_proxy_url()
     headless = _mitm_browser_headless()
 
-    try:
-        await mgr.close_session(key)
-        await mgr.open_session(
-            key,
-            headless=headless,
-            start_url=COMPLETED_PAGE_URL,
-            proxy_server=proxy,
-        )
+    async with mitm_automation_browser(
+        account_id,
+        start_url=COMPLETED_PAGE_URL,
+        headless=headless,
+    ):
         await _wait_sold_out_mitm_response(
             seller_key=seller_key,
             since_ms=since_ms,
             wait_seconds=timeout,
         )
-    finally:
-        try:
-            await mgr.close_session(key)
-        except Exception:
-            pass
 
     wrapped = read_sold_out_list_response(seller_key) or {}
     body = wrapped.get("body")

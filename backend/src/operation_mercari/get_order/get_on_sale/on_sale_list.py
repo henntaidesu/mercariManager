@@ -5,7 +5,7 @@ Mercari 在售商品列表：通过账号对应 WebDriver 打开
 由 mitmproxy 截获 ``GET https://api.mercari.jp/items/get_items``（status 含 on_sale/stop）
 的响应体，不再直接 HTTP 调用 API。
 
-浏览器 profile 键与账号管理 MITM 抓包一致：``meilu_{account_id}``。
+MITM 无头浏览器使用独立 profile：``meilu_{account_id}__auto``（与账号页有头 ``meilu_{account_id}`` 分离）。
 截获完成后会在 ``finally`` 中关闭该账号浏览器会话。
 环境变量 ``WEB_DRIVE_MERCARI_HEADLESS`` 或 ``WEB_DRIVE_ON_SALE_SYNC_HEADLESS``：默认 ``1`` 为无头。
 """
@@ -22,8 +22,7 @@ from ....ssl_mitm_proxy.capture_config import (
     clear_on_sale_list_response_file,
     read_on_sale_list_response,
 )
-from ....ssl_mitm_proxy.runner import default_mitm_proxy_url, start_mitm_proxy
-from ....web_drive import get_web_drive_manager
+from ....web_drive.mitm_session import mitm_automation_browser
 
 _API_BASE = "https://api.mercari.jp/items/get_items"
 LISTINGS_PAGE_URL = "https://jp.mercari.com/mypage/listings"
@@ -80,38 +79,21 @@ async def _fetch_on_sale_via_browser_impl(
     *,
     timeout: int,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    r = start_mitm_proxy()
-    if r.get("error"):
-        raise RuntimeError(f"MITM 代理不可用: {r['error']}")
-
     seller_key = str(int(seller_id))
     clear_on_sale_list_response_file(seller_key)
     since_ms = int(time.time() * 1000)
-
-    mgr = get_web_drive_manager()
-    key = f"meilu_{account_id}"
-    proxy = default_mitm_proxy_url()
     headless = _on_sale_sync_headless()
 
-    try:
-        await mgr.close_session(key)
-        await mgr.open_session(
-            key,
-            headless=headless,
-            start_url=LISTINGS_PAGE_URL,
-            proxy_server=proxy,
-        )
+    async with mitm_automation_browser(
+        account_id,
+        start_url=LISTINGS_PAGE_URL,
+        headless=headless,
+    ):
         await _wait_on_sale_mitm_response(
             seller_key=seller_key,
             since_ms=since_ms,
             wait_seconds=timeout,
         )
-    finally:
-        # 数据已由 MITM 写入磁盘后立即关闭浏览器，避免长时间占用会话
-        try:
-            await mgr.close_session(key)
-        except Exception:
-            pass
 
     wrapped = read_on_sale_list_response(seller_key) or {}
     body = wrapped.get("body")

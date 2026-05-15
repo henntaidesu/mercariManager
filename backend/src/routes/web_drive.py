@@ -65,6 +65,7 @@ async def open_session(body: OpenSessionBody):
                 headless=body.headless,
                 start_url=body.start_url,
                 proxy_server=proxy,
+                interactive=not body.headless,
             ),
         }
     except ValueError as exc:

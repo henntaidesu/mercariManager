@@ -445,12 +445,17 @@ async def fetch_auth_via_mitm(
         mgr = None
         if cfg.open_browser:
             mgr = get_web_drive_manager()
-            await mgr.close_session(f"meilu_{aid}")
+            from ..web_drive.paths import meilu_automation_key, seed_automation_profile_from_account
+
+            auto_key = meilu_automation_key(aid)
+            await mgr.close_session(auto_key, force=True)
+            seed_automation_profile_from_account(aid)
             await mgr.open_session(
-                f"meilu_{aid}",
+                auto_key,
                 headless=False,
                 start_url=MERCARI_IN_PROGRESS_URL,
                 proxy_server=default_mitm_proxy_url(),
+                interactive=False,
             )
 
         patch: Dict[str, Any] = {}
@@ -484,10 +489,10 @@ async def fetch_auth_via_mitm(
         if cfg.open_browser and mgr is not None:
             try:
                 # 先确保处于「取引中」页，再点击首条交易触发 transaction_evidences/get
-                await mgr.open_new_tab(f"meilu_{aid}", MERCARI_IN_PROGRESS_URL)
+                await mgr.open_new_tab(auto_key, MERCARI_IN_PROGRESS_URL)
                 clicked = await _click_first_match_xpath(
                     mgr,
-                    f"meilu_{aid}",
+                    auto_key,
                     [cfg.in_progress_xpath, *list(IN_PROGRESS_CLICK_XPATH_CANDIDATES)],
                     timeout_ms=25000,
                 )
@@ -522,7 +527,7 @@ async def fetch_auth_via_mitm(
 
         # Step 3: DPoP_OnSale-List
         if cfg.open_browser and mgr is not None:
-            await mgr.open_new_tab(f"meilu_{aid}", MERCARI_LISTINGS_URL)
+            await mgr.open_new_tab(auto_key, MERCARI_LISTINGS_URL)
         cap_on_sale = await _wait_capture_with_progress(
             since_ms=int(cap_info.get("ts") or t0),
             capture_type="items_get_items",
@@ -548,7 +553,7 @@ async def fetch_auth_via_mitm(
         # Step 4: DPoP_ItemGet-Info
         if cfg.open_browser and mgr is not None:
             try:
-                await mgr.click_xpath(f"meilu_{aid}", cfg.first_item_xpath, timeout_ms=25000)
+                await mgr.click_xpath(auto_key, cfg.first_item_xpath, timeout_ms=25000)
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"步骤4前置失败：自动点击「出品中」首条失败: {exc}") from exc
         cap_item_get = await _wait_capture_with_progress(
@@ -611,7 +616,7 @@ async def fetch_auth_via_mitm(
         # 认证抓取流程已完成：自动关闭该账号浏览器会话，避免残留窗口。
         if cfg.open_browser and mgr is not None:
             try:
-                await mgr.close_session(f"meilu_{aid}")
+                await mgr.close_session(auto_key, force=True)
             except Exception as exc:
                 log.warning("[MITM] 认证完成后自动关闭浏览器失败 id=%s: %s", aid, exc)
 
