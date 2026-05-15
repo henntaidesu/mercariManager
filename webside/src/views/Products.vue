@@ -470,15 +470,12 @@
           </el-col>
         </el-row>
         <!-- 商品图（最多 {{ MAX_INVENTORY_IMAGES }} 张） -->
-        <el-form-item
-          v-if="showCombinedEditDetail"
-          label="商品图片"
-          class="inventory-images-combined-header"
-        >
+        <el-form-item label="商品图片" class="inventory-images-combined-header">
           <div class="inventory-images-combined-header__inner">
             <span class="img-label-count">{{ form.images.length }} / {{ MAX_INVENTORY_IMAGES }}</span>
             <div class="inventory-images-toolbar inventory-images-toolbar--inline">
               <el-button
+                v-if="showCombinedEditDetail"
                 type="primary"
                 plain
                 size="small"
@@ -502,47 +499,17 @@
         <el-form-item
           prop="image_front"
           style="display: block"
-          :label="showCombinedEditDetail ? '商品图片' : undefined"
-          class="inventory-images-form-item"
-          :class="{
-            'inventory-images-form-item--combined': showCombinedEditDetail,
-            'inventory-images-form-item--combined-grid': showCombinedEditDetail
-          }"
+          label="商品图片"
+          class="inventory-images-form-item inventory-images-form-item--combined inventory-images-form-item--combined-grid"
         >
-          <div v-if="!showCombinedEditDetail" class="img-label-row">
-            <div class="img-label-block">
-              <span class="img-label">商品图片</span>
-              <span class="img-label-count">{{ form.images.length }} / {{ MAX_INVENTORY_IMAGES }}</span>
-            </div>
-            <span
-              v-if="form.images.length >= MAX_INVENTORY_IMAGES"
-              class="img-count-hint"
-            >已达上限</span>
-          </div>
-          <div
-            class="inventory-images-grid"
-            :class="{ 'inventory-images-grid--combined': showCombinedEditDetail }"
-          >
+          <div class="inventory-images-grid inventory-images-grid--combined">
             <div
               v-for="(imgUrl, imgIdx) in form.images"
               :key="`inv-img-${imgIdx}-${imgUrl || ''}`"
-              class="inventory-image-cell"
-              :class="{ 'inventory-image-cell--compact': showCombinedEditDetail }"
+              class="inventory-image-cell inventory-image-cell--compact"
             >
-              <div v-if="!showCombinedEditDetail" class="img-label-row img-label-row--slot">
-                <span class="img-slot-label">图 {{ imgIdx + 1 }}{{ imgIdx === 0 ? '（主图）' : '' }}</span>
-                <el-button type="primary" plain size="small" @click.stop="triggerInventoryImageFilePick(imgIdx, 'pick')">
-                  上传图片
-                </el-button>
-              </div>
-              <div
-                class="inventory-image-cell__frame"
-                :class="{ 'inventory-image-cell__frame--badge': showCombinedEditDetail }"
-              >
-                <span
-                  v-if="showCombinedEditDetail"
-                  class="inventory-image-cell__badge"
-                >{{ imgIdx === 0 ? '主图' : `图 ${imgIdx + 1}` }}</span>
+              <div class="inventory-image-cell__frame inventory-image-cell__frame--badge">
+                <span class="inventory-image-cell__badge">{{ imgIdx === 0 ? '主图' : `图 ${imgIdx + 1}` }}</span>
                 <div
                   class="image-upload-area inventory-form-image-area"
                   :class="{ 'inventory-form-image-area--empty': !imgUrl }"
@@ -562,7 +529,6 @@
                   />
                   <div v-else class="upload-placeholder">
                     <el-icon size="32" color="#4a5a72"><Camera /></el-icon>
-                    <div v-if="!showCombinedEditDetail" class="upload-tip">{{ formImageUploadTip }}</div>
                   </div>
                 </div>
               </div>
@@ -587,45 +553,23 @@
             </div>
             <div
               v-if="form.images.length < MAX_INVENTORY_IMAGES"
-              class="inventory-image-cell inventory-image-cell--add"
-              :class="{ 'inventory-image-cell--compact': showCombinedEditDetail }"
+              class="inventory-image-cell inventory-image-cell--add inventory-image-cell--compact"
             >
-              <template v-if="showCombinedEditDetail">
-                <div
-                  class="image-upload-area inventory-form-image-area inventory-form-image-area--empty inventory-image-cell__add-placeholder"
-                >
-                  <div class="upload-placeholder">
-                    <el-icon size="32" color="#4a5a72"><Camera /></el-icon>
-                    <span class="img-add-hint">还可添加 {{ MAX_INVENTORY_IMAGES - form.images.length }} 张</span>
-                  </div>
-                </div>
-              </template>
-              <template v-else>
-                <div class="img-label-row img-label-row--slot">
-                  <span class="img-slot-label">添加图片</span>
-                  <el-button type="primary" plain size="small" @click.stop="triggerInventoryImageFilePick(-1, 'pick')">
-                    上传图片
-                  </el-button>
-                </div>
-                <div
-                  class="image-upload-area inventory-form-image-area inventory-form-image-area--empty"
-                  @click="openProductImageSource(-1)"
-                >
-                  <div class="upload-placeholder">
-                    <el-icon size="32" color="#4a5a72"><Camera /></el-icon>
-                    <div class="upload-tip">{{ formImageUploadTip }}</div>
-                  </div>
-                </div>
-                <div
-                  v-if="isNoBarcodeNewInventory && !form.id && nbImageUploadBySlot[form.images.length]?.uploading"
-                  class="nb-inventory-upload-progress"
-                >
-                  <el-progress :percentage="nbImageUploadBySlot[form.images.length].percent" :stroke-width="10" />
-                </div>
-                <div class="img-actions">
+              <div
+                class="image-upload-area inventory-form-image-area inventory-form-image-area--empty inventory-image-cell__add-placeholder"
+                @click="openProductImageSource(-1)"
+              >
+                <div class="upload-placeholder">
+                  <el-icon size="32" color="#4a5a72"><Camera /></el-icon>
                   <span class="img-add-hint">还可添加 {{ MAX_INVENTORY_IMAGES - form.images.length }} 张</span>
                 </div>
-              </template>
+              </div>
+              <div
+                v-if="isNoBarcodeNewInventory && !form.id && nbImageUploadBySlot[form.images.length]?.uploading"
+                class="nb-inventory-upload-progress"
+              >
+                <el-progress :percentage="nbImageUploadBySlot[form.images.length].percent" :stroke-width="10" />
+              </div>
             </div>
           </div>
           <input
@@ -1731,10 +1675,19 @@ const showCombinedEditDetail = computed(
   () => Boolean(form.value?.id) && Number(form.value?.is_combined || 0) === 1
 )
 
+const PRODUCT_EDIT_DIALOG_FORM_WIDTH = 580
+const COMBINED_EDIT_ASIDE_WIDTH = 280
+const COMBINED_EDIT_LAYOUT_GAP = 20
+
 const productEditDialogWidth = computed(() => {
   if (isMobile.value) return '96vw'
-  if (showCombinedEditDetail.value) return 'min(1080px, 98vw)'
-  return '580px'
+  if (showCombinedEditDetail.value) {
+    // 左侧表单与一般商品同宽 + 间距 + 右侧组成明细
+    const total =
+      PRODUCT_EDIT_DIALOG_FORM_WIDTH + COMBINED_EDIT_LAYOUT_GAP + COMBINED_EDIT_ASIDE_WIDTH + 40
+    return `min(${total}px, 98vw)`
+  }
+  return `${PRODUCT_EDIT_DIALOG_FORM_WIDTH}px`
 })
 
 const rules = {
@@ -4229,13 +4182,18 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 20px;
 }
+.product-edit-dialog-layout--combined .product-edit-dialog-layout__form {
+  flex: 0 0 580px;
+  width: 580px;
+  max-width: 580px;
+}
 .product-edit-dialog-layout__form {
   flex: 1 1 auto;
   min-width: 0;
 }
 .product-edit-dialog-layout__aside {
-  flex: 0 0 312px;
-  width: 312px;
+  flex: 0 0 280px;
+  width: 280px;
   max-width: 100%;
   padding: 12px 14px 14px;
   border-radius: 8px;
@@ -4411,6 +4369,11 @@ onBeforeUnmount(() => {
 @media (max-width: 768px) {
   .product-edit-dialog-layout--combined {
     flex-direction: column;
+  }
+  .product-edit-dialog-layout--combined .product-edit-dialog-layout__form {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: none;
   }
   .product-edit-dialog-layout__aside {
     flex: none;
@@ -4680,10 +4643,6 @@ onBeforeUnmount(() => {
 }
 .inventory-images-form-item--combined :deep(.img-actions) {
   justify-content: center;
-}
-.product-edit-dialog-layout--combined .product-edit-dialog-layout__aside {
-  flex: 0 0 280px;
-  width: 280px;
 }
 .combined-edit-aside-item {
   padding: 10px 12px;

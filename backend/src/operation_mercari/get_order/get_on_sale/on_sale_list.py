@@ -12,7 +12,6 @@ MITM 无头浏览器使用独立 profile：``meilu_{account_id}__auto``（与账
 
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -22,7 +21,7 @@ from ....ssl_mitm_proxy.capture_config import (
     clear_on_sale_list_response_file,
     read_on_sale_list_response,
 )
-from ....web_drive.mitm_session import mitm_automation_browser
+from ....web_drive.mitm_session import mitm_automation_browser, wait_mitm_capture
 
 _API_BASE = "https://api.mercari.jp/items/get_items"
 LISTINGS_PAGE_URL = "https://jp.mercari.com/mypage/listings"
@@ -55,24 +54,6 @@ def _on_sale_sync_headless() -> bool:
     return v in ("1", "true", "yes", "on")
 
 
-async def _wait_on_sale_mitm_response(
-    *,
-    seller_key: str,
-    since_ms: int,
-    wait_seconds: int,
-) -> Dict[str, Any]:
-    deadline = time.monotonic() + wait_seconds
-    while time.monotonic() < deadline:
-        data = read_on_sale_list_response(seller_key)
-        if data and int(data.get("ts") or 0) >= since_ms:
-            return data
-        await asyncio.sleep(0.35)
-    raise RuntimeError(
-        f"{wait_seconds}s 内未截获在售列表 API 响应（请确认 mitmdump 已启动、"
-        f"账号已登录且 seller_id={seller_key} 与页面一致）"
-    )
-
-
 async def _fetch_on_sale_via_browser_impl(
     account_id: int,
     seller_id: int,
@@ -88,11 +69,17 @@ async def _fetch_on_sale_via_browser_impl(
         account_id,
         start_url=LISTINGS_PAGE_URL,
         headless=headless,
-    ):
-        await _wait_on_sale_mitm_response(
-            seller_key=seller_key,
+    ) as (mgr, auto_key):
+        await wait_mitm_capture(
+            mgr=mgr,
+            auto_key=auto_key,
+            start_url=LISTINGS_PAGE_URL,
+            read_response=lambda: read_on_sale_list_response(seller_key),
             since_ms=since_ms,
             wait_seconds=timeout,
+            error_detail=(
+                f"在售列表 items/get_items（on_sale,stop），seller_id={seller_key}"
+            ),
         )
 
     wrapped = read_on_sale_list_response(seller_key) or {}

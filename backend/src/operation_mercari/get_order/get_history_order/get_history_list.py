@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -19,7 +18,7 @@ from ....ssl_mitm_proxy.capture_config import (
     clear_sold_out_list_response_file,
     read_sold_out_list_response,
 )
-from ....web_drive.mitm_session import mitm_automation_browser
+from ....web_drive.mitm_session import mitm_automation_browser, wait_mitm_capture
 from ..get_in_progress_order.get_order_info import apply_item_info_to_order
 from ..get_in_progress_order.get_order_list import _item_to_order_data, _upsert_order
 
@@ -45,24 +44,6 @@ def _mitm_browser_headless() -> bool:
     return v in ("1", "true", "yes", "on")
 
 
-async def _wait_sold_out_mitm_response(
-    *,
-    seller_key: str,
-    since_ms: int,
-    wait_seconds: int,
-) -> Dict[str, Any]:
-    deadline = time.monotonic() + wait_seconds
-    while time.monotonic() < deadline:
-        data = read_sold_out_list_response(seller_key)
-        if data and int(data.get("ts") or 0) >= since_ms:
-            return data
-        await asyncio.sleep(0.35)
-    raise RuntimeError(
-        f"{wait_seconds}s 内未截获已售完列表 items/get_items（sold_out）（请确认 MITM 已启动、"
-        f"账号已登录且 seller_id={seller_key}）"
-    )
-
-
 async def _fetch_sold_out_list_via_browser_impl(
     account_id: int,
     seller_id: int,
@@ -78,11 +59,17 @@ async def _fetch_sold_out_list_via_browser_impl(
         account_id,
         start_url=COMPLETED_PAGE_URL,
         headless=headless,
-    ):
-        await _wait_sold_out_mitm_response(
-            seller_key=seller_key,
+    ) as (mgr, auto_key):
+        await wait_mitm_capture(
+            mgr=mgr,
+            auto_key=auto_key,
+            start_url=COMPLETED_PAGE_URL,
+            read_response=lambda: read_sold_out_list_response(seller_key),
             since_ms=since_ms,
             wait_seconds=timeout,
+            error_detail=(
+                f"已售完列表 items/get_items（sold_out），seller_id={seller_key}"
+            ),
         )
 
     wrapped = read_sold_out_list_response(seller_key) or {}

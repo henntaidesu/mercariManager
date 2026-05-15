@@ -293,6 +293,59 @@ class EdgeWebDriveManager:
         self._prune_dead_sessions(s)
         return self._is_interactive_session(s, key)
 
+    async def copy_cookies_between_sessions(self, src_key: str, dst_key: str) -> int:
+        """
+        从源会话（通常为有头 ``meilu_{id}``）复制 Cookie 到目标会话（``meilu_{id}__auto``）。
+        主 profile 的 Cookies 文件被有头 Edge 占用时无法落盘复制，但运行中会话可读 Cookie。
+        """
+        src = validate_account_key(src_key)
+        dst = validate_account_key(dst_key)
+        s = self._prepare_async()
+        async with s.lock:  # type: ignore[union-attr]
+            src_ctx = s.contexts.get(src)
+            dst_ctx = s.contexts.get(dst)
+            if (
+                src_ctx is None
+                or dst_ctx is None
+                or not self._is_context_alive(src_ctx)
+                or not self._is_context_alive(dst_ctx)
+            ):
+                return 0
+            try:
+                cookies = await src_ctx.cookies()
+            except Exception:
+                return 0
+            if not cookies:
+                return 0
+            if not dst_ctx.pages:
+                await dst_ctx.new_page()
+            try:
+                await dst_ctx.add_cookies(cookies)
+                return len(cookies)
+            except Exception:
+                return 0
+
+    async def reload_active_tab(
+        self,
+        account_key: str,
+        url: str,
+        *,
+        wait_until: str = "domcontentloaded",
+        timeout_ms: int = 60000,
+    ) -> None:
+        """刷新目标会话当前标签页（MITM 等待超时前重试拉取 API）。"""
+        key = validate_account_key(account_key)
+        u = (url or "").strip()
+        if not u:
+            return
+        s = self._prepare_async()
+        async with s.lock:  # type: ignore[union-attr]
+            ctx = s.contexts.get(key)
+            if ctx is None or not self._is_context_alive(ctx):
+                return
+            page = ctx.pages[-1] if ctx.pages else await ctx.new_page()
+            await page.goto(u, wait_until=wait_until, timeout=timeout_ms)
+
     async def ensure_session_for_mitm(
         self,
         account_key: str,

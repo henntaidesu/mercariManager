@@ -21,7 +21,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import time
@@ -32,7 +31,7 @@ from ....ssl_mitm_proxy.capture_config import (
     clear_trading_list_response_file,
     read_trading_list_response,
 )
-from ....web_drive.mitm_session import mitm_automation_browser
+from ....web_drive.mitm_session import mitm_automation_browser, wait_mitm_capture
 from .get_order_info import apply_item_info_to_order
 
 _API_URL = "https://api.mercari.jp/items/get_items"
@@ -58,24 +57,6 @@ def _mitm_browser_headless() -> bool:
     return v in ("1", "true", "yes", "on")
 
 
-async def _wait_trading_mitm_response(
-    *,
-    seller_key: str,
-    since_ms: int,
-    wait_seconds: int,
-) -> Dict[str, Any]:
-    deadline = time.monotonic() + wait_seconds
-    while time.monotonic() < deadline:
-        data = read_trading_list_response(seller_key)
-        if data and int(data.get("ts") or 0) >= since_ms:
-            return data
-        await asyncio.sleep(0.35)
-    raise RuntimeError(
-        f"{wait_seconds}s 内未截获出售中列表 items/get_items（trading）（请确认 MITM 已启动、"
-        f"账号已登录且 seller_id={seller_key}）"
-    )
-
-
 async def _fetch_trading_list_via_browser_impl(
     account_id: int,
     seller_id: int,
@@ -91,11 +72,17 @@ async def _fetch_trading_list_via_browser_impl(
         account_id,
         start_url=IN_PROGRESS_PAGE_URL,
         headless=headless,
-    ):
-        await _wait_trading_mitm_response(
-            seller_key=seller_key,
+    ) as (mgr, auto_key):
+        await wait_mitm_capture(
+            mgr=mgr,
+            auto_key=auto_key,
+            start_url=IN_PROGRESS_PAGE_URL,
+            read_response=lambda: read_trading_list_response(seller_key),
             since_ms=since_ms,
             wait_seconds=timeout,
+            error_detail=(
+                f"出售中列表 items/get_items（trading），seller_id={seller_key}"
+            ),
         )
 
     wrapped = read_trading_list_response(seller_key) or {}
