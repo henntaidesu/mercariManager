@@ -6,8 +6,8 @@ Mercari 出品自动化：打开 https://jp.mercari.com/sell/create 并填写表
   前置  确保 Switch 开关处于 false（关闭）状态
    1.  图片上传（写真を追加）
    2.  填写商品名称
-   3.  选择商品类型（文案入口 + position；已拦截跳转 /sell/wizard）
-   4.  选择商品状態（文案入口；已拦截跳转 /sell/wizard）
+   3.  选择商品类型（文案入口 + position；若进入 /sell/wizard 则浏览器后退）
+   4.  选择商品状態（文案入口；若进入 /sell/wizard 则浏览器后退）
    5.  填写商品说明
    6.  选择快递費負担
    7.  选择配送方法（/sell/shipping_methods 页优先 XPath 选 radio，点「更新する」确认）
@@ -39,9 +39,10 @@ SELL_CREATE_URL = "https://jp.mercari.com/sell/create"
 DEFAULT_ELEMENT_TIMEOUT_MS = 12_000
 DEFAULT_PAGE_LOAD_TIMEOUT_MS = 12_000
 SALE_ELEMENT_TIMEOUT_MS = 8_000
-# 出品自动化期间阻止进入 sell/wizard（煤炉选类型/状态后的中间向导页）
+# 选类型/状态后可能进入 sell/wizard（煤炉中间向导页），用浏览器后退离开
 SELL_WIZARD_URL_FRAGMENT = "sell/wizard"
-# 选择商品类型后若仍进入向导页，兜底点此返回（正常应被导航守卫拦住）
+SELL_WIZARD_BROWSER_BACK_TIMEOUT_MS = 12_000
+# go_back 失败时兜底：页面内「出品画面に戻る」或 XPath
 SELL_WIZARD_BACK_TEXT = "出品画面に戻る"
 SELL_WIZARD_BACK_BUTTON_TESTID = "back-to-listing-button"
 # sell/wizard 返回出品表单：优先点此区域（用户提供的绝对 XPath）
@@ -350,121 +351,15 @@ def _url_is_sell_wizard(url: str) -> bool:
     return SELL_WIZARD_URL_FRAGMENT in u
 
 
-_SELL_WIZARD_GUARD_INIT_SCRIPT = """
-(() => {
-  if (window.__mercariSellWizardGuard) return;
-  window.__mercariSellWizardGuard = true;
-  const isWizard = (u) => {
-    try {
-      const s = String(u || location.href || '');
-      return s.includes('/sell/wizard') || s.includes('sell/wizard');
-    } catch (e) { return false; }
-  };
-  const origPush = history.pushState.bind(history);
-  const origReplace = history.replaceState.bind(history);
-  history.pushState = function(state, title, url) {
-    if (isWizard(url)) return;
-    return origPush(state, title, url);
-  };
-  history.replaceState = function(state, title, url) {
-    if (isWizard(url)) return;
-    return origReplace(state, title, url);
-  };
-})();
-"""
-
-
-async def _redirect_from_sell_wizard(page: Any) -> None:
-    """若已落在 sell/wizard，强制回到出品表单页。"""
-    try:
-        url = str(page.url or "")
-    except Exception:
-        url = ""
-    if not _url_is_sell_wizard(url):
-        return
-    log.warning("[post_to_market] 检测到 sell/wizard，强制返回 %s", SELL_CREATE_URL)
-    print(f"[出品] 已阻止向导页，正在返回 {SELL_CREATE_URL}", flush=True)
-    try:
-        await page.goto(SELL_CREATE_URL, wait_until="domcontentloaded", timeout=15_000)
-    except Exception as exc:
-        log.warning("[post_to_market] goto sell/create 失败: %s", exc)
-        try:
-            await page.go_back(wait_until="domcontentloaded", timeout=10_000)
-        except Exception:
-            pass
-
-
-async def _block_sell_wizard_route(route: Any) -> None:
-    """Playwright 路由：拦截对 sell/wizard 的整页/框架导航请求（不拦 XHR）。"""
-    try:
-        url = route.request.url
-        rtype = route.request.resource_type
-    except Exception:
-        url = ""
-        rtype = ""
-    if _url_is_sell_wizard(url) and rtype in ("document", "frame"):
-        log.info("[post_to_market] 已拦截 sell/wizard 导航: %s", url)
-        await route.abort()
-        return
-    await route.continue_()
-
-
-async def install_sell_wizard_navigation_guard(
-    context: Any,
-    page: Optional[Any] = None,
+async def _browser_back_from_sell_wizard(
+    page: Any,
+    *,
+    timeout_ms: int = SELL_WIZARD_BROWSER_BACK_TIMEOUT_MS,
 ) -> None:
-    """
-    阻止浏览器进入 https://jp.mercari.com/sell/wizard：
-    - 路由 abort 整页请求
-    - init_script 拦截 SPA 的 history.pushState/replaceState
-    - framenavigated 兜底跳回 sell/create
-    """
-    try:
-        await context.route("**/*", _block_sell_wizard_route)
-    except Exception as exc:
-        log.warning("[post_to_market] 注册 sell/wizard 路由拦截失败: %s", exc)
-
-    try:
-        await context.add_init_script(_SELL_WIZARD_GUARD_INIT_SCRIPT)
-    except Exception as exc:
-        log.warning("[post_to_market] 注册 sell/wizard init_script 失败: %s", exc)
-
-    targets: List[Any] = []
-    if page is not None:
-        targets.append(page)
-    try:
-        for p in context.pages:
-            if p not in targets:
-                targets.append(p)
-    except Exception:
-        pass
-
-    for pg in targets:
-        try:
-            await pg.add_init_script(_SELL_WIZARD_GUARD_INIT_SCRIPT)
-        except Exception:
-            pass
-
-        def _on_framenavigated(frame: Any, _page: Any = pg) -> None:
-            try:
-                if frame != _page.main_frame:
-                    return
-            except Exception:
-                return
-            try:
-                furl = str(frame.url or "")
-            except Exception:
-                furl = ""
-            if not _url_is_sell_wizard(furl):
-                return
-            asyncio.create_task(_redirect_from_sell_wizard(_page))
-
-        try:
-            pg.on("framenavigated", _on_framenavigated)
-        except Exception as exc:
-            log.warning("[post_to_market] 注册 framenavigated 守卫失败: %s", exc)
-
-    log.info("[post_to_market] 已启用 sell/wizard 导航拦截")
+    """模拟浏览器「后退」离开 sell/wizard（等同用户点返回上一页）。"""
+    log.info("[post_to_market] sell/wizard：执行 page.go_back()")
+    print("[出品] sell/wizard：模拟浏览器后退", flush=True)
+    await page.go_back(wait_until="domcontentloaded", timeout=timeout_ms)
 
 
 def _url_is_sell_shipping_methods(url: str) -> bool:
@@ -603,9 +498,9 @@ async def _leave_sell_wizard_if_present(
     report: Optional[Callable[[str, str], None]] = None,
 ) -> bool:
     """
-    若当前为 https://jp.mercari.com/sell/wizard ，点击返回区域/「出品画面に戻る」回到出品表单。
-    优先 XPath（5s），超时或失败则按日文文案点击。
-    返回 True 表示检测到向导页并已尝试点击返回。
+    若当前为 sell/wizard：先 page.go_back() 模拟浏览器后退；
+    仍停留在向导页时再点页面内返回按钮/文案兜底。
+    返回 True 表示检测到向导页并已尝试返回。
     """
     try:
         url = str(page.url or "")
@@ -614,9 +509,36 @@ async def _leave_sell_wizard_if_present(
     if not _url_is_sell_wizard(url):
         return False
     if report:
-        report("sell_wizard", "已进入出品向导页，正在点击返回…")
-    log.info("[post_to_market] 检测到 sell/wizard，尝试返回出品表单")
-    print(f"[出品] 检测到 sell/wizard，尝试返回出品表单", flush=True)
+        report("sell_wizard", "已进入出品向导页，正在模拟浏览器后退…")
+    log.info("[post_to_market] 检测到 sell/wizard，模拟浏览器后退")
+    print("[出品] 检测到 sell/wizard，模拟浏览器后退", flush=True)
+    back_ms = min(
+        SELL_WIZARD_BROWSER_BACK_TIMEOUT_MS,
+        max(element_timeout_ms, DEFAULT_PAGE_LOAD_TIMEOUT_MS),
+    )
+    left = False
+    try:
+        await _browser_back_from_sell_wizard(page, timeout_ms=back_ms)
+        left = True
+    except Exception as exc:
+        log.warning("[post_to_market] sell/wizard go_back 失败: %s", exc)
+    if left:
+        await asyncio.sleep(0.45)
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=element_timeout_ms)
+        except Exception:
+            pass
+        try:
+            url = str(page.url or "")
+        except Exception:
+            url = ""
+        if not _url_is_sell_wizard(url):
+            log.info("[post_to_market] go_back 已离开向导页，URL=%s", url)
+            print(f"[出品] 浏览器后退成功，URL={url}", flush=True)
+            if report:
+                report("sell_wizard_done", "已通过浏览器后退返回出品表单")
+            return True
+        log.info("[post_to_market] go_back 后仍在 sell/wizard，尝试页面内返回按钮")
     try:
         await _click_sell_wizard_back(page, element_timeout_ms=element_timeout_ms)
         await asyncio.sleep(0.45)
@@ -633,7 +555,10 @@ async def _leave_sell_wizard_if_present(
         log.warning("[post_to_market] sell/wizard 返回失败: %s", exc)
         print(f"[出品] sell/wizard 返回失败: {exc}", flush=True)
         if report:
-            report("sell_wizard_error", f"点击「{SELL_WIZARD_BACK_TEXT}」失败，请手动返回")
+            report(
+                "sell_wizard_error",
+                f"浏览器后退与「{SELL_WIZARD_BACK_TEXT}」均失败，请手动返回",
+            )
         return True
 
 
@@ -747,8 +672,6 @@ async def post_to_market(
         if ctx is None or not manager._is_context_alive(ctx):
             raise RuntimeError(f"会话启动失败: {account_key}")
         page = ctx.pages[-1] if ctx.pages else await ctx.new_page()
-
-    await install_sell_wizard_navigation_guard(ctx, page)
 
     # ── 2. 等待页面可交互 ────────────────────────────────────────────────── #
     report("page_load", "等待出品页加载完成…")
@@ -1165,7 +1088,7 @@ async def _select_category(
     """
     点击商品类型入口 → 依次按各级 position（1-based a[x]）在类别页面中导航并点击。
     Mercari 类别选择页面每次点击都会刷新列表，需等待新内容出现。
-    若进入 sell/wizard，尝试点击「出品画面に戻る」；返回是否检测到向导页并已尝试返回。
+    若进入 sell/wizard，模拟浏览器后退；返回是否检测到向导页并已尝试返回。
     """
     if report:
         report("category", "正在选择商品类型（カテゴリー）…")
@@ -1207,23 +1130,24 @@ async def _select_category(
         except Exception:
             pass
 
-    # 最后一级点击后等待回到出品表单（不进入 sell/wizard）
+    # 最后一级点击后：可能进入 sell/wizard 或直接回到 sell/create
     await asyncio.sleep(0.4)
     try:
         await page.wait_for_function(
             """() => {
                 const p = location.pathname || '';
                 const href = location.href || '';
-                return (href.includes('sell/create') || p.includes('/sell/create'))
-                    && !href.includes('sell/wizard') && !p.includes('/sell/wizard');
+                if (href.includes('sell/wizard') || p.includes('/sell/wizard')) return true;
+                return href.includes('sell/create') || p.includes('/sell/create');
             }""",
             timeout=page_load_timeout_ms,
         )
     except Exception:
-        log.info("[category] 等待返回 sell/create 超时，检查是否误入 wizard")
+        log.info("[category] 等待 sell/create 或 wizard 超时")
 
-    await _redirect_from_sell_wizard(page)
-    return False
+    return await _leave_sell_wizard_if_present(
+        page, element_timeout_ms=element_timeout_ms, report=report
+    )
 
 
 async def _pick_visible_price_locator(
@@ -1441,7 +1365,7 @@ async def _select_condition(
 ) -> None:
     """
     点击 #main 内「商品の状態…」入口 → 在列表页按日文选项文案点选。
-    选完选项后有时会进入 /sell/wizard，须再点「出品画面に戻る」。
+    选完选项后有时会进入 /sell/wizard，须模拟浏览器后退返回表单。
     """
     ja_label = CONDITION_ITEM_JA.get(status)
     if not ja_label:
@@ -1513,15 +1437,17 @@ async def _select_condition(
             """() => {
                 const p = location.pathname || '';
                 const href = location.href || '';
-                return (href.includes('sell/create') || p.includes('/sell/create'))
-                    && !href.includes('sell/wizard') && !p.includes('/sell/wizard');
+                if (href.includes('sell/wizard') || p.includes('/sell/wizard')) return true;
+                return href.includes('sell/create') || p.includes('/sell/create');
             }""",
             timeout=page_load_timeout_ms,
         )
     except Exception:
-        log.info("[condition] 选择后等待返回 sell/create 超时，检查是否误入 wizard")
+        log.info("[condition] 等待 sell/create 或 wizard 超时")
 
-    await _redirect_from_sell_wizard(page)
+    await _leave_sell_wizard_if_present(
+        page, element_timeout_ms=element_timeout_ms, report=report
+    )
 
 
 async def _set_shipping_payer(
