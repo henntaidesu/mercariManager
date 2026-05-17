@@ -1743,10 +1743,11 @@ function outboundLineRowClassName({ row }) {
   return isOutboundLineOwnerUnmatched(row) ? 'on-sale-stock-alert-row' : ''
 }
 
-/** 主表行标红：出库明细归属异常，或「待评价」仍有未出库商品 */
+/** 主表行标红：明细归属异常、无任何已关联库存、或「待评价」仍有未出库 */
 function isOrderAlertRow(row) {
   if (!row || typeof row !== 'object') return false
   if (Number(row.has_owner_unmatched_outbound || 0) === 1) return true
+  if (Number(row.has_no_bound_outbound || 0) === 1) return true
   if (String(row.status || '').trim() !== 'wait_review') return false
   return Number(row.pending_outbound_qty || 0) > 0
 }
