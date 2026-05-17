@@ -100,6 +100,7 @@ class OutboundLineBindInventoryBody(PydanticModel):
     """将未匹配到库存的出库明细行手动关联到某条库存（仅允许 inventory_id 为空时）。"""
 
     inventory_id: int
+    quantity: Optional[int] = None
 
 
 class ManualOutboundLineCreateBody(PydanticModel):
@@ -288,6 +289,8 @@ def bind_outbound_line_inventory(line_id: int, data: OutboundLineBindInventoryBo
     if not inv_rows:
         raise HTTPException(status_code=404, detail="库存商品不存在")
     line.inventory_id = inv_id
+    if data.quantity is not None:
+        line.quantity = max(1, int(data.quantity))
     if not line.save():
         raise HTTPException(status_code=500, detail="保存失败")
     refresh_inventory_pending_outbound_qty([inv_id])

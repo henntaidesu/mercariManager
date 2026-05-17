@@ -376,5 +376,5 @@ async def apply_item_info_to_order(
 
     from ..description_mgmt_ids import sync_outbound_lines_for_order
 
-    sync_outbound_lines_for_order(item_id, o.description)
+    sync_outbound_lines_for_order(item_id, o.description, skip_if_has_lines=True)
     return None

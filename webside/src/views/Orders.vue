@@ -718,50 +718,108 @@
     <el-dialog
       v-model="bindOutboundDialogVisible"
       title="关联库存"
-      width="520px"
+      width="760px"
       destroy-on-close
     >
       <el-form label-width="90px">
         <el-form-item label="订单号">
           <el-input :model-value="bindOutboundContext.order_no" disabled />
         </el-form-item>
-        <el-form-item label="明细标识">
-          <el-input :model-value="bindOutboundContext.label" type="textarea" :rows="2" disabled />
+        <el-form-item label="物品筛选" class="manual-outbound-inv-filter-item">
+          <div class="manual-ob-filter-grid">
+            <div class="manual-ob-filter-cell">
+              <el-input
+                v-model="bindInvFilters.keyword"
+                placeholder="搜索商品名称"
+                clearable
+                prefix-icon="Search"
+                @change="reloadBindInventoryList"
+              />
+            </div>
+            <div class="manual-ob-filter-cell">
+              <el-select
+                v-model="bindInvFilters.filterCat"
+                placeholder="所有游戏分类"
+                clearable
+                filterable
+                style="width: 100%"
+                @change="reloadBindInventoryList"
+              >
+                <el-option v-for="c in bindInvFilters.categories" :key="c.id" :label="c.name" :value="c.id" />
+              </el-select>
+            </div>
+            <div class="manual-ob-filter-cell">
+              <el-cascader
+                v-model="bindInvFilters.filterWarehousePath"
+                :options="bindInvFilters.warehouseCascaderOptions"
+                :props="bindInvWarehouseCascaderProps"
+                :show-all-levels="false"
+                style="width: 100%"
+                placeholder="仓库 / 货架名称 / 货架号"
+                popper-class="product-type-cascader-popper"
+                clearable
+                filterable
+                @change="bindInvFilters.handleFilterWarehouseChange"
+              />
+            </div>
+            <div class="manual-ob-filter-cell">
+              <el-cascader
+                v-model="bindInvFilters.filterProductTypePath"
+                :options="bindInvFilters.productTypeCascaderOptions"
+                :props="bindInvProductTypeCascaderProps"
+                :show-all-levels="false"
+                style="width: 100%"
+                placeholder="商品类型"
+                popper-class="product-type-cascader-popper"
+                clearable
+                filterable
+                @change="bindInvFilters.handleFilterProductTypeChange"
+              />
+            </div>
+            <div class="manual-ob-filter-cell">
+              <el-select
+                v-model="bindInvFilters.filterOwnerUserId"
+                placeholder="所有商品归属"
+                clearable
+                filterable
+                style="width: 100%"
+                @change="reloadBindInventoryList"
+              >
+                <el-option
+                  v-for="u in bindInvFilters.ownerUsers"
+                  :key="u.id"
+                  :label="u.display_name || u.username"
+                  :value="u.id"
+                />
+              </el-select>
+            </div>
+            <div class="manual-ob-filter-cell manual-ob-filter-cell--checkbox">
+              <el-checkbox v-model="bindInvFilters.hideNoWarehouseSlot" class="manual-ob-filter-checkbox">
+                隐藏无在库
+              </el-checkbox>
+            </div>
+          </div>
         </el-form-item>
-        <el-form-item label="商品归属">
-          <el-select
-            v-model="bindOwnerFilter"
-            clearable
-            filterable
-            style="width: 100%"
-            placeholder="请选择商品归属"
-          >
-            <el-option
-              v-for="owner in bindOwnerOptions"
-              :key="owner"
-              :label="owner"
-              :value="owner"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="库存商品" required>
-          <el-select
-            v-model="bindOutboundForm.inventory_id"
-            filterable
-            clearable
-            class="manual-inventory-select"
-            style="width: 100%"
-            placeholder="请选择要关联的库存商品"
-            :loading="bindInventoryLoading"
-            popper-class="manual-inventory-select-popper"
-          >
-            <el-option
-              v-for="it in filteredBindInventoryOptions"
-              :key="it.id"
-              :label="`${it.name || '-'}（归属:${it.owner_user_name || '-'}，库存:${Number(it.quantity || 0)}）`"
-              :value="it.id"
-            >
-              <div class="manual-option-row">
+        <el-form-item label="库存物品">
+          <div class="manual-ob-line-list" v-loading="bindInventoryLoading">
+            <div class="manual-ob-line-row">
+              <el-select
+                v-model="bindOutboundForm.inventory_id"
+                filterable
+                clearable
+                class="manual-inventory-select"
+                style="width: 100%"
+                placeholder="选择库存商品"
+                popper-class="manual-inventory-select-popper"
+                @change="onBindOutboundInventoryChange"
+              >
+                <el-option
+                  v-for="it in bindInventoryOptions"
+                  :key="it.id"
+                  :label="`${it.name || '-'}（归属:${it.owner_user_name || '-'}，库存:${Number(it.quantity || 0)}）`"
+                  :value="it.id"
+                >
+                  <div class="manual-option-row">
                 <div
                   v-if="inventoryThumbUrl(it)"
                   class="manual-option-thumb-click"
@@ -786,8 +844,19 @@
                   <div class="manual-option-sub">归属: {{ it.owner_user_name || '-' }} ｜ 库存: {{ Number(it.quantity || 0) }}</div>
                 </div>
               </div>
-            </el-option>
-          </el-select>
+                </el-option>
+              </el-select>
+              <el-input-number
+                v-model="bindOutboundForm.quantity"
+                :min="1"
+                :max="maxStockForBindRow(bindOutboundForm.inventory_id)"
+                :precision="0"
+                :controls="false"
+                class="manual-ob-line-qty"
+                :disabled="!bindOutboundForm.inventory_id"
+              />
+            </div>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -910,9 +979,8 @@ const bindOutboundDialogVisible = ref(false)
 const bindOutboundSaving = ref(false)
 const bindInventoryLoading = ref(false)
 const bindInventoryOptions = ref([])
-const bindOwnerFilter = ref('')
-const bindOutboundContext = ref({ order_no: '', line_id: 0, label: '' })
-const bindOutboundForm = ref({ inventory_id: null })
+const bindOutboundContext = ref({ order_no: '', line_id: 0 })
+const bindOutboundForm = ref({ inventory_id: null, quantity: 1 })
 const packagingDialogVisible = ref(false)
 const packagingSubmitting = ref(false)
 const packagingItemsOptions = ref([])
@@ -934,6 +1002,13 @@ function scheduleManualInvReload() {
 const manualInvFilters = useInventoryListApiFilters(scheduleManualInvReload)
 const manualInvWarehouseCascaderProps = warehouseCascaderProps
 const manualInvProductTypeCascaderProps = productTypeCascaderProps
+
+function scheduleBindInvReload() {
+  void reloadBindInventoryList()
+}
+const bindInvFilters = useInventoryListApiFilters(scheduleBindInvReload)
+const bindInvWarehouseCascaderProps = warehouseCascaderProps
+const bindInvProductTypeCascaderProps = productTypeCascaderProps
 
 async function reloadManualInventoryList() {
   if (!manualOutboundDialogVisible.value) return
@@ -976,24 +1051,32 @@ async function reloadManualInventoryList() {
     manualInventoryLoading.value = false
   }
 }
-const bindOwnerOptions = computed(() => {
-  const out = []
-  const seen = new Set()
-  for (const it of bindInventoryOptions.value || []) {
-    const owner = String(it?.owner_user_name || '').trim()
-    if (!owner || seen.has(owner)) continue
-    seen.add(owner)
-    out.push(owner)
+async function reloadBindInventoryList() {
+  if (!bindOutboundDialogVisible.value) return
+  bindInventoryLoading.value = true
+  try {
+    const res = await inventoryApi.list(
+      bindInvFilters.buildInventoryListParams({ in_stock_only: true })
+    )
+    let next = Array.isArray(res) ? res : []
+    const inList = new Set(next.map((x) => Number(x.id)))
+    const selectedId = Number(bindOutboundForm.value.inventory_id || 0)
+    if (Number.isFinite(selectedId) && selectedId > 0 && !inList.has(selectedId)) {
+      const one = await inventoryApi.get(selectedId).catch(() => null)
+      if (one && one.id != null) {
+        next.push(one)
+        inList.add(Number(one.id))
+      }
+    }
+    bindInventoryOptions.value = next
+    if (Number.isFinite(selectedId) && selectedId > 0 && !inList.has(selectedId)) {
+      bindOutboundForm.value.inventory_id = null
+    }
+  } finally {
+    bindInventoryLoading.value = false
   }
-  return out.sort((a, b) => a.localeCompare(b, 'zh-CN'))
-})
-const filteredBindInventoryOptions = computed(() => {
-  const owner = String(bindOwnerFilter.value || '').trim()
-  if (!owner) return bindInventoryOptions.value || []
-  return (bindInventoryOptions.value || []).filter(
-    (it) => String(it?.owner_user_name || '').trim() === owner
-  )
-})
+}
+
 const stats = ref({
   total_count: 0,
   sum_amount: 0,
@@ -1695,28 +1778,43 @@ async function reloadOutboundLinesExpand(orderNo) {
   }
 }
 
+function maxStockForBindRow(inventoryId) {
+  const id = Number(inventoryId || 0)
+  if (!Number.isFinite(id) || id <= 0) return undefined
+  const row = (bindInventoryOptions.value || []).find((x) => Number(x.id) === id)
+  if (!row) return undefined
+  const q = Number(row.quantity ?? 0)
+  return Number.isFinite(q) && q >= 1 ? q : 1
+}
+
+function onBindOutboundInventoryChange() {
+  const max = maxStockForBindRow(bindOutboundForm.value?.inventory_id)
+  const n = Math.max(1, Number(bindOutboundForm.value.quantity || 1))
+  if (max != null) {
+    bindOutboundForm.value.quantity = Math.min(n, max)
+  } else {
+    bindOutboundForm.value.quantity = n
+  }
+}
+
 async function openBindOutboundInventoryDialog(orderRow, line) {
   const orderNo = String(orderRow?.order_no || '').trim()
   const lineId = Number(line?.id || 0)
   if (!orderNo || !lineId) return
   if (outboundLineHasBoundInventory(line)) return
-  const labelParts = []
-  const mid = String(line?.management_id || '').trim()
-  if (mid) labelParts.push(mid)
-  const pname = String(line?.inventory_name || '').trim()
-  if (pname && pname !== mid) labelParts.push(pname)
-  bindOutboundContext.value = {
-    order_no: orderNo,
-    line_id: lineId,
-    label: labelParts.length ? labelParts.join('\n') : '（无标识）',
+  bindOutboundContext.value = { order_no: orderNo, line_id: lineId }
+  bindOutboundForm.value = {
+    inventory_id: null,
+    quantity: Math.max(1, Number(line?.quantity || 1)),
   }
-  bindOutboundForm.value = { inventory_id: null }
-  bindOwnerFilter.value = ''
+  bindInvFilters.resetFilters()
   bindOutboundDialogVisible.value = true
   bindInventoryLoading.value = true
   try {
-    const res = await inventoryApi.list({ in_stock_only: true })
-    bindInventoryOptions.value = Array.isArray(res) ? res : []
+    await bindInvFilters.loadFilterMetadata()
+    await reloadBindInventoryList()
+  } catch {
+    bindInventoryOptions.value = []
   } finally {
     bindInventoryLoading.value = false
   }
@@ -1731,9 +1829,15 @@ async function submitBindOutboundInventory() {
     ElMessage.warning('请选择库存商品')
     return
   }
+  const max = maxStockForBindRow(invId)
+  const qty = Math.max(1, Number(bindOutboundForm.value.quantity || 1))
+  if (max != null && qty > max) {
+    ElMessage.warning(`出库数量不能超过当前库存 ${max}`)
+    return
+  }
   bindOutboundSaving.value = true
   try {
-    await orderApi.bindOutboundLineInventory(lineId, { inventory_id: invId })
+    await orderApi.bindOutboundLineInventory(lineId, { inventory_id: invId, quantity: qty })
     ElMessage.success('已关联库存')
     bindOutboundDialogVisible.value = false
     await reloadOutboundLinesExpand(orderNo)

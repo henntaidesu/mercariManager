@@ -368,10 +368,17 @@ def refresh_inventory_pending_outbound_qty(inventory_ids: Optional[List[int]] = 
         )
 
 
-def sync_outbound_lines_for_order(order_no: str, description: Optional[str]) -> None:
+def sync_outbound_lines_for_order(
+    order_no: str,
+    description: Optional[str],
+    *,
+    skip_if_has_lines: bool = False,
+) -> None:
     """
     根据最新商品说明重写该订单的 order_outbound_lines。
     无「管理ID:」「管理番号:」「バーコード:」或解析结果为空时，仅删除该订单原有明细。
+
+    skip_if_has_lines：为 True 且该订单已有任意出库明细时，不再增删商品行（用于煤炉刷新订单信息）。
 
     校验：若某库存 ID 已在该订单的「手动出库」明细（line_kind=manual）中出现，则不再从说明
     写入同库存的 bundle_title / mgmt_id / barcode 行，避免重复。组合标题之间同一 inventory_id 仅保留一行。
@@ -385,6 +392,8 @@ def sync_outbound_lines_for_order(order_no: str, description: Optional[str]) -> 
         params=(ono,),
         order_by="sort_index ASC, id ASC",
     )
+    if skip_if_has_lines and old_rows:
+        return
     old_inv_ids = {
         int(r.inventory_id)
         for r in old_rows
