@@ -451,15 +451,28 @@ class OrderModel(BaseModel):
                 ELSE ({pending_sql})
             END
         """
+        owner_unmatched_sql = """
+            CASE WHEN EXISTS (
+                SELECT 1 FROM [order_outbound_lines] l
+                LEFT JOIN [inventory] p ON p.id = l.inventory_id
+                WHERE l.[order_no] = o.[order_no]
+                  AND (
+                    l.[inventory_id] IS NULL
+                    OR IFNULL(p.[owner_user_id], 0) = 0
+                  )
+            ) THEN 1 ELSE 0 END
+        """
         select_sql = f"""
             SELECT o.id, o.order_no, o.order_date, o.order_updated_at, o.purchase_time, o.customer_name, o.data_user,
                    o.status, o.amount,
                    o.service_fee, o.net_income, o.carrier_display_name, o.request_class_display_name,
                    o.shipping_fee, o.tracking_no, o.transaction_evidence_id, o.remark, o.description,
                    o.inventory_synced, o.inventory_synced_quantity, o.thumbnails,
-                   {pending_case_sql} AS pending_outbound_qty
+                   {pending_case_sql} AS pending_outbound_qty,
+                   {owner_unmatched_sql} AS has_owner_unmatched_outbound
             {base_sql}
-            ORDER BY COALESCE(o.purchase_time, o.order_updated_at, o.order_date) DESC, o.id DESC
+            ORDER BY {owner_unmatched_sql} DESC,
+                     COALESCE(o.purchase_time, o.order_updated_at, o.order_date) DESC, o.id DESC
             LIMIT ? OFFSET ?
         """
         bind = tuple(TERMINAL_ORDER_STATUSES) + tuple(params) + (page_size, (page - 1) * page_size)
@@ -470,6 +483,7 @@ class OrderModel(BaseModel):
             'service_fee', 'net_income', 'carrier_display_name', 'request_class_display_name',
             'shipping_fee', 'tracking_no', 'transaction_evidence_id', 'remark', 'description',
             'inventory_synced', 'inventory_synced_quantity', 'thumbnails', 'pending_outbound_qty',
+            'has_owner_unmatched_outbound',
         ]
         items = [dict(zip(keys, row)) for row in rows]
         if owner_user_id is not None and int(owner_user_id) > 0:

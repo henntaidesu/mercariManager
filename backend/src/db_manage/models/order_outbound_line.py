@@ -162,7 +162,48 @@ class OrderOutboundLineModel(BaseModel):
             "shelf_name",
             "shelf_code",
         ]
-        return [dict(zip(keys, r)) for r in rows]
+        out = [dict(zip(keys, r)) for r in rows]
+        for row in out:
+            # 与 order_goods_ratio / 列表筛选字段名兼容
+            row["product_owner_user_id"] = row.get("inventory_owner_user_id")
+            row["product_owner_name"] = row.get("inventory_owner_name")
+        return out
+
+    @staticmethod
+    def is_owner_unmatched_line(row: Dict[str, Any]) -> bool:
+        """未关联库存，或库存未设置商品归属（与前端标红、顶置口径一致）。"""
+        if not row or not isinstance(row, dict):
+            return False
+        inv_id = row.get("inventory_id")
+        if inv_id is None:
+            return True
+        try:
+            iid = int(inv_id)
+        except (TypeError, ValueError):
+            return True
+        if iid <= 0:
+            return True
+        ou = row.get("inventory_owner_user_id")
+        if ou is None:
+            return True
+        try:
+            oid = int(ou)
+        except (TypeError, ValueError):
+            return True
+        return oid <= 0
+
+    @classmethod
+    def sort_owner_unmatched_first(cls, items: List[Dict[str, Any]]) -> None:
+        """原地排序：无法匹配商品归属的行置顶，组内保持 sort_index、id 升序。"""
+
+        def _key(row: Dict[str, Any]) -> tuple:
+            return (
+                0 if cls.is_owner_unmatched_line(row) else 1,
+                int(row.get("sort_index") or 0),
+                int(row.get("id") or 0),
+            )
+
+        items.sort(key=_key)
 
     @classmethod
     def list_pending_for_inventory(cls, inventory_id: int) -> List[Dict[str, Any]]:

@@ -79,10 +79,11 @@
     <el-card shadow="never" class="table-card">
       <el-table
         ref="orderTableRef"
-        :data="list"
+        :data="displayList"
         v-loading="loading"
         stripe
         row-key="id"
+        :row-class-name="orderRowClassName"
         @expand-change="onOrderExpandChange"
       >
         <el-table-column type="expand" width="44">
@@ -91,10 +92,11 @@
               <template v-if="expandState[row.order_no]?.loaded">
                 <el-table
                   v-if="(expandState[row.order_no]?.rows || []).length"
-                  :data="expandState[row.order_no].rows"
+                  :data="outboundLinesForExpand(row.order_no)"
                   size="small"
                   border
                   class="order-expand-inner-table"
+                  :row-class-name="outboundLineRowClassName"
                 >
                   <el-table-column label="类型" width="80" align="center">
                     <template #default="{ row: line }">
@@ -110,7 +112,9 @@
                   <el-table-column label="库存名称" prop="inventory_name" min-width="140" show-overflow-tooltip />
                   <el-table-column label="商品归属" width="110" align="center" show-overflow-tooltip>
                     <template #default="{ row: line }">
-                      {{ line.inventory_owner_name || '—' }}
+                      <span :class="{ 'order-owner-unmatched-text': isOutboundLineOwnerUnmatched(line) }">
+                        {{ line.inventory_owner_name || '—' }}
+                      </span>
                     </template>
                   </el-table-column>
                   <el-table-column label="仓库" width="110" show-overflow-tooltip>
@@ -1621,6 +1625,51 @@ function outboundLineHasBoundInventory(line) {
   return Number.isFinite(n) && n > 0
 }
 
+/** 与在售商品页标红口径一致：未关联库存或库存无商品归属 */
+function isOutboundLineOwnerUnmatched(line) {
+  if (!line || typeof line !== 'object') return false
+  if (!outboundLineHasBoundInventory(line)) return true
+  const ouid = line.inventory_owner_user_id
+  if (ouid == null || ouid === '') return true
+  const n = Number(ouid)
+  return !Number.isFinite(n) || n <= 0
+}
+
+function sortOutboundLinesDisplay(rows) {
+  const arr = Array.isArray(rows) ? [...rows] : []
+  arr.sort((a, b) => {
+    const aa = isOutboundLineOwnerUnmatched(a) ? 0 : 1
+    const ba = isOutboundLineOwnerUnmatched(b) ? 0 : 1
+    if (aa !== ba) return aa - ba
+    const sa = Number(a?.sort_index) || 0
+    const sb = Number(b?.sort_index) || 0
+    if (sa !== sb) return sa - sb
+    return (Number(a?.id) || 0) - (Number(b?.id) || 0)
+  })
+  return arr
+}
+
+function outboundLinesForExpand(orderNo) {
+  const ono = String(orderNo || '').trim()
+  if (!ono) return []
+  const rows = expandState.value[ono]?.rows
+  return sortOutboundLinesDisplay(rows)
+}
+
+function outboundLineRowClassName({ row }) {
+  return isOutboundLineOwnerUnmatched(row) ? 'on-sale-stock-alert-row' : ''
+}
+
+function isOrderOwnerUnmatchedAlert(row) {
+  return Number(row?.has_owner_unmatched_outbound || 0) === 1
+}
+
+const displayList = computed(() => (Array.isArray(list.value) ? list.value : []))
+
+function orderRowClassName({ row }) {
+  return isOrderOwnerUnmatchedAlert(row) ? 'on-sale-stock-alert-row' : ''
+}
+
 async function reloadOutboundLinesExpand(orderNo) {
   const ono = String(orderNo || '').trim()
   if (!ono) return
@@ -2268,6 +2317,36 @@ onBeforeUnmount(() => {
 .order-expand-wrap {
   padding: 8px 12px 12px 48px;
   min-height: 48px;
+}
+.order-owner-unmatched-text {
+  color: #ff8a8f;
+  font-weight: 600;
+}
+.order-expand-inner-table :deep(.on-sale-stock-alert-row) {
+  --el-table-tr-bg-color: #3a1517;
+}
+.order-expand-inner-table :deep(.on-sale-stock-alert-row td) {
+  background-color: #3a1517 !important;
+}
+.order-expand-inner-table :deep(.on-sale-stock-alert-row:hover > td) {
+  background-color: #4a1a1d !important;
+}
+.order-expand-inner-table :deep(.on-sale-stock-alert-row td .cell) {
+  color: #ffd6d9;
+  font-weight: 600;
+}
+.table-card :deep(.on-sale-stock-alert-row) {
+  --el-table-tr-bg-color: #3a1517;
+}
+.table-card :deep(.on-sale-stock-alert-row td) {
+  background-color: #3a1517 !important;
+}
+.table-card :deep(.on-sale-stock-alert-row:hover > td) {
+  background-color: #4a1a1d !important;
+}
+.table-card :deep(.on-sale-stock-alert-row td .cell) {
+  color: #ffd6d9;
+  font-weight: 600;
 }
 .order-expand-inner-table {
   max-width: 100%;

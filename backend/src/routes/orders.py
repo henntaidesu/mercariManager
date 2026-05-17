@@ -246,11 +246,17 @@ def list_order_outbound_lines(
             it
             for it in all_items
             if it.get("inventory_id") is not None
-            and int(it.get("product_owner_user_id") or 0) == oid
+            and int(
+                it.get("product_owner_user_id")
+                or it.get("inventory_owner_user_id")
+                or 0
+            )
+            == oid
         ]
     else:
         items = all_items
 
+    OrderOutboundLineModel.sort_owner_unmatched_first(items)
     return {"order_no": ono, "items": items}
 
 

@@ -237,7 +237,9 @@ def owner_weights_from_order_goods_ratio(order_no: str) -> List[Dict[str, Any]]:
         rp = it.get("ratio_price")
         if rp is None:
             continue
-        owner = str(it.get("product_owner_name") or "").strip()
+        owner = str(
+            it.get("product_owner_name") or it.get("inventory_owner_name") or ""
+        ).strip()
         if not owner:
             continue
         grouped[owner] = int(grouped.get(owner, 0)) + int(rp)
@@ -283,6 +285,8 @@ def _distinct_positive_owner_ids(items: List[Dict[str, Any]]) -> List[int]:
     for it in items:
         raw = it.get("product_owner_user_id")
         if raw is None:
+            raw = it.get("inventory_owner_user_id")
+        if raw is None:
             continue
         try:
             oid = int(raw)
@@ -310,6 +314,8 @@ def _fallback_owner_amount_and_basis(
         if it.get("inventory_id") is None:
             continue
         ou = it.get("product_owner_user_id")
+        if ou is None:
+            ou = it.get("inventory_owner_user_id")
         if ou is None:
             continue
         try:
@@ -380,6 +386,8 @@ def split_order_money_for_owner_user(
             if rp is None:
                 continue
             u = it.get("product_owner_user_id")
+            if u is None:
+                u = it.get("inventory_owner_user_id")
             if u is not None and int(u) == oid:
                 owner_amt += int(rp)
         if owner_amt > 0:
