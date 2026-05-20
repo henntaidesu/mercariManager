@@ -21,19 +21,12 @@ from .get_order.description_mgmt_ids import (
     _inventory_id_exists,
     _resolve_inventory_id_by_bundle_title,
     parse_order_description_outbound_tokens,
+    parse_order_description_outbound_tokens_with_quantity,
 )
 from ..web_drive.manager import EdgeWebDriveManager
 from .get_order.mercari_item_get import (
     fetch_mercari_item_get,
     fetch_mercari_item_get_in_browser_session,
-)
-
-_FW_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
-_MGMT_ID_PATTERN = re.compile(r"管理\s*ID\s*[:：]\s*([0-9０-９\s,，、*xX×]+)", re.IGNORECASE | re.MULTILINE)
-_MGMT_BANGO_PATTERN = re.compile(r"管理\s*番号\s*[:：]\s*([0-9０-９\s,，、*xX×]+)", re.MULTILINE)
-_BARCODE_PATTERN = re.compile(
-    r"バーコード\s*[:：]\s*([0-9A-Za-z０-９\s,，、\-_*xX×]+)",
-    re.MULTILINE,
 )
 
 _MERCARI_ID_SEP_RE = re.compile(r"[\n,，、\s]+")
@@ -88,70 +81,31 @@ def _join_mercari_item_ids(ids: List[str]) -> Optional[str]:
     return "、".join(arr) if arr else None
 
 
-def _split_chunks(segment: str) -> List[str]:
-    parts: List[str] = []
-    for part in re.split(r"[,，、\s]+", segment or ""):
-        p = (part or "").strip()
-        if p:
-            parts.append(p)
-    return parts
-
-
-def _value_and_quantity(token: str) -> Tuple[str, int]:
-    """
-    支持 token 尾部数量语法：6977850080862*10 / 6977850080862×10 / 6977850080862x10。
-    未携带数量时默认 1。
-    """
-    t = (token or "").translate(_FW_DIGITS).strip()
-    if not t:
-        return "", 1
-    m = re.match(r"^(.*?)(?:\s*[*xX×]\s*(\d+))?$", t)
-    if not m:
-        return t, 1
-    base = (m.group(1) or "").strip()
-    qraw = (m.group(2) or "").strip()
-    if not qraw:
-        return base, 1
-    try:
-        q = int(qraw)
-    except (TypeError, ValueError):
-        q = 1
-    return base, max(1, q)
-
-
 def parse_listing_description_tokens_with_quantity(text: Optional[str]) -> List[Dict[str, Any]]:
     """
-    解析说明中的管理番号/条码，并保留每个识别值对应数量。
+    解析说明中的管理番号/条码（含末行 -=~<> 暗号），并保留每个识别值对应数量。
     返回项：{kind: mgmt_id|barcode, value: int|str, quantity: int, raw: str}
     """
-    if text is None:
-        return []
-    s = str(text).strip()
-    if not s:
-        return []
-    spans: List[Tuple[int, str, str]] = []
-    for m in _MGMT_ID_PATTERN.finditer(s):
-        spans.append((m.start(), "mgmt", m.group(1) or ""))
-    for m in _MGMT_BANGO_PATTERN.finditer(s):
-        spans.append((m.start(), "mgmt", m.group(1) or ""))
-    for m in _BARCODE_PATTERN.finditer(s):
-        spans.append((m.start(), "barcode", m.group(1) or ""))
-    spans.sort(key=lambda x: x[0])
-
     out: List[Dict[str, Any]] = []
-    for _, kind, chunk in spans:
-        for part in _split_chunks(chunk):
-            base, qty = _value_and_quantity(part)
-            if not base:
-                continue
-            if kind == "mgmt":
-                try:
-                    mid = int(base)
-                except (TypeError, ValueError):
-                    continue
-                out.append({"kind": "mgmt_id", "value": mid, "quantity": qty, "raw": part})
-            else:
-                out.append({"kind": "barcode", "value": str(base).strip(), "quantity": qty, "raw": part})
+    for kind, val, qty in parse_order_description_outbound_tokens_with_quantity(text):
+        if kind == "mgmt_id":
+            out.append(
+                {
+                    "kind": "mgmt_id",
+                    "value": int(val),
+                    "quantity": int(qty),
+                    "raw": str(int(val)),
+                }
+            )
+        else:
+            out.append(
+                {
+                    "kind": "barcode",
+                    "value": str(val).strip(),
+                    "quantity": int(qty),
+                    "raw": str(val).strip(),
+                }
+            )
     return out
 
 
@@ -321,8 +275,8 @@ def detail_sync_inventory_from_item_get_response(
         inv_id = resolve_inventory_id_from_listing_description(desc_text)
         if inv_id is None:
             sync["message"] = (
-                "说明中未找到可关联的库存（需「管理ID」「管理番号」对应已存在的库存 id，"
-                "或「バーコード」对应已存在的库存条码）"
+                "说明中未找到可关联的库存（需末行暗号（-=~<>）或「管理ID」「管理番号」"
+                "对应已存在的库存 id，或「バーコード」对应已存在的库存条码）"
             )
             return {"api": resp, "sync": sync}
 

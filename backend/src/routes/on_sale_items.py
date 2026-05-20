@@ -19,6 +19,9 @@ from ..operation_mercari.on_sale_items_sync import (
     sync_on_sale_items_from_mercari,
 )
 from ..operation_mercari.sync_data import resolve_account_id_by_seller_id
+from ..operation_mercari.get_order.description_mgmt_ids import (
+    parse_management_ids_from_description,
+)
 
 router = APIRouter(prefix="/api/on-sale-items", tags=["on-sale-items"])
 _MERCARI_ID_SEP_RE = re.compile(r"[\n,，、\s]+")
@@ -174,6 +177,21 @@ def _attach_inventory_by_item_id(items: list) -> None:
             row["inventory_lines"] = []
 
 
+def _attach_description_mgmt_hints(items: list) -> None:
+    """从 listing_description 解析明文/暗号管理番号，供列表与详情展示。"""
+    if not items:
+        return
+    for row in items:
+        desc = str(row.get("listing_description") or "").strip()
+        if not desc:
+            row["description_mgmt_ids"] = []
+            row["description_mgmt_ids_text"] = None
+            continue
+        ids = parse_management_ids_from_description(desc)
+        row["description_mgmt_ids"] = ids
+        row["description_mgmt_ids_text"] = "、".join(str(i) for i in ids) if ids else None
+
+
 def _is_on_sale_zero_stock_alert(row: dict) -> bool:
     """与前端一致：status=on_sale 且 inventory_quantity<=0 或 None 时标红。
     前端 Number(null)==0，故 null 也视为缺货预警。
@@ -272,6 +290,7 @@ def list_on_sale_items(
 
     _attach_seller_name(all_items)
     _attach_inventory_by_item_id(all_items)
+    _attach_description_mgmt_hints(all_items)
 
     _sort_on_sale_items_for_alert(all_items)
 
@@ -297,6 +316,7 @@ def list_on_sale_by_item_id(item_id: str):
     items = OnSaleItemModel.find_all_by_item_id(iid)
     _attach_seller_name(items)
     _attach_inventory_by_item_id(items)
+    _attach_description_mgmt_hints(items)
     return {"item_id": iid, "total": len(items), "items": items}
 
 
@@ -318,6 +338,7 @@ def list_on_sale_by_item_ids(item_ids: str):
     ]
     _attach_seller_name(items)
     _attach_inventory_by_item_id(items)
+    _attach_description_mgmt_hints(items)
     return {"item_ids": ids, "total": len(items), "items": items}
 
 
@@ -349,7 +370,8 @@ async def sync_on_sale(data: SyncOnSaleRequest):
 async def fetch_on_sale_item_detail(data: FetchOnSaleDetailRequest):
     """
     使用对应账号 Edge（MITM）打开 ``https://jp.mercari.com/item/m{item_id}``，
-    截获 api.mercari.jp/items/get 响应；解析 data.description 中的「管理ID / 管理番号 / バーコード」，
+    截获 api.mercari.jp/items/get 响应；解析 data.description 中的末行暗号（-=~<>）、
+    「管理ID / 管理番号 / バーコード」，
     匹配库存后写入 mercari_item_id、on_sale_quantity。须已启动 mitmdump。
     """
     item_id = (data.item_id or "").strip()

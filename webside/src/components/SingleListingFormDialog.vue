@@ -98,7 +98,7 @@
           <div
             v-if="managementNumberLine"
             class="listing-mgmt-footer"
-            title="由所选库存自动生成，不可在此删除"
+            title="由所选库存自动生成的末行暗号（-=~<>），不可在此删除"
           >
             {{ managementNumberLine }}
           </div>
@@ -214,6 +214,7 @@
 import { ref, watch, computed, nextTick } from 'vue'
 import { Rank } from '@element-plus/icons-vue'
 import { meiluAccountApi } from '@/api/index.js'
+import { encodeMgmtIds, stripTrailingMgmtBlock } from '@/utils/mgmtIdCipher.js'
 import {
   MERCARI_AREAS,
   JP_REGION_OPTIONS,
@@ -439,24 +440,13 @@ function onListingImageDrop(to) {
   reorderListingImageUrls(from, to)
 }
 
-/** 去掉末尾由本表单自动附加的「管理番号：…」块，避免重复 */
-function stripTrailingManagementBlock(text) {
-  let s = String(text || '')
-  let prev = null
-  while (prev !== s) {
-    prev = s
-    s = s.replace(/(?:\n{1,2})?管理番号[:：][\d、,，\s]+$/u, '').trimEnd()
-  }
-  return s
-}
-
-/** 所选库存 id，与列表「管理番号」一致；保存时会拼在说明最底部 */
+/** 所选库存 id 的末行暗号（-=~<> 五进制），保存时拼在说明最底部，无「管理番号：」前缀 */
 const managementNumberLine = computed(() => {
   const ids = (form.value.inventory_ids || [])
     .map((id) => Number(id))
     .filter((x) => Number.isFinite(x) && x > 0)
   if (!ids.length) return ''
-  return `管理番号：${ids.join('、')}`
+  return encodeMgmtIds(ids)
 })
 
 /** 可编辑说明字数上限：总长 1000，为底部固定行预留字符 */
@@ -644,7 +634,7 @@ watch(
       listing_title: seed.listing_title || seed.name || '',
       category_mapping_id: seedMappingId,
       category_mapping_path: seedPath,
-      description: stripTrailingManagementBlock(seed.description || ''),
+      description: stripTrailingMgmtBlock(seed.description || ''),
       price: priceVal,
       shipping_from: areaId,
       shipping_from_path: buildShippingFromPath(areaId),

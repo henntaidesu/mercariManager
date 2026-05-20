@@ -103,7 +103,11 @@
                       {{ outboundLineKindLabel(line) }}
                     </template>
                   </el-table-column>
-                  <el-table-column label="标识" prop="management_id" min-width="120" align="center" show-overflow-tooltip />
+                  <el-table-column label="标识" min-width="120" align="center" show-overflow-tooltip>
+                    <template #default="{ row: line }">
+                      {{ formatOutboundManagementId(line) }}
+                    </template>
+                  </el-table-column>
                   <el-table-column label="库存ID" width="88" align="center">
                     <template #default="{ row: line }">
                       {{ line.inventory_id != null ? line.inventory_id : '—' }}
@@ -486,6 +490,7 @@
             show-word-limit
             placeholder="description（transaction_evidences/get）"
           />
+          <div v-if="orderDescriptionMgmtHint" class="form-hint">{{ orderDescriptionMgmtHint }}</div>
         </el-form-item>
         <el-form-item label="缩略图 JSON">
           <el-input
@@ -956,6 +961,7 @@ import {
   localYmdToDayEndTs,
   localTodayRangeTs,
 } from '@/utils/orderStatsTime.js'
+import { decodeMgmtIdCipher, parseMgmtIdsFromDescription } from '@/utils/mgmtIdCipher.js'
 
 const orderTableRef = ref(null)
 /** 当前已展开的主表行（用于筛选变更时折叠，避免展开区与缓存不一致） */
@@ -1650,6 +1656,26 @@ function clearOutboundExpandCache(orderNo) {
   const next = { ...expandState.value }
   delete next[ono]
   expandState.value = next
+}
+
+const orderDescriptionMgmtHint = computed(() => {
+  const ids = parseMgmtIdsFromDescription(form.value.description)
+  if (!ids.length) return ''
+  return `从说明解析的管理番号：${ids.join('、')}（含末行 -=~<> 暗号与明文「管理番号」）`
+})
+
+/** 出库明细「标识」列：mgmt_id 行展示数字；暗号 token 尝试解码 */
+function formatOutboundManagementId(line) {
+  const raw = String(line?.management_id ?? '').trim()
+  if (!raw) return '-'
+  const k = String(line?.line_kind || '').trim()
+  if (k === 'mgmt_id' || k === 'manual') {
+    const n = Number(raw)
+    if (Number.isFinite(n) && n > 0) return String(Math.floor(n))
+  }
+  const decoded = decodeMgmtIdCipher(raw)
+  if (decoded != null) return String(decoded)
+  return raw
 }
 
 /** 出库明细行：后端 line_kind 含 mgmt_id | barcode | bundle_title | manual */

@@ -54,8 +54,8 @@
               >
                 <el-table-column label="管理ID" width="120" align="center">
                   <template #default="{ row: r }">
-                    <div v-if="inventoryLines(r).length" class="multi-line-cell">
-                      <div v-for="(ln, idx) in inventoryLines(r)" :key="`mgmt-${idx}`">{{ ln.management_id || '-' }}</div>
+                    <div v-if="resolvedMgmtIdsForRow(r).length" class="multi-line-cell">
+                      <div v-for="(mid, idx) in resolvedMgmtIdsForRow(r)" :key="`mgmt-${idx}`">{{ mid }}</div>
                     </div>
                     <span v-else class="cell-muted">-</span>
                   </template>
@@ -236,7 +236,7 @@
           <el-descriptions :column="1" border size="small" class="detail-desc">
             <el-descriptions-item label="匹配条数">{{ Number(detailViewBase.inventory_match_count || 0) }}</el-descriptions-item>
             <el-descriptions-item label="管理 ID（汇总）">
-              <span v-if="(detailViewBase.inventory_mgmt_ids_text || '').trim()">{{ detailViewBase.inventory_mgmt_ids_text }}</span>
+              <span v-if="detailMgmtIdsText">{{ detailMgmtIdsText }}</span>
               <span v-else class="cell-muted">-</span>
             </el-descriptions-item>
             <el-descriptions-item label="条码（汇总）">
@@ -320,6 +320,7 @@ import { ref, computed, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import { onSaleItemApi, meiluAccountApi, webDriveApi } from '@/api/index.js'
+import { parseMgmtIdsFromDescription } from '@/utils/mgmtIdCipher.js'
 
 /** 煤炉商品 item.status → 中文（与 API 原始值对应） */
 const onSaleStatusMap = {
@@ -462,8 +463,9 @@ function hasSecondaryData(row) {
   if (!row || typeof row !== 'object') return false
   const mgmt = String(row.inventory_mgmt_ids_text || '').trim()
   const barcodes = String(row.inventory_barcodes_text || '').trim()
+  const descMgmt = String(row.description_mgmt_ids_text || '').trim()
   const matched = Number(row.inventory_match_count || 0)
-  return Boolean(mgmt || barcodes || matched > 0)
+  return Boolean(mgmt || barcodes || descMgmt || matched > 0)
 }
 
 function hasStoredListingDescription(row) {
@@ -480,6 +482,39 @@ function inventoryLines(row) {
   if (!row || !Array.isArray(row.inventory_lines)) return []
   return row.inventory_lines
 }
+
+/** 管理 ID：优先库存关联行，否则从说明暗号/明文解析 */
+function resolvedMgmtIdsForRow(row) {
+  const lines = inventoryLines(row)
+  if (lines.length) {
+    return lines.map((ln) => String(ln.management_id || '').trim()).filter(Boolean)
+  }
+  const linked = String(row?.inventory_mgmt_ids_text || '').trim()
+  if (linked) {
+    return linked.split(/[、,，\s]+/).map((s) => s.trim()).filter(Boolean)
+  }
+  const fromDesc = String(row?.description_mgmt_ids_text || '').trim()
+  if (fromDesc) {
+    return fromDesc.split(/[、,，\s]+/).map((s) => s.trim()).filter(Boolean)
+  }
+  const desc = String(row?.listing_description || '').trim()
+  if (desc) {
+    return parseMgmtIdsFromDescription(desc).map(String)
+  }
+  return []
+}
+
+const detailMgmtIdsText = computed(() => {
+  const base = detailViewBase.value
+  if (!base) return ''
+  const linked = String(base.inventory_mgmt_ids_text || '').trim()
+  if (linked) return linked
+  const hint = String(base.description_mgmt_ids_text || '').trim()
+  if (hint) return hint
+  const fromBody = parseMgmtIdsFromDescription(detailListingBodyText.value)
+  if (fromBody.length) return fromBody.join('、')
+  return ''
+})
 
 async function ensureExpandLoaded(row) {
   const k = expandKey(row.item_id)

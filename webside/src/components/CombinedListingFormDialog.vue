@@ -93,7 +93,7 @@
           <div
             v-if="managementNumberLine"
             class="listing-mgmt-footer"
-            title="由所选库存自动生成，不可在此删除"
+            title="由所选库存自动生成的末行暗号（-=~<>），不可在此删除"
           >
             {{ managementNumberLine }}
           </div>
@@ -208,6 +208,7 @@
 <script setup>
 import { ref, watch, computed, nextTick } from 'vue'
 import { meiluAccountApi } from '@/api/index.js'
+import { encodeMgmtIds, stripTrailingMgmtBlock } from '@/utils/mgmtIdCipher.js'
 import {
   MERCARI_AREAS,
   JP_REGION_OPTIONS,
@@ -366,13 +367,13 @@ function pairPreviewList(block) {
   return [block?.front, block?.back].filter((u) => u && String(u).trim())
 }
 
-/** 所选库存 id，与列表「管理番号」一致；保存时会拼在说明最底部 */
+/** 所选库存 id 的末行暗号（-=~<> 五进制），保存时拼在说明最底部 */
 const managementNumberLine = computed(() => {
   const ids = (form.value.inventory_ids || [])
     .map((id) => Number(id))
     .filter((x) => Number.isFinite(x) && x > 0)
   if (!ids.length) return ''
-  return `管理番号：${ids.join('、')}`
+  return encodeMgmtIds(ids)
 })
 
 /** 可编辑说明字数上限：总长 1000，为底部固定行预留字符 */

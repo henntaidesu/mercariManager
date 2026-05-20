@@ -2,11 +2,12 @@
 """
 从煤炉商品说明（orders.description）中解析待出库标识：
 
-- 「管理ID:57,56,55」「管理番号:59」—— 对应本地 inventory.id
+- 「管理ID:57,56,55」「管理番号:59」—— 对应本地 inventory.id（明文，向下兼容）
+- 说明**最末行**仅含 ``-=~<>`` 五进制暗号（无「管理番号：」前缀）—— 同上
 - 「バーコード:6977850080855」或「バーコード:6977850080824,6977850080831」—— 对应 inventory.barcode
 
 支持半角/全角冒号与逗号、顿号、空白分隔；管理 ID 段内支持全角数字；条码段内支持全角数字。
-同一说明中多处「管理ID」「バーコード」按在文中出现的先后顺序交错展开。
+同一说明中多处「管理ID」「バーコード」及末行暗号按在文中出现的先后顺序交错展开。
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from ...db_manage.models.order_outbound_line import (
     TERMINAL_ORDER_STATUSES,
     OrderOutboundLineModel,
 )
+from ..mgmt_id_cipher import parse_trailing_cipher_mgmt_tokens
 
 _FW_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
 
@@ -101,6 +103,18 @@ def parse_order_description_outbound_tokens_with_quantity(
         spans.append((m.start(), "mgmt", m.group(1) or ""))
     for m in _BARCODE_PATTERN.finditer(s):
         spans.append((m.start(), "barcode", m.group(1) or ""))
+    cipher_pos = len(s)
+    strip_lines = s.splitlines()
+    for raw_ln in reversed(strip_lines):
+        if str(raw_ln or "").strip():
+            pos = s.rfind(raw_ln)
+            if pos >= 0:
+                cipher_pos = pos
+            break
+    for mid, qty in parse_trailing_cipher_mgmt_tokens(s):
+        chunk = f"{mid}*{qty}" if qty > 1 else str(mid)
+        spans.append((cipher_pos, "mgmt", chunk))
+
     spans.sort(key=lambda x: x[0])
 
     out: List[Tuple[str, Any, int]] = []
