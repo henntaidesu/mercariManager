@@ -5,7 +5,8 @@ Mercari 在售商品列表：通过账号对应 WebDriver 打开
 由 mitmproxy 截获 ``GET https://api.mercari.jp/items/get_items``（status 含 on_sale/stop）
 的响应体，不再直接 HTTP 调用 API。
 
-页面存在「もっと見る」时会自动循环点击并合并各次截获的分页数据，直至按钮消失。
+页面需先滚至底部才会出现「もっと見る」；存在时会自动循环点击并合并各次截获的分页数据，
+直至 ``meta.total_item_count`` 已全部合并或 ``has_next`` 为 false 且按钮消失。
 「从煤炉同步」完成后可在**同一浏览器会话**内对本次新增商品自动执行与「获取详情」相同的逻辑（见 ``on_sale_item_detail_sync.auto_fetch_details_for_inserted_items``）。
 
 MITM 无头浏览器使用独立 profile：``meilu_{account_id}__auto``（与账号页有头 ``meilu_{account_id}`` 分离）。
@@ -37,8 +38,12 @@ LISTINGS_PAGE_URL = "https://jp.mercari.com/mypage/listings"
 LISTINGS_URL_FRAGMENT = "mypage/listings"
 LISTINGS_REDIRECT_TIMEOUT_MS = 60_000
 LISTINGS_LOAD_MORE_TEXT = "もっと見る"
+LISTINGS_PAGE_BATCH_SIZE = 30
+LISTINGS_NEED_PAGINATION_TOTAL_THRESHOLD = 50
 _LISTINGS_LOAD_MORE_MAX_ROUNDS = 500
 _LISTINGS_AFTER_CLICK_CAPTURE_WAIT_SEC = 45.0
+_LISTINGS_SCROLL_STEPS = 10
+_LISTINGS_SCROLL_PAUSE_SEC = 0.28
 
 
 def build_on_sale_list_url(seller_id: int) -> str:
@@ -88,6 +93,66 @@ def _merge_on_sale_items_by_id(chunk: List[Dict[str, Any]], into: Dict[str, Dict
             into[iid] = it
 
 
+def _meta_total_item_count(meta: Dict[str, Any]) -> int:
+    try:
+        return max(0, int(meta.get("total_item_count") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _needs_more_on_sale_list_pages(meta: Dict[str, Any], merged_count: int) -> bool:
+    """
+    是否仍需翻页：以 ``total_item_count`` 为准（>50 时通常需多次 limit=30 请求），
+    辅以 ``has_next``；总数未知时仅看 has_next。
+    """
+    total = _meta_total_item_count(meta)
+    if total > 0 and merged_count < total:
+        return True
+    if meta.get("has_next") is True:
+        return True
+    if (
+        total == 0
+        and merged_count >= LISTINGS_NEED_PAGINATION_TOTAL_THRESHOLD
+        and merged_count % LISTINGS_PAGE_BATCH_SIZE == 0
+    ):
+        # 响应未带 total_item_count 时，已满一页（30）且数量≥50 则继续尝试翻页
+        return True
+    return False
+
+
+async def _scroll_listings_page_to_bottom(page: Any) -> None:
+    """出品一覧须滚到页面最底，「もっと見る」才会出现在 DOM 中。"""
+    scroll_js = """
+(el) => {
+  if (!el) return;
+  const h = el.scrollHeight || 0;
+  el.scrollTop = h;
+  if (typeof el.scrollTo === 'function') {
+    el.scrollTo({ top: h, behavior: 'instant' });
+  }
+}
+"""
+    for selector in ("#main", "main", "[role='main']"):
+        try:
+            loc = page.locator(selector).first
+            if await loc.count() == 0:
+                continue
+            for _ in range(_LISTINGS_SCROLL_STEPS):
+                await loc.evaluate(scroll_js)
+                await asyncio.sleep(_LISTINGS_SCROLL_PAUSE_SEC)
+            break
+        except Exception:
+            continue
+    try:
+        await page.evaluate(
+            "() => window.scrollTo(0, Math.max("
+            "document.body.scrollHeight, document.documentElement.scrollHeight))"
+        )
+    except Exception:
+        pass
+    await asyncio.sleep(0.35)
+
+
 async def _wait_new_on_sale_file_capture(
     seller_key: str,
     *,
@@ -103,15 +168,23 @@ async def _wait_new_on_sale_file_capture(
     return None
 
 
-async def _click_listings_load_more_if_present(page: Any) -> bool:
-    """出品一覧页若存在「もっと見る」则点击一次。"""
-    timeout_ms = 2500
-    click_timeout_ms = 8000
+async def _click_listings_load_more_if_present(
+    page: Any,
+    *,
+    scroll_first: bool = True,
+) -> bool:
+    """出品一覧页滚到底后，若存在「もっと見る」则点击一次。"""
+    if scroll_first:
+        await _scroll_listings_page_to_bottom(page)
+
+    timeout_ms = 3500
+    click_timeout_ms = 10_000
+    label = LISTINGS_LOAD_MORE_TEXT
     factories = (
-        lambda: page.get_by_role("button", name=LISTINGS_LOAD_MORE_TEXT),
-        lambda: page.get_by_role("link", name=LISTINGS_LOAD_MORE_TEXT),
-        lambda: page.locator("#main").get_by_text(LISTINGS_LOAD_MORE_TEXT, exact=True),
-        lambda: page.get_by_text(LISTINGS_LOAD_MORE_TEXT, exact=True),
+        lambda: page.get_by_role("button", name=label),
+        lambda: page.get_by_role("link", name=label),
+        lambda: page.locator("#main").get_by_text(label, exact=True),
+        lambda: page.get_by_text(label, exact=True),
     )
     for factory in factories:
         try:
@@ -130,8 +203,10 @@ async def _expand_on_sale_listings_until_end(
     seller_key: str,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    循环点击「もっと見る」直到不再出现。MITM 每次覆盖同一响应文件，
-    故对各次响应的 ``data`` 按 ``id`` 合并后再交给同步逻辑。
+    先滚至页面底部，循环点击「もっと見る」并等待 MITM 截获 ``items/get_items``
+    （含 ``max_pager_id`` 的后续页，每次约 30 条）。MITM 每次覆盖同一响应文件，
+    故对各次响应的 ``data`` 按 ``id`` 合并，直至条数达到 ``meta.total_item_count``
+    或无需再翻页。
     """
     items, meta = _parse_on_sale_list_capture(seller_key)
     merged: Dict[str, Dict[str, Any]] = {}
@@ -140,9 +215,28 @@ async def _expand_on_sale_listings_until_end(
     wrapped = read_on_sale_list_response(seller_key) or {}
     last_ts = int(wrapped.get("ts") or 0)
 
-    for _ in range(_LISTINGS_LOAD_MORE_MAX_ROUNDS):
-        clicked = await _click_listings_load_more_if_present(page)
+    await _scroll_listings_page_to_bottom(page)
+
+    for round_idx in range(_LISTINGS_LOAD_MORE_MAX_ROUNDS):
+        if not _needs_more_on_sale_list_pages(meta, len(merged)):
+            break
+
+        clicked = await _click_listings_load_more_if_present(page, scroll_first=True)
         if not clicked:
+            await _scroll_listings_page_to_bottom(page)
+            await asyncio.sleep(0.45)
+            clicked = await _click_listings_load_more_if_present(page, scroll_first=False)
+        if not clicked:
+            if _needs_more_on_sale_list_pages(meta, len(merged)):
+                log.warning(
+                    "在售一覧仍需翻页但未找到「%s」round=%s merged=%s total=%s has_next=%s seller_id=%s",
+                    LISTINGS_LOAD_MORE_TEXT,
+                    round_idx,
+                    len(merged),
+                    _meta_total_item_count(meta),
+                    meta.get("has_next"),
+                    seller_key,
+                )
             break
 
         new_wrapped = await _wait_new_on_sale_file_capture(
@@ -171,10 +265,27 @@ async def _expand_on_sale_listings_until_end(
         last_ts = int(new_wrapped.get("ts") or last_ts)
         chunk: List[Dict[str, Any]] = body.get("data") or []
         meta = body.get("meta") or meta
+        before = len(merged)
         _merge_on_sale_items_by_id(chunk, merged)
+        if len(merged) == before and not chunk:
+            log.warning(
+                "在售一覧分页无新商品 seller_id=%s round=%s",
+                seller_key,
+                round_idx,
+            )
+            break
+
+        await _scroll_listings_page_to_bottom(page)
 
     out_meta = dict(meta)
-    out_meta["has_next"] = False
+    total = _meta_total_item_count(out_meta)
+    out_meta["has_next"] = (
+        False
+        if total > 0 and len(merged) >= total
+        else bool(out_meta.get("has_next"))
+    )
+    if total > 0:
+        out_meta["total_item_count"] = total
     return list(merged.values()), out_meta
 
 
@@ -188,7 +299,7 @@ async def capture_on_sale_list_via_mitm_session(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     在已建立的 MITM Edge 会话内等待首次 ``items/get_items`` 截获，
-    再展开「もっと見る」并合并分页（浏览器须仍为开启状态）。
+    再滚底并展开「もっと見る」分页合并（浏览器须仍为开启状态）。
     """
     await wait_mitm_capture(
         mgr=mgr,
@@ -237,7 +348,7 @@ async def fetch_on_sale_list_items(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     使用对应账号的 Edge 会话（经 MITM）打开出品一覧页，从代理截获的
-    ``items/get_items`` 响应中解析 ``data`` 与 ``meta``；若有「もっと見る」则全部加载后合并。
+    ``items/get_items`` 响应中解析 ``data`` 与 ``meta``；按 ``total_item_count`` 滚底并点「もっと見る」加载全部。
 
     :raises RuntimeError: 未配置 account_id、MITM/浏览器失败或响应 result!=OK
     """
