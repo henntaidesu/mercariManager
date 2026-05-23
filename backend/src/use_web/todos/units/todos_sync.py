@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""代办事项同步入口（HTTP 层）。"""
+"""待办事项同步入口（HTTP 层）。"""
 
 from typing import Any, Dict
 
@@ -33,7 +33,7 @@ from .todos_models import (
 
 
 async def sync_todos(req: SyncTodosRequest) -> Dict[str, Any]:
-    """从煤炉同步当前账号的代办事项；按账号串行避免浏览器抢占。"""
+    """从煤炉同步当前账号的待办事项；按账号串行避免浏览器抢占。"""
     try:
         aid = _resolve_account_id(req.account_id)
     except ValueError as exc:
@@ -50,10 +50,10 @@ async def fetch_todo_transaction_detail(todo_id: int) -> Dict[str, Any]:
     """处理按钮：打开 transaction 页 → MITM 抓 API → 解析返回；浏览器保持打开。"""
     todo = TodoItemModel.find_by_id(id=int(todo_id))
     if not todo:
-        raise HTTPException(status_code=404, detail="代办事项不存在")
+        raise HTTPException(status_code=404, detail="待办事项不存在")
     aid = int(getattr(todo, "account_id", 0) or 0)
     if not aid:
-        raise HTTPException(status_code=400, detail="代办事项缺少 account_id")
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
 
     try:
         data = await run_meilu_serial_async(
@@ -73,10 +73,10 @@ async def send_transaction_message_endpoint(
     """在已开浏览器内填回复 + 点煤炉发送按钮。"""
     todo = TodoItemModel.find_by_id(id=int(todo_id))
     if not todo:
-        raise HTTPException(status_code=404, detail="代办事项不存在")
+        raise HTTPException(status_code=404, detail="待办事项不存在")
     aid = int(getattr(todo, "account_id", 0) or 0)
     if not aid:
-        raise HTTPException(status_code=400, detail="代办事项缺少 account_id")
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
     try:
         return await run_meilu_serial_async(
             queue_key_for_meilu_account(aid),
@@ -92,10 +92,10 @@ async def start_shipping_class_endpoint(todo_id: int) -> Dict[str, Any]:
     """点 transaction 页的「商品サイズと発送場所を選択する」按钮，等抓 shipping_classes。"""
     todo = TodoItemModel.find_by_id(id=int(todo_id))
     if not todo:
-        raise HTTPException(status_code=404, detail="代办事项不存在")
+        raise HTTPException(status_code=404, detail="待办事项不存在")
     aid = int(getattr(todo, "account_id", 0) or 0)
     if not aid:
-        raise HTTPException(status_code=400, detail="代办事项缺少 account_id")
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
     try:
         return await run_meilu_serial_async(
             queue_key_for_meilu_account(aid),
@@ -113,10 +113,10 @@ async def confirm_shipping_selection_endpoint(
     """提交所选 size + facility：点 size → 次へ → 跳页 → 点 facility → 完了する。"""
     todo = TodoItemModel.find_by_id(id=int(todo_id))
     if not todo:
-        raise HTTPException(status_code=404, detail="代办事项不存在")
+        raise HTTPException(status_code=404, detail="待办事项不存在")
     aid = int(getattr(todo, "account_id", 0) or 0)
     if not aid:
-        raise HTTPException(status_code=400, detail="代办事项缺少 account_id")
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
     try:
         return await run_meilu_serial_async(
             queue_key_for_meilu_account(aid),
@@ -134,10 +134,10 @@ async def submit_transaction_review_endpoint(
     """在已打开浏览器（取引評価页）填评价文本并点击提交按钮。"""
     todo = TodoItemModel.find_by_id(id=int(todo_id))
     if not todo:
-        raise HTTPException(status_code=404, detail="代办事项不存在")
+        raise HTTPException(status_code=404, detail="待办事项不存在")
     aid = int(getattr(todo, "account_id", 0) or 0)
     if not aid:
-        raise HTTPException(status_code=400, detail="代办事项缺少 account_id")
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
     try:
         return await run_meilu_serial_async(
             queue_key_for_meilu_account(aid),
@@ -153,10 +153,10 @@ async def change_shipping_method_endpoint(todo_id: int) -> Dict[str, Any]:
     """点 transaction 页的「発送方法を変更する」按钮，导航到修改发送方式页（后续由用户在浏览器内完成）。"""
     todo = TodoItemModel.find_by_id(id=int(todo_id))
     if not todo:
-        raise HTTPException(status_code=404, detail="代办事项不存在")
+        raise HTTPException(status_code=404, detail="待办事项不存在")
     aid = int(getattr(todo, "account_id", 0) or 0)
     if not aid:
-        raise HTTPException(status_code=400, detail="代办事项缺少 account_id")
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
     try:
         return await run_meilu_serial_async(
             queue_key_for_meilu_account(aid),

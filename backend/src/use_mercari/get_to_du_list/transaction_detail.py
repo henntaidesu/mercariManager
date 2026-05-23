@@ -302,7 +302,14 @@ async def fetch_transaction_detail(todo_id: int) -> Dict[str, Any]:
     }
 
 
-_REPLY_TEXTAREA_PLACEHOLDER = "なにか分からないことがあれば質問してみましょう。"
+# 取引消息回复 textarea 的 placeholder 在不同代办类型下不一样：
+# - 默认（WaitShipping*）：「なにか分からないことがあれば質問してみましょう。」
+# - 待回复（IncomingMessage）：「このたびはご購入ありがとうございます。商品の発送まで今しばらくお待ちください。」
+# 任一命中即可，所以用 CSS OR 选择器一次抓两个。
+_REPLY_TEXTAREA_PLACEHOLDERS = (
+    "なにか分からないことがあれば質問してみましょう。",
+    "このたびはご購入ありがとうございます。商品の発送まで今しばらくお待ちください。",
+)
 _REPLY_SEND_BUTTON_TEXT = "取引メッセージを送る"
 
 _REVIEW_TEXTAREA_PLACEHOLDER = "例) このたびはお取引ありがとうございました。"
@@ -335,15 +342,16 @@ async def send_transaction_message(todo_id: int, text: str) -> Dict[str, Any]:
     except Exception as exc:
         raise RuntimeError("浏览器未打开或已关闭，请先点「处理」打开交易页") from exc
 
-    # 找到回复 textarea（按 placeholder）
-    textarea = page.locator(
-        f'textarea[placeholder="{_REPLY_TEXTAREA_PLACEHOLDER}"]'
+    # 找到回复 textarea：按多种 placeholder 取 OR 选择器，谁先可见就用谁
+    selector = ", ".join(
+        f'textarea[placeholder="{p}"]' for p in _REPLY_TEXTAREA_PLACEHOLDERS
     )
+    textarea = page.locator(selector)
     try:
         await textarea.first.wait_for(state="visible", timeout=8000)
     except Exception as exc:
         raise RuntimeError(
-            f"未找到回复输入框（placeholder 不匹配；当前 URL: {page.url}）"
+            f"未找到回复输入框（placeholder 不匹配任何已知模板；当前 URL: {page.url}）"
         ) from exc
 
     await textarea.first.fill(body)
