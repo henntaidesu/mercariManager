@@ -83,11 +83,10 @@ def parse_capture_target(
     - ``GET /items/get_items``: 提取 seller_id + status（用于 dpop_list / dpop_on_sale_list）
     - ``GET /transaction_evidences/get``: 提取 item_id（用于 dpop_info）
     - ``GET /items/get``: 提取 item_id（用于 dpop_item_get_info）
+    - ``POST /services/todolist/v1/list``: 代办事项列表（POST，无 query）
     """
     try:
         m = (method or "").strip().upper()
-        if m and m != "GET":
-            return None
         h = (host or "").lower().strip()
         pth = (path or "").split("?", 1)[0]
         u = (flow_url or "").strip()
@@ -99,6 +98,8 @@ def parse_capture_target(
             return None
         norm_path = (parsed.path or "").rstrip("/")
         qd = parse_qs(parsed.query)
+        if m and m != "GET" and not norm_path.endswith("services/todolist/v1/list"):
+            return None
         if norm_path.endswith("items/get_items"):
             sid_list = qd.get("seller_id") or qd.get("sellerId") or []
             sid = (sid_list[0] or "").strip() if sid_list else ""
@@ -147,7 +148,7 @@ def parse_capture_target(
         if norm_path.endswith("services/todolist/v1/list"):
             return {
                 "capture_type": "todolist_list",
-                "http_method": "GET",
+                "http_method": m or "POST",
                 "dpop_field": "dpop_todolist",
                 "full_url": u,
             }

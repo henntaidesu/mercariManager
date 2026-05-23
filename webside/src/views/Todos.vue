@@ -44,7 +44,6 @@
           </el-checkbox>
         </el-col>
         <el-col :xs="24" :md="8" class="search-actions">
-          <el-button :icon="Refresh" @click="load">刷新</el-button>
           <el-button type="primary" :icon="Download" :loading="syncLoading" @click="openSyncDialog">
             从煤炉同步
           </el-button>
@@ -116,6 +115,12 @@
             <span>{{ row.account_name || `#${row.account_id}` }}</span>
           </template>
         </el-table-column>
+
+        <el-table-column label="操作" width="90" align="center" header-align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link size="small" @click="onProcess(row)">处理</el-button>
+          </template>
+        </el-table-column>
       </el-table>
 
       <el-pagination
@@ -160,13 +165,13 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Refresh } from '@element-plus/icons-vue'
+import { Download } from '@element-plus/icons-vue'
 import { todosApi, meiluAccountApi } from '@/api'
 
 const KIND_LABELS = {
-  WaitShippingCard: '待发货（卡发）',
-  WaitShippingPoint: '待发货（邮局）',
-  TransactionWaitShippingFunds: '待发货（资金）',
+  WaitShippingCard: '待发货',
+  WaitShippingPoint: '待发货',
+  TransactionWaitShippingFunds: '待发货',
   MerpayRealcardWaitActivation: 'Merpay 卡激活',
 }
 
@@ -305,6 +310,11 @@ function mercariItemUrl(itemId) {
   const s = String(itemId || '').trim()
   if (!s) return '#'
   return `https://jp.mercari.com/item/${s}`
+}
+
+function onProcess(row) {
+  // TODO: 处理按钮的具体行为待定（本地标完成 / 打开煤炉商品页 / 二者皆有）
+  ElMessage.info(`处理 todo #${row.id}（功能待实现）`)
 }
 
 function buyerNameFromMessage(msg) {
