@@ -13,6 +13,7 @@ Playwright 异步驱动绑定到「当前线程 + 当前 event loop」：
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import threading
@@ -24,6 +25,8 @@ from .interactive_tab_state import (
     save_snapshot_from_context,
 )
 from .paths import profile_dir_for, profiles_root, validate_account_key
+
+log = logging.getLogger(__name__)
 
 _manager: Optional["EdgeWebDriveManager"] = None
 
@@ -592,6 +595,18 @@ class EdgeWebDriveManager:
             await self._apply_image_block_route(context, block_images=block_images)
             s.contexts[key] = context
             s.session_meta[key] = {"interactive": bool(interactive), "headless": bool(headless)}
+
+            # 用户手动关窗 / 浏览器进程退出 → Playwright 触发 context 'close'，
+            # 立刻把死引用从注册表移除，下次 open_session 才会重新启动而非误报 already_running
+            def _on_context_close(*_args, _key=key, _state=s):
+                _state.contexts.pop(_key, None)
+                _state.session_meta.pop(_key, None)
+                log.info("浏览器会话已关闭（用户关窗 / 进程退出），已从注册表移除: %s", _key)
+
+            try:
+                context.on("close", _on_context_close)
+            except Exception as exc:
+                log.debug("注册 context close 事件失败 %s: %s", key, exc)
 
             tab_restore: Optional[Dict[str, Any]] = None
             if interactive and restore_tabs:
