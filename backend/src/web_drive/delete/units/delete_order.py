@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Mercari 在售商品删除：无头 MITM 浏览器打开编辑页并删除，完成后同步列表并关闭浏览器。
+Mercari 在售商品删除：MITM 有头最小化 Edge 打开编辑页并删除，完成后同步列表并关闭浏览器。
 
 流程：
-  1. 在 ``meilu_{id}__auto`` 无头 profile 上打开编辑页（Cookie 从 ``meilu_{id}`` 同步）
+  1. 在 ``meilu_{id}__auto`` profile 上启动有头最小化 Edge（Cookie 从 ``meilu_{id}`` 磁盘 seed）
   2. 点击「この商品を削除する」→ 弹窗内点击「削除する」
   3. 等待跳转出品一覧，MITM 截获 items/get_items 并同步本地
-  4. 自动 close_session 关闭无头浏览器
+  4. 自动 close_session 关闭浏览器
 """
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import Any, Dict, Optional
 
@@ -30,12 +29,6 @@ DELETE_CONFIRM_TEXT = "削除する"
 DELETE_DIALOG_TESTID = "deletion-dialog"
 DELETE_DIALOG_ACTION_TESTID = "dialog-action-button"
 DELETE_DIALOG_TITLE_TEXT = "この商品を削除しますか？"
-
-
-def _delete_headless() -> bool:
-    """删除自动化是否无头（默认开启；``WEB_DRIVE_DELETE_HEADLESS=0`` 可关闭）。"""
-    v = (os.environ.get("WEB_DRIVE_DELETE_HEADLESS") or "1").strip().lower()
-    return v in ("1", "true", "yes", "on")
 
 
 def mercari_item_path_segment(item_id: str) -> str:
@@ -113,12 +106,11 @@ async def delete_mercari_item(
     *,
     item_id: str,
     proxy_server: Optional[str] = None,  # noqa: ARG001 — MITM 由 mitm_automation_browser 统一配置
-    headless: Optional[bool] = None,
     page_load_timeout_ms: int = DEFAULT_PAGE_LOAD_TIMEOUT_MS,
     element_timeout_ms: int = DEFAULT_ELEMENT_TIMEOUT_MS,
 ) -> Dict[str, Any]:
     """
-    使用无头 MITM 浏览器（``meilu_{id}__auto``）删除商品并同步在售列表；结束后自动关闭浏览器。
+    使用 MITM 浏览器（``meilu_{id}__auto`` 有头最小化）删除商品并同步在售列表；结束后自动关闭浏览器。
     """
     from ...core.manager import EdgeWebDriveManager
     from ...core.mitm_session import mitm_automation_browser
@@ -144,16 +136,14 @@ async def delete_mercari_item(
     _aid, seller_id = _resolve_account_and_seller(account_id)
     seller_key = str(int(seller_id))
     auto_key = meilu_automation_key(account_id)
-    use_headless = _delete_headless() if headless is None else bool(headless)
     edit_url = build_sell_edit_url(item_id)
 
     clear_on_sale_list_response_file(seller_key)
 
     log.info(
-        "[delete_mercari_item] account=%s auto=%s headless=%s item=%s url=%s",
+        "[delete_mercari_item] account=%s auto=%s item=%s url=%s",
         account_key,
         auto_key,
-        use_headless,
         seg,
         edit_url,
     )
@@ -161,7 +151,6 @@ async def delete_mercari_item(
     result: Dict[str, Any] = {
         "account_key": account_key,
         "browser_key": auto_key,
-        "headless": use_headless,
         "item_id": seg,
         "edit_url": edit_url,
         "url_before_delete": None,
@@ -176,7 +165,6 @@ async def delete_mercari_item(
     async with mitm_automation_browser(
         account_id,
         start_url=edit_url,
-        headless=use_headless,
     ) as (mgr, browser_key):
         page = await _page_for_session(mgr, browser_key)
 

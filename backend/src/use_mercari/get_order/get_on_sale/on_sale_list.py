@@ -9,16 +9,14 @@ Mercari 在售商品列表：通过账号对应 WebDriver 打开
 直至 ``meta.total_item_count`` 已全部合并或 ``has_next`` 为 false 且按钮消失。
 「从煤炉同步」完成后可在**同一浏览器会话**内对本次新增商品自动执行与「获取详情」相同的逻辑（见 ``on_sale_item_detail_sync.auto_fetch_details_for_inserted_items``）。
 
-MITM 无头浏览器使用独立 profile：``meilu_{account_id}__auto``（与账号页有头 ``meilu_{account_id}`` 分离）。
-截获完成后会在 ``finally`` 中关闭该账号浏览器会话。
-环境变量 ``WEB_DRIVE_MERCARI_HEADLESS`` 或 ``WEB_DRIVE_ON_SALE_SYNC_HEADLESS``：默认 ``1`` 为无头。
+MITM 浏览器使用独立 profile：``meilu_{account_id}__auto``（与账号页有头 ``meilu_{account_id}`` 分离）。
+每次操作启动一个独立的有头最小化 Edge 进程，截获完成后会在 ``finally`` 中关闭该浏览器会话。
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
@@ -62,15 +60,6 @@ def build_on_sale_list_url(seller_id: int) -> str:
         "with_total_item_count": "false",
     }
     return f"{_API_BASE}?{urlencode(params)}"
-
-
-def _on_sale_sync_headless() -> bool:
-    v = (
-        os.environ.get("WEB_DRIVE_MERCARI_HEADLESS")
-        or os.environ.get("WEB_DRIVE_ON_SALE_SYNC_HEADLESS")
-        or "1"
-    ).strip().lower()
-    return v in ("1", "true", "yes", "on")
 
 
 def _parse_on_sale_list_capture(seller_key: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
@@ -325,12 +314,10 @@ async def _fetch_on_sale_via_browser_impl(
     seller_key = str(int(seller_id))
     clear_on_sale_list_response_file(seller_key)
     since_ms = int(time.time() * 1000)
-    headless = _on_sale_sync_headless()
 
     async with mitm_automation_browser(
         account_id,
         start_url=LISTINGS_PAGE_URL,
-        headless=headless,
     ) as (mgr, auto_key):
         return await capture_on_sale_list_via_mitm_session(
             mgr,

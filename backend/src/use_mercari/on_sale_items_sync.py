@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional
 
 from .get_order.get_on_sale.on_sale_list import (
     LISTINGS_PAGE_URL,
-    _on_sale_sync_headless,
     capture_on_sale_list_via_mitm_session,
 )
 from .on_sale_item_detail_sync import auto_fetch_details_for_inserted_items
@@ -567,13 +566,11 @@ async def sync_on_sale_items_from_mercari(account_id: Optional[int] = None) -> D
     seller_key = str(int(sid))
     clear_on_sale_list_response_file(seller_key)
     since_ms = int(time.time() * 1000)
-    headless = _on_sale_sync_headless()
     list_timeout_sec = 90
 
     async with mitm_automation_browser(
         int(aid),
         start_url=LISTINGS_PAGE_URL,
-        headless=headless,
     ) as (mgr, auto_key):
         items, meta = await capture_on_sale_list_via_mitm_session(
             mgr,

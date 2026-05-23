@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -48,15 +47,6 @@ _API_PARAMS = (
 IN_PROGRESS_PAGE_URL = "https://jp.mercari.com/mypage/listings/in_progress"
 
 
-def _mitm_browser_headless() -> bool:
-    v = (
-        os.environ.get("WEB_DRIVE_MERCARI_HEADLESS")
-        or os.environ.get("WEB_DRIVE_ON_SALE_SYNC_HEADLESS")
-        or "1"
-    ).strip().lower()
-    return v in ("1", "true", "yes", "on")
-
-
 async def _fetch_trading_list_via_browser_impl(
     account_id: int,
     seller_id: int,
@@ -66,12 +56,10 @@ async def _fetch_trading_list_via_browser_impl(
     seller_key = str(int(seller_id))
     clear_trading_list_response_file(seller_key)
     since_ms = int(time.time() * 1000)
-    headless = _mitm_browser_headless()
 
     async with mitm_automation_browser(
         account_id,
         start_url=IN_PROGRESS_PAGE_URL,
-        headless=headless,
     ) as (mgr, auto_key):
         await wait_mitm_capture(
             mgr=mgr,

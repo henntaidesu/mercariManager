@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from typing import Any, Dict, Optional
 from urllib.parse import quote
@@ -46,15 +45,6 @@ def mercari_transaction_page_url(item_id: str) -> str:
     if not cid:
         raise ValueError("item_id 不能为空")
     return f"https://jp.mercari.com/transaction/{cid}"
-
-
-def _mitm_browser_headless() -> bool:
-    v = (
-        os.environ.get("WEB_DRIVE_MERCARI_HEADLESS")
-        or os.environ.get("WEB_DRIVE_ON_SALE_SYNC_HEADLESS")
-        or "1"
-    ).strip().lower()
-    return v in ("1", "true", "yes", "on")
 
 
 async def _wait_transaction_evidence_mitm(
@@ -90,13 +80,11 @@ async def _fetch_item_info_via_browser_impl(
 
     clear_transaction_evidence_response_file(cid)
     since_ms = int(time.time() * 1000)
-    headless = _mitm_browser_headless()
     page_url = mercari_transaction_page_url(cid)
 
     async with mitm_automation_browser(
         account_id,
         start_url=page_url,
-        headless=headless,
     ):
         await _wait_transaction_evidence_mitm(
             item_id=cid,

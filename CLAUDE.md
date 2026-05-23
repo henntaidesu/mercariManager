@@ -101,7 +101,7 @@ backend/
     ├── web_drive/                   # Playwright browser automation
     │   ├── manager.py               # Browser manager singleton
     │   ├── interactive_browser.py   # Headed browser for user interaction
-    │   ├── persistent_browser.py    # Headless automation
+    │   ├── mitm_session.py          # Per-op headed minimized Edge for MITM ops
     │   └── account_serial_queue.py  # Serial task execution per account
     └── ssl_mitm_proxy/              # mitmproxy integration
         ├── runner.py                # Start/stop MITM proxy
@@ -169,8 +169,7 @@ Key tables in `backend/src/db_manage/models/`:
 - `JWT_SECRET`: Signing key (change in production)
 - `JWT_EXPIRE_HOURS`: Token validity (default: 12)
 - `SSL_MITM_AUTO_START`: Set to `0` to disable mitmproxy (default: 1)
-- `INTERACTIVE_BROWSER_AUTO_START`: Set to `0` to disable headed browser (default: 1)
-- `PERSISTENT_BROWSER_AUTO_START`: Set to `0` to disable headless browser (default: 1)
+- `INTERACTIVE_BROWSER_AUTO_START`: Set to `0` to disable headed browser auto-start at boot (default: 0)
 
 **Frontend** (`webside/.env.development`):
 - `MERCARI_DEV_HTTP`: Use HTTP instead of HTTPS (default: 0)
@@ -210,4 +209,4 @@ Key tables in `backend/src/db_manage/models/`:
 | Frontend build | `cd webside && npm run build` |
 | Backend deps | `cd backend && pip install -r requirements.txt` |
 | Frontend deps | `cd webside && npm install` |
-| Disable heavy startup features | `SSL_MITM_AUTO_START=0 INTERACTIVE_BROWSER_AUTO_START=0 PERSISTENT_BROWSER_AUTO_START=0 python -m uvicorn main:app --reload --host 0.0.0.0 --port 9601` |
+| Disable heavy startup features | `SSL_MITM_AUTO_START=0 INTERACTIVE_BROWSER_AUTO_START=0 python -m uvicorn main:app --reload --host 0.0.0.0 --port 9601` |

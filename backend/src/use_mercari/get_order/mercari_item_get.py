@@ -4,13 +4,11 @@ Mercari 单件商品详情：经 WebDriver 打开 ``https://jp.mercari.com/item/
 截获 ``GET https://api.mercari.jp/items/get?id=…`` 的 JSON 响应，不再直连 API。
 
 历史 ``build_mercari_item_get_url`` 的查询串仍可用于对照抓包；DPoP 头不再参与请求。
-环境变量 ``WEB_DRIVE_MERCARI_HEADLESS`` 或 ``WEB_DRIVE_ON_SALE_SYNC_HEADLESS``：默认 ``1`` 为无头。
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from typing import Any, Dict, Optional
 from urllib.parse import quote
@@ -53,15 +51,6 @@ def mercari_item_page_url(item_id: str) -> str:
     if not cid:
         raise ValueError("item_id 不能为空")
     return f"https://jp.mercari.com/item/{cid}"
-
-
-def _mitm_browser_headless() -> bool:
-    v = (
-        os.environ.get("WEB_DRIVE_MERCARI_HEADLESS")
-        or os.environ.get("WEB_DRIVE_ON_SALE_SYNC_HEADLESS")
-        or "1"
-    ).strip().lower()
-    return v in ("1", "true", "yes", "on")
 
 
 async def _wait_item_get_mitm_response(
@@ -127,13 +116,11 @@ async def _fetch_mercari_item_get_via_browser_impl(
 
     clear_item_get_response_file(cid)
     since_ms = int(time.time() * 1000)
-    headless = _mitm_browser_headless()
     page_url = mercari_item_page_url(cid)
 
     async with mitm_automation_browser(
         account_id,
         start_url=page_url,
-        headless=headless,
     ) as (mgr, auto_key):
         await fetch_mercari_item_get_in_browser_session(
             mgr,

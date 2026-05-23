@@ -31,15 +31,10 @@ from .core.paths import (
     seed_listing_profile_from_account,
     validate_account_key,
 )
-from .core.persistent_browser import (
-    ensure_persistent_browser,
-    startup_browsers_for_all_active_accounts,
-)
 
 __all__ = [
     "EdgeWebDriveManager",
     "GLOBAL_QUEUE_KEY",
-    "ensure_persistent_browser",
     "get_web_drive_manager",
     "meilu_account_key",
     "meilu_automation_key",
@@ -52,6 +47,5 @@ __all__ = [
     "resolve_meilu_account_id",
     "run_meilu_serial_async",
     "shutdown_serial_executors",
-    "startup_browsers_for_all_active_accounts",
     "validate_account_key",
 ]

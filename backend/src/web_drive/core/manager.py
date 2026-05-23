@@ -88,24 +88,22 @@ class EdgeWebDriveManager:
         ]
 
     @staticmethod
-    def _headless_block_images() -> bool:
-        """无头模式是否拦截图片（默认开启，``WEB_DRIVE_HEADLESS_BLOCK_IMAGES=0`` 可关闭）。"""
-        v = (os.environ.get("WEB_DRIVE_HEADLESS_BLOCK_IMAGES") or "1").strip().lower()
-        return v not in ("0", "false", "no", "off")
+    async def _apply_image_block_route(context: Any, *, block_images: bool) -> None:
+        """按需为 context 注册「图片资源 abort」路由（减轻带宽与页面渲染耗时）。
 
-    @staticmethod
-    async def _apply_headless_optimizations(context: Any, *, headless: bool) -> None:
-        """无头会话：不加载图片（减轻带宽与页面渲染耗时）。"""
-        if not headless or not EdgeWebDriveManager._headless_block_images():
+        与 ``--blink-settings=imagesEnabled=false`` 启动参数配合：启动参数让 Chromium 不再
+        发起图片请求，路由 abort 兜底拦截那些通过 fetch/xhr 等非 ``<img>`` 路径的图片资源。
+        """
+        if not block_images:
             return
 
-        async def _block_images(route: Any) -> None:
+        async def _block(route: Any) -> None:
             if route.request.resource_type == "image":
                 await route.abort()
             else:
                 await route.continue_()
 
-        await context.route("**/*", _block_images)
+        await context.route("**/*", _block)
 
     @staticmethod
     def _launch_retry_delays_sec() -> List[float]:
@@ -406,10 +404,18 @@ class EdgeWebDriveManager:
         start_url: Optional[str],
         proxy_server: Optional[str],
         headless: bool,
+        start_minimized: bool = False,
+        block_images: bool = True,
     ) -> Dict[str, Any]:
         """
         MITM 用：在 ``meilu_{id}__auto`` 独立 profile 上启动新的无头（或指定 headless）会话。
         不触碰 ``meilu_{id}`` 上有头用户窗口。
+
+        ``start_minimized`` 仅在 ``headless=False`` 时生效：浏览器窗口启动后立即最小化，
+        避免抢占前台焦点。
+
+        ``block_images`` 默认 ``True``：MITM 自动化只需 JSON 响应，不渲染图片可显著减少带宽与
+        加载时间。用户可见的有头窗口（``open_session``）默认不开启此项。
         """
         key = validate_account_key(account_key)
         async with self._serialize_profile(key):
@@ -420,6 +426,8 @@ class EdgeWebDriveManager:
                 start_url=start_url,
                 proxy_server=proxy_server,
                 interactive=False,
+                start_minimized=start_minimized,
+                block_images=block_images,
             )
 
     async def ensure_session_for_listing(
@@ -482,6 +490,8 @@ class EdgeWebDriveManager:
         proxy_server: Optional[str] = None,
         interactive: bool = False,
         restore_tabs: bool = False,
+        start_minimized: bool = False,
+        block_images: bool = False,
     ) -> Dict[str, Any]:
         s = self._prepare_async()
         async with s.lock:  # type: ignore[union-attr]
@@ -539,7 +549,9 @@ class EdgeWebDriveManager:
             ]
             if interactive and not headless:
                 launch_args.extend(self._interactive_launch_args())
-            if headless and self._headless_block_images():
+            elif start_minimized and not headless:
+                launch_args.append("--start-minimized")
+            if block_images:
                 launch_args.append("--blink-settings=imagesEnabled=false")
             launch_kw: Dict[str, Any] = {
                 "user_data_dir": udir,
@@ -577,7 +589,7 @@ class EdgeWebDriveManager:
                     f"或关闭其它占用该账号 profile 的 Edge 窗口后重试；已重试 {len(delays)} 次）: {last_exc}"
                 ) from last_exc
 
-            await self._apply_headless_optimizations(context, headless=headless)
+            await self._apply_image_block_route(context, block_images=block_images)
             s.contexts[key] = context
             s.session_meta[key] = {"interactive": bool(interactive), "headless": bool(headless)}
 

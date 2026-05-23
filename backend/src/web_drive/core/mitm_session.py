@@ -1,23 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-MITM 自动化：在持久化无头浏览器（``meilu_{id}__auto``）上打开任务标签页执行操作，
-操作完成后只关闭任务标签页，不关闭浏览器。
+MITM 自动化：每次操作启动一个**独立的有头最小化** Edge 进程执行任务，
+操作完成后整体关闭该浏览器进程。不再依赖持久化无头浏览器，也不再从有头主会话内存注入 Cookie。
 
-持久化浏览器生命周期：
-- 系统启动时由 ``startup_browsers_for_all_active_accounts`` 预热
-- 后续由 ``ensure_persistent_browser`` 懒启动（首次操作时自动启动）
-- 全程不因单次操作关闭，浏览器进程持续存活
+每次任务的完整生命周期：
+  1. 确保 MITM 代理已启动
+  2. 把 ``meilu_{id}`` profile 磁盘上的 Cookie / 登录文件复制到 ``meilu_{id}__auto`` profile
+  3. 以 ``headless=False, start_minimized=True`` 启动一个新的 ``__auto`` Edge 进程
+     （加载 MITM 代理 + 自带最新磁盘 Cookie）
+  4. 在该浏览器内打开 ``start_url``
+  5. yield ``(mgr, auto_key)`` —— 与旧接口完全兼容
+  6. 操作结束（或抛错）后 ``close_session(force=True)`` 整体关闭浏览器
 
-任务执行流程（每次 MITM 操作）：
-  1. 确保持久化浏览器已启动
-  2. 从有头主会话（``meilu_{id}``）同步 Cookie 到无头自动化会话（``meilu_{id}__auto``）
-  3. 在无头浏览器内打开新标签页并导航到目标 URL
-  4. yield (mgr, auto_key) — 与旧接口完全兼容
-  5. 操作完成后：关闭任务标签页，浏览器保持运行，等待下一个队列任务
+设计动机：
+  - 旧版（持久化无头 + 内存 Cookie 注入）要求 ``meilu_{id}`` 有头会话**正在运行**，
+    否则 ``copy_cookies_between_sessions`` 拿不到源 Cookie，无头窗口里的会话很快失效；
+  - 新版直接从磁盘 seed Cookie，用户只要在账号管理页登录过一次并**关闭该窗口**让
+    Cookie 刷盘，后续任意 MITM 操作都能从磁盘自取登录态。
 
-与旧版本的区别：
-  旧版 mitm_automation_browser: 每次操作都 ``ensure_session_for_mitm``（强制关闭再重开）→ 操作结束后 ``close_session(force=True)`` 关闭整个浏览器。
-  新版 mitm_automation_browser: 持久化浏览器长驻，仅管理标签页生命周期。
+使用前置：
+  - ``meilu_{id}`` 有头主窗口正在运行时，Windows 上其 Cookie/Login Data 文件被 Edge
+    独占；seed 拷贝会跳过这些文件（``_seed_profile_auth_files`` 内部静默忽略），
+    ``__auto`` 拿到的可能是上次刷盘的旧 Cookie。建议在 MITM 操作前先关闭该有头窗口。
 """
 
 from __future__ import annotations
@@ -30,8 +34,11 @@ from typing import Any, AsyncIterator, Callable, Dict, Optional, Tuple
 
 from ...ssl_mitm_proxy.runner import default_mitm_proxy_url, start_mitm_proxy
 from .manager import EdgeWebDriveManager, get_web_drive_manager
-from .paths import meilu_account_key, meilu_automation_key, seed_automation_profile_from_account
-from .persistent_browser import ensure_persistent_browser, close_task_tab_safely
+from .paths import (
+    meilu_account_key,
+    meilu_automation_key,
+    seed_automation_profile_from_account,
+)
 
 log = logging.getLogger(__name__)
 
@@ -43,22 +50,19 @@ async def mitm_automation_browser(
     account_id: int,
     *,
     start_url: str,
-    headless: bool,  # 保留参数兼容旧调用方，持久化模式始终使用无头
 ) -> AsyncIterator[Tuple[EdgeWebDriveManager, str]]:
     """
-    上下文管理器：在持久化无头浏览器内为当前任务打开一个新标签页。
+    上下文管理器：为单次 MITM 操作启动一个独立的有头最小化 Edge 进程。
 
     **进入时：**
       1. 确保 MITM 代理已启动
-      2. 确保该账号的持久化无头浏览器已启动（懒启动）
-      3. 从有头主会话同步 Cookie（若用户窗口已登录）
-      4. 打开新任务标签页并导航到 ``start_url``
+      2. 从 ``meilu_{id}`` profile 磁盘 seed Cookie 到 ``meilu_{id}__auto``
+      3. 启动有头最小化 ``__auto`` Edge 并打开 ``start_url``
 
     **退出时：**
-      - 关闭任务标签页（若关闭后无剩余标签，自动补一个空白页保持浏览器存活）
-      - **不关闭浏览器**，浏览器持续运行以备下一个队列任务
+      - 整体关闭 ``__auto`` 浏览器进程（不保留）
 
-    与旧接口完全兼容：yield ``(mgr, auto_key)``，调用方无需修改。
+    yield ``(mgr, auto_key)`` 供调用方在该会话内执行后续操作。
     """
     r = start_mitm_proxy()
     if r.get("error"):
@@ -68,58 +72,51 @@ async def mitm_automation_browser(
     main_key = meilu_account_key(account_id)
     auto_key = meilu_automation_key(account_id)
 
-    # ── 步骤1：确保持久化无头浏览器已启动（首次时自动启动，后续直接复用）──
-    await ensure_persistent_browser(account_id)
-
-    # ── 步骤2：从有头主会话同步 Cookie（若用户在账号管理页已打开有头浏览器并登录）──
-    n_cookies = await mgr.copy_cookies_between_sessions(main_key, auto_key)
-    if n_cookies > 0:
-        log.info(
-            "MITM 自动化已从有头会话 %s 注入 %s 条 Cookie 到 %s",
+    # ── 提示：主有头窗口在跑会锁住部分 Cookie/Login 文件，seed 可能复制旧数据 ──
+    if mgr.is_interactive_session_running(main_key):
+        log.warning(
+            "MITM seed 时检测到 %s 有头会话仍在运行，部分 Cookie 文件被 Edge 独占；"
+            "如登录态较旧，请先关闭账号管理页的 Edge 窗口以刷盘 Cookie 后再重试。",
             main_key,
-            n_cookies,
-            auto_key,
         )
 
-    # ── 步骤3：在持久化浏览器内打开新任务标签页 ──
-    # 新标签页成为 ctx.pages[-1]，现有代码（_page_for_session / reload_active_tab）
-    # 均以 ctx.pages[-1] 定位当前活动页，因此无需修改调用方。
+    # ── 步骤1：每次都从 meilu_{id} profile 磁盘复制 Cookie 到 __auto profile ──
+    try:
+        seed_automation_profile_from_account(account_id)
+    except Exception as exc:
+        log.warning("MITM seed profile 失败 %s（仍尝试用上次磁盘 Cookie 启动）: %s", auto_key, exc)
+
+    # ── 步骤2：启动独立的有头最小化 __auto Edge（自带最新磁盘 Cookie + MITM 代理）──
+    proxy = default_mitm_proxy_url()
+    await mgr.ensure_session_for_mitm(
+        auto_key,
+        start_url=start_url,
+        proxy_server=proxy,
+        headless=False,
+        start_minimized=True,
+    )
+
     s = mgr._prepare_async()
-    task_page: Any = None
     async with s.lock:  # type: ignore[union-attr]
         ctx = s.contexts.get(auto_key)
         if ctx is None or not mgr._is_context_alive(ctx):
             raise RuntimeError(
-                f"持久化浏览器不可用: {auto_key}。"
-                "请检查账号浏览器状态，或重启服务后重试。"
+                f"MITM 浏览器启动失败: {auto_key}。请检查 Edge / Playwright 状态后重试。"
             )
-        task_page = await ctx.new_page()
-
-    # 在锁外导航（避免长时间持有锁）
-    try:
-        await task_page.goto(start_url, wait_until="domcontentloaded", timeout=60_000)
-        if n_cookies > 0:
-            # Cookie 注入后重新打开页面以确保会话生效
-            await task_page.goto(start_url, wait_until="domcontentloaded", timeout=60_000)
-    except Exception as exc:
-        # 导航失败：关闭标签页，但不关闭浏览器
-        try:
-            await task_page.close()
-        except Exception:
-            pass
-        await close_task_tab_safely(task_page, account_id)
-        raise RuntimeError(f"任务标签页导航失败 {start_url}: {exc}") from exc
 
     try:
         yield mgr, auto_key
     finally:
-        # ── 退出：仅关闭任务标签页，浏览器保持运行 ──
-        await close_task_tab_safely(task_page, account_id)
-        log.debug(
-            "MITM 任务标签页已关闭，持久化浏览器继续运行 account_id=%d key=%s",
-            account_id,
-            auto_key,
-        )
+        # ── 退出：整体关闭 __auto 浏览器（不再持久化）──
+        try:
+            await mgr.close_session(auto_key, force=True)
+            log.debug(
+                "MITM 浏览器已关闭 account_id=%d key=%s",
+                account_id,
+                auto_key,
+            )
+        except Exception as exc:
+            log.warning("MITM 浏览器关闭失败 %s（忽略）: %s", auto_key, exc)
 
 
 async def wait_mitm_capture(
@@ -134,10 +131,10 @@ async def wait_mitm_capture(
     reload_interval_sec: float = _MITM_PAGE_RELOAD_INTERVAL_SEC,
 ) -> Dict[str, Any]:
     """
-    轮询 MITM 落盘文件；超时前按间隔刷新任务标签页以再次触发目标 API。
+    轮询 MITM 落盘文件；超时前按间隔刷新当前标签页以再次触发目标 API。
 
-    ``mgr.reload_active_tab`` 始终操作 ``ctx.pages[-1]``，
-    在持久化浏览器中，任务标签页是最后打开的页（最后一个），因此行为与旧版一致。
+    ``mgr.reload_active_tab`` 始终操作 ``ctx.pages[-1]``；新版 ``mitm_automation_browser``
+    每次都启动单标签浏览器，因此与旧持久化版本行为一致。
     """
     deadline = time.monotonic() + wait_seconds
     next_reload = time.monotonic() + reload_interval_sec
@@ -150,10 +147,10 @@ async def wait_mitm_capture(
             try:
                 await mgr.reload_active_tab(auto_key, start_url)
             except Exception as exc:
-                log.debug("MITM 等待中刷新任务标签页失败: %s", exc)
+                log.debug("MITM 等待中刷新标签页失败: %s", exc)
         await asyncio.sleep(0.35)
     raise RuntimeError(
         f"{wait_seconds}s 内未截获目标 API 响应（{error_detail}）。"
-        "请确认 MITM 已启动；若仅在账号管理页有头浏览器中登录，请保持该窗口打开后重试"
-        "（系统会从有头会话同步 Cookie 到无头 MITM 浏览器）。"
+        "请确认 MITM 已启动；并先在账号管理页对该账号完成 Mercari 登录后**关闭该窗口**，"
+        "以便系统从磁盘 Cookie 启动独立的最小化 Edge 拉取数据。"
     )
