@@ -73,6 +73,10 @@ export default defineConfig(({ mode }) => {
       hmr,
       ...(serverOrigin ? { origin: serverOrigin } : {}),
       proxy: {
+        '/mercariV2': {
+          target: 'http://127.0.0.1:9601',
+          changeOrigin: true
+        },
         '/api': {
           target: 'http://127.0.0.1:9601',
           changeOrigin: true

@@ -5,7 +5,10 @@
       "Bash(Select-Object Name, Mode, LastWriteTime)",
       "Bash(Format-Table -AutoSize)",
       "Bash(grep -E \"\\\\.py$\")",
-      "Bash(Get-Content \"d:\\\\Project\\\\mercari\\\\CLAUDE.md\" -TotalCount 45)"
+      "Bash(Get-Content \"d:\\\\Project\\\\mercari\\\\CLAUDE.md\" -TotalCount 45)",
+      "Bash(ls -la \"D:\\\\Project\\\\CsWeaponManager\\\\backEnd\")",
+      "Read(//d/Project/CsWeaponManager/backEnd/**)",
+      "Bash(git checkout *)"
     ]
   }
 }

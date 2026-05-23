@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m compileall -q src/use_web src/API.py src/operation_mercari/API.py)",
+      "Bash(python -m compileall -q backend/main.py backend/src/API.py backend/src/use_web)"
+    ]
+  }
+}

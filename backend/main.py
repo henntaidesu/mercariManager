@@ -4,35 +4,16 @@ import sys
 import asyncio
 from pathlib import Path
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from src.auth import require_auth
+
 from src.db_manage.db_manager import init_database
 from src.image_storage import ensure_image_dir
-from src.routes.categories import router as categories_router
-from src.routes.warehouses import router as warehouses_router
-from src.routes.product_types import router as product_types_router
-from src.routes.inventory import router as inventory_router
-from src.routes.inventory import public_router as inventory_public_router
-from src.routes.transactions import router as transactions_router
-from src.routes.scan import router as scan_router
-from src.routes.auth import router as auth_router
-from src.routes.ocr import router as ocr_router
-from src.routes.cost_records import router as cost_records_router
-from src.routes.cost_expenses import router as cost_expenses_router
-from src.routes.orders import router as orders_router
-from src.routes.meilu_accounts import router as meilu_accounts_router
-from src.routes.on_sale_items import router as on_sale_items_router
-from src.routes.product_type_category_mappings import router as product_type_category_mappings_router
-from src.routes.web_drive import router as web_drive_router
-from src.routes.app_config import router as app_config_router
-from src.routes.system import router as system_router
-from src.routes.ssl_mitm import router as ssl_mitm_router
-from src.operation_mercari.API import router as mercari_router
+from src.API import router as v2_router
 from src.app_paths import backend_root
 
-app = FastAPI(title="mercari 订单管理", version="1.0.0")
+app = FastAPI(title="mercari V2 订单管理", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,28 +25,8 @@ app.add_middleware(
 
 app.mount("/imges", StaticFiles(directory=ensure_image_dir()), name="imges")
 
-auth_required = [Depends(require_auth)]
-
-app.include_router(inventory_public_router)  # 缩略图等公开接口，无需登录
-app.include_router(categories_router, dependencies=auth_required)
-app.include_router(warehouses_router, dependencies=auth_required)
-app.include_router(product_types_router, dependencies=auth_required)
-app.include_router(inventory_router, dependencies=auth_required)
-app.include_router(transactions_router, dependencies=auth_required)
-app.include_router(scan_router, dependencies=auth_required)
-app.include_router(ocr_router, dependencies=auth_required)
-app.include_router(cost_records_router, dependencies=auth_required)
-app.include_router(cost_expenses_router, dependencies=auth_required)
-app.include_router(orders_router, dependencies=auth_required)
-app.include_router(meilu_accounts_router, dependencies=auth_required)
-app.include_router(mercari_router, dependencies=auth_required)
-app.include_router(on_sale_items_router, dependencies=auth_required)
-app.include_router(product_type_category_mappings_router, dependencies=auth_required)
-app.include_router(web_drive_router, dependencies=auth_required)
-app.include_router(ssl_mitm_router, dependencies=auth_required)
-app.include_router(auth_router)
-app.include_router(app_config_router, dependencies=auth_required)
-app.include_router(system_router, dependencies=auth_required)
+# 注册 V2 根路由 → /mercariV2/src/...
+app.include_router(v2_router, prefix="/mercariV2")
 
 
 @app.on_event("startup")
@@ -139,6 +100,7 @@ async def shutdown_web_drive():
 
 @app.get("/api/health")
 def health():
+    """兼容旧的健康检查路径（部分调用方仍使用 /api/health）。V2 路径为 /mercariV2/health。"""
     return {"status": "ok", "message": "mercari 订单管理运行中"}
 
 
