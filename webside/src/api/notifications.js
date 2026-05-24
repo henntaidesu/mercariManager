@@ -14,4 +14,20 @@ export const notificationsApi = {
       null,
       account_id ? { params: { account_id } } : undefined,
     ),
+  // 合并购买请求（BundleRequestCreated）详情
+  bundlePurchaseSync: (data, axiosConfig = {}) =>
+    http.post('/use_web/notifications/bundle-purchase/sync', data, {
+      timeout: 0,
+      ...axiosConfig,
+    }),
+  bundlePurchaseDetail: (bundleId, params) =>
+    http.get(`/use_web/notifications/bundle-purchase/${encodeURIComponent(bundleId)}`, {
+      params,
+    }),
+  bundlePurchaseDecide: (bundleId, data, axiosConfig = {}) =>
+    http.post(
+      `/use_web/notifications/bundle-purchase/${encodeURIComponent(bundleId)}/decide`,
+      data,
+      { timeout: 0, ...axiosConfig },
+    ),
 }

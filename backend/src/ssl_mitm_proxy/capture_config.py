@@ -188,6 +188,19 @@ def parse_capture_target(
                 "dpop_field": "dpop_shipping_classes",
                 "full_url": u,
             }
+        # /v1/bundlePurchases/{bundle_id}：合并购买请求详情
+        # 形如 /v1/bundlePurchases/01KSCSF4EG2ME73X8JEAA9S7MV
+        if "/v1/bundlePurchases/" in norm_path:
+            bid = norm_path.rsplit("/", 1)[-1].strip()
+            if not bid:
+                return None
+            return {
+                "capture_type": "bundle_purchases_get",
+                "bundle_id": bid,
+                "http_method": m or "GET",
+                "dpop_field": "dpop_bundle_purchase",
+                "full_url": u,
+            }
         return None
     except Exception:
         return None
@@ -627,6 +640,58 @@ def atomic_write_transaction_messages_response(payload: Dict[str, Any]) -> None:
 
 def read_transaction_messages_response() -> Optional[Dict[str, Any]]:
     path = transaction_messages_response_path()
+    if not os.path.isfile(path):
+        return None
+    with _lock:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+
+# ============ 合并购买请求：/v1/bundlePurchases/{bundle_id} ============
+# bundle_id 在 URL 末段，按 bundle_id 分文件避免不同请求覆盖。
+
+_BUNDLE_ID_SAFE_CHARS = set("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-")
+
+
+def _safe_bundle_id(bundle_id: str) -> str:
+    s = str(bundle_id or "").strip()
+    return "".join(ch for ch in s if ch in _BUNDLE_ID_SAFE_CHARS)
+
+
+def bundle_purchase_response_path(bundle_id: str) -> str:
+    bid = _safe_bundle_id(bundle_id)
+    return os.path.join(ssl_mitm_data_dir(), f"bundle_purchase_response_{bid}.json")
+
+
+def clear_bundle_purchase_response_file(bundle_id: str) -> None:
+    p = bundle_purchase_response_path(bundle_id)
+    with _lock:
+        try:
+            if os.path.isfile(p):
+                os.remove(p)
+        except OSError:
+            pass
+
+
+def atomic_write_bundle_purchase_response(bundle_id: str, payload: Dict[str, Any]) -> None:
+    bid = _safe_bundle_id(bundle_id)
+    if not bid:
+        return
+    d = ssl_mitm_data_dir()
+    os.makedirs(d, exist_ok=True)
+    path = bundle_purchase_response_path(bid)
+    tmp = path + ".tmp"
+    with _lock:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+
+
+def read_bundle_purchase_response(bundle_id: str) -> Optional[Dict[str, Any]]:
+    path = bundle_purchase_response_path(bundle_id)
     if not os.path.isfile(path):
         return None
     with _lock:

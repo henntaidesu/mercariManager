@@ -10,7 +10,9 @@
       "Read(//d/Project/CsWeaponManager/backEnd/**)",
       "Bash(git checkout *)",
       "Bash(python -c \"import sqlite3; con=sqlite3.connect\\('mercariDB.db'\\); cur=con.cursor\\(\\); cur.execute\\('SELECT photo_url FROM todo_items WHERE photo_url IS NOT NULL AND photo_url != \\\\\"\\\\\" LIMIT 2'\\); print\\(cur.fetchall\\(\\)\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/src/use_web/web_drive/units/web_drive_handler.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/src/use_web/web_drive/units/web_drive_handler.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Read(//d/Project/mercari/backend/backend/.venv/**)",
+      "PowerShell(Get-Command python -ErrorAction SilentlyContinue)"
     ]
   }
 }

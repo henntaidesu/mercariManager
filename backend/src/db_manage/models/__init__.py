@@ -15,6 +15,7 @@ from .product_type_category_mapping import ProductTypeCategoryMappingModel
 from .config_entry import ConfigEntryModel
 from .todo_item import TodoItemModel
 from .notification import NotificationModel
+from .bundle_purchase_request import BundlePurchaseRequestModel
 
 __all__ = [
     'CategoryModel',
@@ -33,4 +34,5 @@ __all__ = [
     'ConfigEntryModel',
     'TodoItemModel',
     'NotificationModel',
+    'BundlePurchaseRequestModel',
 ]

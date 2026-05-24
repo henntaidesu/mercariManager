@@ -174,6 +174,13 @@
         @size-change="onPageSizeChange"
       />
     </el-card>
+
+    <BundlePurchaseDialog
+      v-model="bundleDialogVisible"
+      :bundle-id="bundleDialogBundleId"
+      :account-id="bundleDialogAccountId"
+      :notification-id="bundleDialogNotificationId"
+    />
   </div>
 </template>
 
@@ -183,6 +190,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import { notificationsApi, meiluAccountApi } from '@/api'
 import { useMercariAccountStore } from '@/stores/mercariAccount.js'
+import BundlePurchaseDialog from '@/components/BundlePurchaseDialog.vue'
 
 const mercariAccountStore = useMercariAccountStore()
 const globalAccountId = computed({
@@ -353,8 +361,41 @@ function itemUrlFor(row) {
   return '#'
 }
 
+const bundleDialogVisible = ref(false)
+const bundleDialogBundleId = ref('')
+const bundleDialogAccountId = ref(null)
+const bundleDialogNotificationId = ref(null)
+
+function extractBundleId(row) {
+  const raw = String(row?.intent_json || '').trim()
+  if (!raw) return ''
+  try {
+    const obj = JSON.parse(raw)
+    const id = obj?.extra?.bundle_id
+    return typeof id === 'string' ? id.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
 function onViewDetail(row) {
-  // 占位：留言 / 合并购买请求的详情页对接待补
+  if (row?.kind === 'BundleRequestCreated') {
+    const bid = extractBundleId(row)
+    if (!bid) {
+      ElMessage.warning('该通知未携带 bundle_id，无法打开合并购买请求详情')
+      return
+    }
+    bundleDialogBundleId.value = bid
+    bundleDialogAccountId.value = row.account_id || null
+    bundleDialogNotificationId.value = row.id || null
+    bundleDialogVisible.value = true
+    if (!row.is_read) {
+      notificationsApi.markRead([row.id], true).then(() => {
+        row.is_read = 1
+      }).catch(() => {})
+    }
+    return
+  }
   ElMessage.info(`查看详情功能待对接（kind=${row.kind}）`)
 }
 

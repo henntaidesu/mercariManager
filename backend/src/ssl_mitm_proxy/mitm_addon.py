@@ -18,6 +18,7 @@ from mitmproxy import ctx  # noqa: E402
 from mitmproxy import http  # noqa: E402
 
 from src.ssl_mitm_proxy.capture_config import (  # noqa: E402
+    atomic_write_bundle_purchase_response,
     atomic_write_capture_file,
     atomic_write_item_get_response,
     atomic_write_notification_response,
@@ -83,6 +84,7 @@ class MercariCapture:
                 "capture_type": meta.get("capture_type") or "",
                 "seller_id": meta.get("seller_id") or "",
                 "item_id": meta.get("item_id") or "",
+                "bundle_id": meta.get("bundle_id") or "",
                 "status_values": meta.get("status_values") or [],
                 "http_method": meta.get("http_method") or method,
                 "dpop_field": meta.get("dpop_field") or "dpop_list",
@@ -283,6 +285,30 @@ class MercariCapture:
                 )
                 _log_line(
                     f"[MITM] transaction_messages/get_messages 响应已写入 item_id={iid} count={msg_n}"
+                )
+                return
+
+            if ctype == "bundle_purchases_get" and dpop == "dpop_bundle_purchase":
+                bid = str(meta.get("bundle_id") or "")
+                if not bid:
+                    return
+                atomic_write_bundle_purchase_response(
+                    bid,
+                    {
+                        "ts": int(time.time() * 1000),
+                        "bundle_id": bid,
+                        "request_url": str(meta.get("full_url") or url),
+                        "http_status": code,
+                        "body": body_json,
+                    },
+                )
+                items_n = (
+                    len(body_json.get("items") or [])
+                    if isinstance(body_json, dict)
+                    else 0
+                )
+                _log_line(
+                    f"[MITM] v1/bundlePurchases 响应已写入 bundle_id={bid} items={items_n}"
                 )
                 return
 
