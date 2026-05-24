@@ -11,6 +11,14 @@
   >
     <div v-loading="loading" element-loading-text="正在打开浏览器并捕获合并购买详情...">
       <template v-if="bundle">
+        <el-alert
+          v-if="isDecided"
+          class="decided-banner"
+          :title="decidedBannerText"
+          :type="bundle.state === 'ACCEPTED' ? 'success' : 'warning'"
+          show-icon
+          :closable="false"
+        />
         <el-descriptions :column="2" border size="small" class="bundle-meta">
           <el-descriptions-item label="买家">
             <span>{{ bundle.buyer_username || '-' }}</span>
@@ -145,7 +153,7 @@
           v-if="bundle"
           type="danger"
           :loading="rejecting"
-          :disabled="accepting"
+          :disabled="accepting || isDecided"
           @click="onReject"
         >
           取消
@@ -154,7 +162,7 @@
           v-if="bundle"
           type="success"
           :loading="accepting"
-          :disabled="rejecting"
+          :disabled="rejecting || isDecided"
           @click="onAccept"
         >
           依頼を承諾する
@@ -201,6 +209,19 @@ const formRef = ref(null)
 const shippingFromPath = ref([])
 
 const busy = computed(() => loading.value || accepting.value || rejecting.value)
+
+const DECIDED_STATES = new Set(['ACCEPTED', 'REJECTED', 'EXPIRED'])
+const isDecided = computed(() => {
+  const s = String(bundle.value?.state || '').trim().toUpperCase()
+  return DECIDED_STATES.has(s)
+})
+const decidedBannerText = computed(() => {
+  const s = String(bundle.value?.state || '').trim().toUpperCase()
+  if (s === 'ACCEPTED') return '此请求已承諾，无需再次操作'
+  if (s === 'REJECTED') return '此请求已拒绝（依頼を断る），无法再次操作'
+  if (s === 'EXPIRED') return '此请求已过期，无法再操作'
+  return '此请求已处理'
+})
 
 const form = ref({
   shipping_payer: '',
@@ -389,7 +410,7 @@ async function onAccept() {
   }
   accepting.value = true
   try {
-    await notificationsApi.bundlePurchaseDecide(props.bundleId, {
+    const res = await notificationsApi.bundlePurchaseDecide(props.bundleId, {
       action: 'accept',
       account_id: props.accountId || null,
       shipping_payer: form.value.shipping_payer || null,
@@ -397,11 +418,19 @@ async function onAccept() {
       shipping_from: form.value.shipping_from || null,
       shipping_days: form.value.shipping_days || null,
     })
-    ElMessage.success('已点击「依頼を承諾する」')
+    if (res?.skipped) {
+      ElMessage.warning(
+        `页面已显示「${res.skipped_reason || '已承諾済み'}」，无需操作；本地状态已同步`,
+      )
+    } else {
+      ElMessage.success('已点击「依頼を承諾する」')
+    }
     emit('decided', {
       bundle_id: props.bundleId,
       account_id: props.accountId || null,
       action: 'accept',
+      skipped: !!res?.skipped,
+      state: res?.state,
     })
     emit('update:modelValue', false)
     resetState()
@@ -415,15 +444,23 @@ async function onAccept() {
 async function onReject() {
   rejecting.value = true
   try {
-    await notificationsApi.bundlePurchaseDecide(props.bundleId, {
+    const res = await notificationsApi.bundlePurchaseDecide(props.bundleId, {
       action: 'reject',
       account_id: props.accountId || null,
     })
-    ElMessage.success('已点击「依頼を断る」')
+    if (res?.skipped) {
+      ElMessage.warning(
+        `页面已显示「${res.skipped_reason || '已処理済み'}」，无需操作；本地状态已同步`,
+      )
+    } else {
+      ElMessage.success('已点击「依頼を断る」')
+    }
     emit('decided', {
       bundle_id: props.bundleId,
       account_id: props.accountId || null,
       action: 'reject',
+      skipped: !!res?.skipped,
+      state: res?.state,
     })
     emit('update:modelValue', false)
     resetState()
@@ -461,6 +498,9 @@ watch(
 </script>
 
 <style scoped>
+.decided-banner {
+  margin-bottom: 12px;
+}
 .bundle-meta {
   margin-top: 4px;
 }

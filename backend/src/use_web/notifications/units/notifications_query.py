@@ -33,11 +33,30 @@ _LIST_COLS = (
 )
 
 
+# 顶置类型：合并购买请求 / 留言 永远排在列表最前
+_PINNED_KINDS = ("BundleRequestCreated", "Comment")
+
+
+def _split_kinds(raw: Optional[str]) -> List[str]:
+    """逗号分隔的 kind 串 → 去重去空白后的 list（顺序保留）。"""
+    if not raw:
+        return []
+    out: List[str] = []
+    seen = set()
+    for part in str(raw).split(","):
+        s = part.strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
 def list_notifications(
     account_id: Optional[int] = None,
     kind: Optional[str] = None,
     keyword: Optional[str] = None,
     only_unread: bool = False,
+    exclude_kinds: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
 ) -> Dict[str, Any]:
@@ -46,6 +65,9 @@ def list_notifications(
 
     - ``only_unread=True`` 仅显示未读（``is_read=0``）
     - ``keyword`` 匹配 message / item_id / item_name
+    - ``exclude_kinds`` 逗号分隔串，排除指定 kind（默认不应用，前端控制；
+      若与 ``kind`` 过滤的值重叠，``kind`` 优先生效）
+    - 排序：顶置 ``BundleRequestCreated`` / ``Comment`` → mercari_created DESC → id DESC
     """
     db = DatabaseManager()
     page = max(1, int(page or 1))
@@ -58,9 +80,18 @@ def list_notifications(
     if account_id is not None:
         where.append("n.[account_id] = ?")
         params.append(int(account_id))
-    if kind:
+    selected_kind = str(kind).strip() if kind else ""
+    if selected_kind:
         where.append("n.[kind] = ?")
-        params.append(str(kind).strip())
+        params.append(selected_kind)
+    else:
+        ex_list = _split_kinds(exclude_kinds)
+        if ex_list:
+            placeholders = ",".join(["?"] * len(ex_list))
+            where.append(
+                f"(n.[kind] IS NULL OR n.[kind] NOT IN ({placeholders}))"
+            )
+            params.extend(ex_list)
     if keyword:
         kw = f"%{str(keyword).strip()}%"
         where.append(
@@ -76,7 +107,13 @@ def list_notifications(
         tuple(params),
     )[0][0]
 
-    sel_cols = ", ".join(f"n.[{c}]" for c in _LIST_COLS) + ", a.[account_name] AS account_name"
+    pin_placeholders = ",".join(["?"] * len(_PINNED_KINDS))
+    pin_case = f"CASE WHEN n.[kind] IN ({pin_placeholders}) THEN 0 ELSE 1 END"
+
+    sel_cols = (
+        ", ".join(f"n.[{c}]" for c in _LIST_COLS)
+        + ", a.[account_name] AS account_name"
+    )
     offset = (page - 1) * page_size
     rows = db.execute_query(
         f"""
@@ -84,10 +121,12 @@ def list_notifications(
         FROM [notifications] n
         LEFT JOIN [meilu_accounts] a ON a.[id] = n.[account_id]
         WHERE {where_sql}
-        ORDER BY COALESCE(n.[mercari_created], 0) DESC, n.[id] DESC
+        ORDER BY {pin_case} ASC,
+                 COALESCE(n.[mercari_created], 0) DESC,
+                 n.[id] DESC
         LIMIT ? OFFSET ?
         """,
-        tuple(params + [page_size, offset]),
+        tuple(list(_PINNED_KINDS) + params + [page_size, offset]),
     )
     keys = list(_LIST_COLS) + ["account_name"]
     items = [dict(zip(keys, row)) for row in rows]

@@ -42,6 +42,9 @@
           <el-checkbox v-model="filters.only_unread" @change="onFilterChange">
             仅未读
           </el-checkbox>
+          <el-checkbox v-model="filters.show_likes" @change="onFilterChange">
+            显示点赞
+          </el-checkbox>
         </el-col>
         <el-col :xs="24" :md="8" class="search-actions">
           <el-select
@@ -136,7 +139,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="120" align="center" header-align="center" fixed="right">
+        <el-table-column label="操作" width="170" align="center" header-align="center" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="actionForKind(row.kind) === 'open'"
@@ -157,7 +160,16 @@
             >
               查看详情
             </el-button>
-            <span v-else class="cell-muted">-</span>
+            <el-button
+              v-if="!row.is_read"
+              type="success"
+              link
+              size="small"
+              :loading="markReadLoadingIds.has(row.id)"
+              @click="onMarkRead(row)"
+            >
+              已读
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -251,12 +263,16 @@ const filters = ref({
   keyword: '',
   account_id: null,
   kind: '',
-  only_unread: false,
+  // 默认仅显示未读，已读的需要勾掉才能看到
+  only_unread: true,
+  // 默认不显示「点赞」类型；用户勾选后或主动按 kind=Like 过滤时才显示
+  show_likes: false,
 })
 
 const accountOptions = ref([])
 const kindOptions = ref([])
 const syncLoading = ref(false)
+const markReadLoadingIds = ref(new Set())
 
 function listParams() {
   const p = { page: page.value, page_size: pageSize.value }
@@ -265,6 +281,10 @@ function listParams() {
   if (filters.value.account_id) p.account_id = filters.value.account_id
   if (filters.value.kind) p.kind = filters.value.kind
   if (filters.value.only_unread) p.only_unread = true
+  // 用户没显式按 kind=Like 过滤且未勾选「显示点赞」时，排除 Like
+  if (!filters.value.show_likes && filters.value.kind !== 'Like') {
+    p.exclude_kinds = 'Like'
+  }
   return p
 }
 
@@ -397,6 +417,29 @@ function onViewDetail(row) {
     return
   }
   ElMessage.info(`查看详情功能待对接（kind=${row.kind}）`)
+}
+
+async function onMarkRead(row) {
+  if (!row?.id || row.is_read) return
+  if (markReadLoadingIds.value.has(row.id)) return
+  const next = new Set(markReadLoadingIds.value)
+  next.add(row.id)
+  markReadLoadingIds.value = next
+  try {
+    await notificationsApi.markRead([row.id], true)
+    row.is_read = 1
+    // 默认筛选「仅未读」时，该行需从列表中移除以保持视图一致
+    if (filters.value.only_unread) {
+      list.value = list.value.filter((r) => r.id !== row.id)
+      total.value = Math.max(0, total.value - 1)
+    }
+  } catch (e) {
+    ElMessage.error(e?.message || '标记已读失败')
+  } finally {
+    const after = new Set(markReadLoadingIds.value)
+    after.delete(row.id)
+    markReadLoadingIds.value = after
+  }
 }
 
 async function onOpenTarget(row) {

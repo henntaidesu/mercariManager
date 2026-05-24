@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 
 from ...use_mercari.get_notifications.bundle_purchase_decide import (
+    BundleAlreadyDecidedError,
     decide_bundle_purchase,
 )
 from .units.bundle_purchase_models import (
@@ -46,6 +47,7 @@ def _list_notifications_endpoint(
     kind: Optional[str] = None,
     keyword: Optional[str] = None,
     only_unread: bool = False,
+    exclude_kinds: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
 ) -> Dict[str, Any]:
@@ -54,6 +56,7 @@ def _list_notifications_endpoint(
         kind=kind,
         keyword=keyword,
         only_unread=only_unread,
+        exclude_kinds=exclude_kinds,
         page=page,
         page_size=page_size,
     )
@@ -124,6 +127,8 @@ async def _bundle_purchase_decide_endpoint(
             shipping_from=req.shipping_from,
             shipping_days=req.shipping_days,
         )
+    except BundleAlreadyDecidedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
