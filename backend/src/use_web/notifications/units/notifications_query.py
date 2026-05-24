@@ -126,7 +126,9 @@ def list_notifications(
                  n.[id] DESC
         LIMIT ? OFFSET ?
         """,
-        tuple(list(_PINNED_KINDS) + params + [page_size, offset]),
+        # 占位符顺序按 SQL 文本左→右匹配:
+        # WHERE 里的 ? 先(params),ORDER BY {pin_case} 里的 ? 次(_PINNED_KINDS),最后 LIMIT/OFFSET。
+        tuple(params + list(_PINNED_KINDS) + [page_size, offset]),
     )
     keys = list(_LIST_COLS) + ["account_name"]
     items = [dict(zip(keys, row)) for row in rows]
