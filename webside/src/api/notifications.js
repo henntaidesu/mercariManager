@@ -30,4 +30,20 @@ export const notificationsApi = {
       data,
       { timeout: 0, ...axiosConfig },
     ),
+  // 留言 (Comment) — 商品コメント
+  itemCommentSync: (data, axiosConfig = {}) =>
+    http.post('/use_web/notifications/item-comment/sync', data, {
+      timeout: 0,
+      ...axiosConfig,
+    }),
+  itemCommentPost: (data, axiosConfig = {}) =>
+    http.post('/use_web/notifications/item-comment/post', data, {
+      timeout: 0,
+      ...axiosConfig,
+    }),
+  itemCommentClose: (data, axiosConfig = {}) =>
+    http.post('/use_web/notifications/item-comment/close', data, {
+      timeout: 0,
+      ...axiosConfig,
+    }),
 }

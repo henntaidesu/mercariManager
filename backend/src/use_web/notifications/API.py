@@ -14,6 +14,10 @@
     POST  /mercariV2/src/use_web/notifications/bundle-purchase/sync
     GET   /mercariV2/src/use_web/notifications/bundle-purchase/{bundle_id}
     POST  /mercariV2/src/use_web/notifications/bundle-purchase/{bundle_id}/decide
+
+留言（Comment）相关：
+    POST  /mercariV2/src/use_web/notifications/item-comment/sync
+    POST  /mercariV2/src/use_web/notifications/item-comment/post
 """
 
 from typing import Any, Dict, Optional
@@ -24,12 +28,22 @@ from ...use_mercari.get_notifications.bundle_purchase_decide import (
     BundleAlreadyDecidedError,
     decide_bundle_purchase,
 )
+from ...use_mercari.get_notifications.item_comment_close import close_account_browser
+from ...use_mercari.get_notifications.item_comment_post import post_item_comment
+from ...use_mercari.get_notifications.item_comment_sync import (
+    sync_item_comments_from_mercari,
+)
 from .units.bundle_purchase_models import (
     BundlePurchaseDecideRequest,
     BundlePurchaseSyncRequest,
 )
 from .units.bundle_purchase_query import get_bundle_purchase
 from .units.bundle_purchase_sync import sync_bundle_purchase
+from .units.item_comment_models import (
+    ItemCommentCloseRequest,
+    ItemCommentPostRequest,
+    ItemCommentSyncRequest,
+)
 from .units.notifications_models import MarkReadRequest, SyncNotificationsRequest
 from .units.notifications_query import (
     list_kinds,
@@ -133,6 +147,44 @@ async def _bundle_purchase_decide_endpoint(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+# ─────────── 留言（Comment） ───────────
+
+
+async def _item_comment_sync_endpoint(req: ItemCommentSyncRequest) -> Dict[str, Any]:
+    iid = (req.item_id or "").strip()
+    if not iid:
+        raise HTTPException(status_code=400, detail="item_id 不能为空")
+    try:
+        return await sync_item_comments_from_mercari(
+            item_id=iid, account_id=req.account_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+async def _item_comment_post_endpoint(req: ItemCommentPostRequest) -> Dict[str, Any]:
+    iid = (req.item_id or "").strip()
+    msg = (req.message or "").strip()
+    if not iid:
+        raise HTTPException(status_code=400, detail="item_id 不能为空")
+    if not msg:
+        raise HTTPException(status_code=400, detail="评论内容不能为空")
+    try:
+        return await post_item_comment(
+            item_id=iid, message=msg, account_id=req.account_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+async def _item_comment_close_endpoint(req: ItemCommentCloseRequest) -> Dict[str, Any]:
+    """前端关闭留言弹窗时调用,强制关闭主 profile 浏览器。"""
+    try:
+        return await close_account_browser(account_id=req.account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 router.add_api_route("", _list_notifications_endpoint, methods=["GET"])
 router.add_api_route("/kinds", _list_kinds_endpoint, methods=["GET"])
 router.add_api_route("/sync", _sync_endpoint, methods=["POST"])
@@ -149,4 +201,14 @@ router.add_api_route(
     "/bundle-purchase/{bundle_id}/decide",
     _bundle_purchase_decide_endpoint,
     methods=["POST"],
+)
+
+router.add_api_route(
+    "/item-comment/sync", _item_comment_sync_endpoint, methods=["POST"]
+)
+router.add_api_route(
+    "/item-comment/post", _item_comment_post_endpoint, methods=["POST"]
+)
+router.add_api_route(
+    "/item-comment/close", _item_comment_close_endpoint, methods=["POST"]
 )

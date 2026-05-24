@@ -193,6 +193,13 @@
       :account-id="bundleDialogAccountId"
       :notification-id="bundleDialogNotificationId"
     />
+
+    <ItemCommentDialog
+      v-model="commentDialogVisible"
+      :item-id="commentDialogItemId"
+      :item-name="commentDialogItemName"
+      :account-id="commentDialogAccountId"
+    />
   </div>
 </template>
 
@@ -203,6 +210,7 @@ import { Download } from '@element-plus/icons-vue'
 import { notificationsApi, meiluAccountApi } from '@/api'
 import { useMercariAccountStore } from '@/stores/mercariAccount.js'
 import BundlePurchaseDialog from '@/components/BundlePurchaseDialog.vue'
+import ItemCommentDialog from '@/components/ItemCommentDialog.vue'
 
 const mercariAccountStore = useMercariAccountStore()
 const globalAccountId = computed({
@@ -386,6 +394,11 @@ const bundleDialogBundleId = ref('')
 const bundleDialogAccountId = ref(null)
 const bundleDialogNotificationId = ref(null)
 
+const commentDialogVisible = ref(false)
+const commentDialogItemId = ref('')
+const commentDialogItemName = ref('')
+const commentDialogAccountId = ref(null)
+
 function extractBundleId(row) {
   const raw = String(row?.intent_json || '').trim()
   if (!raw) return ''
@@ -395,6 +408,14 @@ function extractBundleId(row) {
     return typeof id === 'string' ? id.trim() : ''
   } catch {
     return ''
+  }
+}
+
+function autoMarkRead(row) {
+  if (row?.id && !row.is_read) {
+    notificationsApi.markRead([row.id], true).then(() => {
+      row.is_read = 1
+    }).catch(() => {})
   }
 }
 
@@ -409,11 +430,20 @@ function onViewDetail(row) {
     bundleDialogAccountId.value = row.account_id || null
     bundleDialogNotificationId.value = row.id || null
     bundleDialogVisible.value = true
-    if (!row.is_read) {
-      notificationsApi.markRead([row.id], true).then(() => {
-        row.is_read = 1
-      }).catch(() => {})
+    autoMarkRead(row)
+    return
+  }
+  if (row?.kind === 'Comment') {
+    const iid = String(row.item_id || '').trim()
+    if (!iid) {
+      ElMessage.warning('该通知未携带 item_id，无法打开留言详情')
+      return
     }
+    commentDialogItemId.value = iid
+    commentDialogItemName.value = row.item_name || ''
+    commentDialogAccountId.value = row.account_id || null
+    commentDialogVisible.value = true
+    autoMarkRead(row)
     return
   }
   ElMessage.info(`查看详情功能待对接（kind=${row.kind}）`)
