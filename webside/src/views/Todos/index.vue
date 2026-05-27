@@ -58,8 +58,11 @@
               :value="acc.id"
             />
           </el-select>
-          <el-button type="primary" :icon="Download" :loading="syncLoading" @click="runSync">
+          <el-button type="primary" :icon="Download" :loading="syncLoading" :disabled="bulkReviewLoading" @click="runSync">
             {{ t('todos.syncFromMercari') }}
+          </el-button>
+          <el-button type="success" :loading="bulkReviewLoading" :disabled="syncLoading" @click="runBulkReview">
+            {{ t('todos.bulkReview') }}
           </el-button>
         </el-col>
       </el-row>

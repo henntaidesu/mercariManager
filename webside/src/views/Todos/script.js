@@ -156,6 +156,7 @@ export default defineComponent({
     const kindOptions = ref([])
 
     const syncLoading = ref(false)
+    const bulkReviewLoading = ref(false)
 
     /** 「从煤炉同步」全屏等待与步骤文案（与后端 progress_job_id 轮询同步） */
     const syncOverlayVisible = ref(false)
@@ -394,6 +395,94 @@ export default defineComponent({
         syncProgressLabel.value = ''
         syncLoading.value = false
       }
+    }
+
+    async function runBulkReview() {
+      if (bulkReviewLoading.value || syncLoading.value) return
+
+      let candidates = []
+      try {
+        const res = await todosApi.list({ page: 1, page_size: 500, kind: 'ReviewedSeller' })
+        candidates = (res?.items || []).filter(
+          (r) => !r.is_delete && String(r.title || '').trim() === '評価をしてください',
+        )
+      } catch (e) {
+        ElMessage.error(e?.message || t('todos.loadFailed'))
+        return
+      }
+
+      if (!candidates.length) {
+        ElMessage.info(t('todos.bulkReviewNoCandidates'))
+        return
+      }
+
+      try {
+        await ElMessageBox.confirm(
+          t('todos.bulkReviewConfirmMessage', { count: candidates.length }),
+          t('todos.bulkReviewConfirmTitle'),
+          { type: 'info', confirmButtonText: t('todos.start'), cancelButtonText: t('common.cancel') },
+        )
+      } catch {
+        return
+      }
+
+      bulkReviewLoading.value = true
+      syncOverlayTitle.value = t('todos.bulkReviewRunning')
+      syncOverlayFailed.value = false
+      syncProgressLabel.value = t('todos.connectingServer')
+      syncOverlayVisible.value = true
+
+      let okCount = 0
+      let failCount = 0
+      const failures = []
+
+      for (let i = 0; i < candidates.length; i++) {
+        const row = candidates[i]
+        syncProgressLabel.value = t('todos.bulkReviewProgress', {
+          current: i + 1,
+          total: candidates.length,
+          itemId: row.item_id || `#${row.id}`,
+        })
+        try {
+          await todosApi.fetchTransactionDetail(row.id, {})
+          const result = await todosApi.submitTransactionReview(row.id, DEFAULT_REVIEW, {})
+          if (result?.completed) {
+            okCount += 1
+          } else {
+            failCount += 1
+            failures.push(`#${row.id} ${row.item_id || ''}`.trim())
+          }
+        } catch (e) {
+          failCount += 1
+          const msg = e?.response?.data?.detail || e?.message || 'error'
+          failures.push(`#${row.id} ${row.item_id || ''}: ${msg}`.trim())
+          console.error('[一键好评]', row.id, msg)
+        } finally {
+          // 每条结束后幂等关一次浏览器，避免下一条被卡
+          const aid = row.account_id
+          if (aid) {
+            try { await todosApi.closeDetailBrowser(aid) } catch { /* 忽略 */ }
+          }
+        }
+      }
+
+      syncOverlayVisible.value = false
+      syncOverlayTitle.value = t('todos.syncingFromMercari')
+      syncProgressLabel.value = ''
+      bulkReviewLoading.value = false
+
+      const summary = t('todos.bulkReviewResult', {
+        ok: okCount,
+        fail: failCount,
+        total: candidates.length,
+      })
+      ElMessageBox.alert(
+        failures.length ? `${summary}\n${failures.slice(0, 10).join('\n')}` : summary,
+        t('todos.bulkReviewConfirmTitle'),
+        { type: failCount ? 'warning' : 'success', confirmButtonText: t('dialog.confirmBtn') },
+      )
+
+      await load()
     }
 
     function kindLabel(kind) {
@@ -734,6 +823,7 @@ export default defineComponent({
       accountOptions,
       kindOptions,
       syncLoading,
+      bulkReviewLoading,
       syncOverlayVisible,
       syncOverlayTitle,
       syncOverlayFailed,
@@ -768,6 +858,7 @@ export default defineComponent({
       onPageChange,
       onPageSizeChange,
       runSync,
+      runBulkReview,
       kindLabel,
       kindTagType,
       displayTs,
