@@ -196,17 +196,26 @@
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column :label="t('common.operate')" width="168" align="center">
+                  <el-table-column :label="t('common.operate')" :width="isAdminUser ? 232 : 168" align="center">
                     <template #default="{ row: line }">
                       <div class="order-outbound-actions">
                         <el-button
                           size="small"
                           type="warning"
                           plain
-                          :disabled="outboundLineHasBoundInventory(line)"
                           @click="openBindOutboundInventoryDialog(row, line)"
                         >
                           {{ t('common.edit') }}
+                        </el-button>
+                        <el-button
+                          v-if="isAdminUser"
+                          size="small"
+                          type="primary"
+                          plain
+                          :disabled="!outboundLineHasBoundInventory(line)"
+                          @click="openConvertOwnerDialog(row, line)"
+                        >
+                          {{ t('orders.convertOwner') }}
                         </el-button>
                         <el-popconfirm
                           :title="t('orders.confirmStockOut')"
@@ -709,10 +718,18 @@
 
     <el-dialog
       v-model="bindOutboundDialogVisible"
-      :title="t('orders.bindInventory')"
+      :title="bindOutboundContext.is_stocked_out ? t('orders.bindInventoryEditStockedOut') : t('orders.bindInventory')"
       width="760px"
       destroy-on-close
     >
+      <el-alert
+        v-if="bindOutboundContext.is_stocked_out"
+        type="warning"
+        :title="t('orders.bindStockedOutAlert')"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+      />
       <el-form label-width="90px">
         <el-form-item :label="t('orders.orderNumber')">
           <el-input :model-value="bindOutboundContext.order_no" disabled />
@@ -860,6 +877,71 @@
     </el-dialog>
 
     <el-dialog
+      v-model="convertOwnerDialogVisible"
+      :title="t('orders.convertOwnerDialogTitle')"
+      width="480px"
+      destroy-on-close
+      append-to-body
+    >
+      <el-alert
+        v-if="convertOwnerContext.is_stocked_out"
+        type="info"
+        :title="t('orders.convertOwnerStockedOutHint')"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+      />
+      <el-form label-width="120px">
+        <el-form-item :label="t('orders.orderNumber')">
+          <el-input :model-value="convertOwnerContext.order_no" disabled />
+        </el-form-item>
+        <el-form-item :label="t('orders.currentInventory')">
+          <el-input
+            :model-value="convertOwnerContext.inventory_label || ''"
+            disabled
+            readonly
+          />
+        </el-form-item>
+        <el-form-item :label="t('orders.currentOwner')">
+          <el-input
+            :model-value="convertOwnerContext.current_owner_name || '—'"
+            disabled
+            readonly
+          />
+        </el-form-item>
+        <el-form-item :label="t('inventory.splitQuantity')">
+          <el-input :model-value="String(convertOwnerContext.quantity)" disabled />
+        </el-form-item>
+        <el-form-item :label="t('orders.targetOwner')" required>
+          <el-select
+            v-model="convertOwnerForm.owner_user_id"
+            :placeholder="t('inventory.pleaseSelectOwner')"
+            clearable
+            filterable
+            style="width: 100%"
+          >
+            <el-option
+              v-for="u in ownerUsers"
+              :key="u.id"
+              :label="u.display_name || u.username"
+              :value="u.id"
+              :disabled="u.id === convertOwnerContext.current_owner_user_id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="convertOwnerDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button
+          type="primary"
+          :loading="convertOwnerSubmitting"
+          :disabled="!convertOwnerCanSubmit"
+          @click="submitConvertOwner"
+        >{{ t('orders.confirmConvertOwner') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="packagingDialogVisible"
       :title="t('orders.addPackagingMaterial')"
       width="520px"
@@ -980,6 +1062,16 @@ const orderTableRef = ref(null)
 const lastExpandedRows = ref([])
 const ownerUsers = ref([])
 
+/** 当前登录用户是否为 admin（仅 admin 可使用「归属转化」） */
+const isAdminUser = computed(() => {
+  try {
+    const u = JSON.parse(localStorage.getItem('auth_user') || '{}')
+    return String(u?.username || '').trim() === 'admin'
+  } catch {
+    return false
+  }
+})
+
 const loading = ref(false)
 const statsLoading = ref(false)
 /** 与 Layout / 库存页一致：(max-width: 768px) */
@@ -997,8 +1089,33 @@ const bindOutboundDialogVisible = ref(false)
 const bindOutboundSaving = ref(false)
 const bindInventoryLoading = ref(false)
 const bindInventoryOptions = ref([])
-const bindOutboundContext = ref({ order_no: '', line_id: 0 })
+const bindOutboundContext = ref({
+  order_no: '',
+  line_id: 0,
+  is_stocked_out: false,
+  original_inventory_id: null,
+})
 const bindOutboundForm = ref({ inventory_id: null, quantity: 1 })
+const convertOwnerDialogVisible = ref(false)
+const convertOwnerSubmitting = ref(false)
+const convertOwnerContext = ref({
+  order_no: '',
+  line_id: 0,
+  inventory_id: null,
+  inventory_label: '',
+  current_owner_user_id: null,
+  current_owner_name: '',
+  quantity: 1,
+  is_stocked_out: false,
+})
+const convertOwnerForm = ref({ owner_user_id: null })
+const convertOwnerCanSubmit = computed(() => {
+  const oid = convertOwnerForm.value.owner_user_id
+  if (oid == null) return false
+  if (Number(oid) <= 0) return false
+  if (Number(oid) === Number(convertOwnerContext.value.current_owner_user_id)) return false
+  return Number(convertOwnerContext.value.line_id || 0) > 0
+})
 const packagingDialogVisible = ref(false)
 const packagingSubmitting = ref(false)
 const packagingItemsOptions = ref([])
@@ -1894,10 +2011,21 @@ async function openBindOutboundInventoryDialog(orderRow, line) {
   const orderNo = String(orderRow?.order_no || '').trim()
   const lineId = Number(line?.id || 0)
   if (!orderNo || !lineId) return
-  if (outboundLineHasBoundInventory(line)) return
-  bindOutboundContext.value = { order_no: orderNo, line_id: lineId }
+  bindOutboundContext.value = {
+    order_no: orderNo,
+    line_id: lineId,
+    is_stocked_out: Number(line?.is_stocked_out || 0) === 1,
+    original_inventory_id:
+      line?.inventory_id != null && Number.isFinite(Number(line.inventory_id))
+        ? Number(line.inventory_id)
+        : null,
+  }
+  const currentInvId =
+    line?.inventory_id != null && Number.isFinite(Number(line.inventory_id))
+      ? Number(line.inventory_id)
+      : null
   bindOutboundForm.value = {
-    inventory_id: null,
+    inventory_id: currentInvId,
     quantity: Math.max(1, Number(line?.quantity || 1)),
   }
   bindInvFilters.resetFilters()
@@ -1910,6 +2038,51 @@ async function openBindOutboundInventoryDialog(orderRow, line) {
     bindInventoryOptions.value = []
   } finally {
     bindInventoryLoading.value = false
+  }
+}
+
+function openConvertOwnerDialog(orderRow, line) {
+  const orderNo = String(orderRow?.order_no || '').trim()
+  const lineId = Number(line?.id || 0)
+  if (!orderNo || !lineId) return
+  if (!outboundLineHasBoundInventory(line)) {
+    ElMessage.warning(t('orders.convertOwnerNeedBound'))
+    return
+  }
+  const invId = Number(line?.inventory_id || 0)
+  const invName = String(line?.inventory_name || '').trim() || '-'
+  convertOwnerContext.value = {
+    order_no: orderNo,
+    line_id: lineId,
+    inventory_id: invId,
+    inventory_label: `${invId} · ${invName}`,
+    current_owner_user_id:
+      line?.inventory_owner_user_id != null
+        ? Number(line.inventory_owner_user_id)
+        : null,
+    current_owner_name: String(line?.inventory_owner_name || '').trim(),
+    quantity: Math.max(1, Number(line?.quantity || 1)),
+    is_stocked_out: Number(line?.is_stocked_out || 0) === 1,
+  }
+  convertOwnerForm.value = { owner_user_id: null }
+  convertOwnerDialogVisible.value = true
+}
+
+async function submitConvertOwner() {
+  const orderNo = String(convertOwnerContext.value.order_no || '').trim()
+  const lineId = Number(convertOwnerContext.value.line_id || 0)
+  const ownerId = Number(convertOwnerForm.value.owner_user_id || 0)
+  if (!orderNo || !lineId || ownerId <= 0) return
+  convertOwnerSubmitting.value = true
+  try {
+    const res = await orderApi.convertOutboundLineOwner(lineId, { owner_user_id: ownerId })
+    const newInvId = res?.new_inventory_id ?? ''
+    ElMessage.success(t('orders.convertOwnerSuccess', { id: newInvId }))
+    convertOwnerDialogVisible.value = false
+    await reloadOutboundLinesExpand(orderNo)
+    await load()
+  } finally {
+    convertOwnerSubmitting.value = false
   }
 }
 

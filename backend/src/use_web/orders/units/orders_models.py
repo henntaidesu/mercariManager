@@ -63,10 +63,16 @@ class OutboundStockOutBody(PydanticModel):
 
 
 class OutboundLineBindInventoryBody(PydanticModel):
-    """将未匹配到库存的出库明细行手动关联到某条库存（仅允许 inventory_id 为空时）。"""
+    """将出库明细行关联或重新绑定到某条库存。已出库的行重新绑定时会回退/扣减相应库存。"""
 
     inventory_id: int
     quantity: Optional[int] = None
+
+
+class OutboundLineConvertOwnerBody(PydanticModel):
+    """商品归属转化：把当前明细绑定的库存按行数量拆分到一条新管理番号下，并改写归属。"""
+
+    owner_user_id: int
 
 
 class ManualOutboundLineCreateBody(PydanticModel):

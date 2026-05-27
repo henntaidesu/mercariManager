@@ -13,6 +13,7 @@ from .units.inventory_query import list_inventory, find_by_barcode, get_inventor
 from .units.inventory_crud import create_inventory, update_inventory, delete_inventory
 from .units.inventory_stock import stock_in_inventory, stock_out_inventory
 from .units.inventory_combined import create_combined_inventory
+from .units.inventory_split import split_inventory
 from .units.inventory_images import find_by_image, upload_inventory_image
 from .units.inventory_public_handler import get_image_thumb
 from .units.ocr_handler import ocr_region
@@ -30,6 +31,7 @@ router.add_api_route("/barcode/{barcode}", find_by_barcode, methods=["GET"])
 router.add_api_route("/find-by-image", find_by_image, methods=["POST"])
 router.add_api_route("/upload-image", upload_inventory_image, methods=["POST"])
 router.add_api_route("/combine", create_combined_inventory, methods=["POST"])
+router.add_api_route("/{pid}/split", split_inventory, methods=["POST"])
 router.add_api_route("/{pid}/stock-in", stock_in_inventory, methods=["POST"])
 router.add_api_route("/{pid}/stock-out", stock_out_inventory, methods=["POST"])
 router.add_api_route("/{pid}/pending-outbound-lines", list_inventory_pending_outbound_lines, methods=["GET"])

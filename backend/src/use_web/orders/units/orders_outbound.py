@@ -4,8 +4,9 @@ import re
 import time
 from typing import List
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 
+from ....auth import require_auth
 from ....db_manage.models.order import OrderModel
 from ....db_manage.models.order_outbound_line import OrderOutboundLineModel
 from ....use_mercari.get_order.description_mgmt_ids import (
@@ -25,33 +26,284 @@ from .orders_models import (
     ManualOutboundLinesBatchCreateBody,
     OrderPackagingWaiveBody,
     OutboundLineBindInventoryBody,
+    OutboundLineConvertOwnerBody,
     OutboundStockOutBody,
     RefreshOrderInfoBody,
 )
 
 
+def _is_stock_holding_line(line: OrderOutboundLineModel) -> bool:
+    """该明细对绑定库存仍有「占用」需要回吐：已出库或已预扣的均算占用。"""
+    if int(line.is_stocked_out or 0) == 1:
+        return True
+    return int(line.stock_deducted or 0) == 1
+
+
 def bind_outbound_line_inventory(line_id: int, data: OutboundLineBindInventoryBody):
-    """未识别到库存 ID 的明细行，手动指定 inventory_id；已有关联时拒绝。"""
+    """未匹配/已匹配的明细行手动指定或重新绑定 inventory_id；已出库或已预扣的会回退旧库存并扣减新库存。"""
     line = OrderOutboundLineModel.find_by_id(id=int(line_id))
     if not line:
         raise HTTPException(status_code=404, detail="出库明细不存在")
-    if _outbound_line_has_inventory_id(line):
-        raise HTTPException(status_code=400, detail="该明细已关联库存，无法修改")
-    if int(line.is_stocked_out or 0) == 1:
-        raise HTTPException(status_code=400, detail="该明细已出库，无法修改绑定")
+
     inv_id = int(data.inventory_id)
     if inv_id <= 0:
         raise HTTPException(status_code=400, detail="inventory_id 无效")
-    inv_rows = db.execute_query("SELECT [id] FROM [inventory] WHERE [id] = ? LIMIT 1", (inv_id,))
+    inv_rows = db.execute_query(
+        "SELECT [id], [quantity], [warehouse_id] FROM [inventory] WHERE [id] = ? LIMIT 1",
+        (inv_id,),
+    )
     if not inv_rows:
         raise HTTPException(status_code=404, detail="库存商品不存在")
-    line.inventory_id = inv_id
-    if data.quantity is not None:
-        line.quantity = max(1, int(data.quantity))
-    if not line.save():
-        raise HTTPException(status_code=500, detail="保存失败")
-    refresh_inventory_pending_outbound_qty([inv_id])
-    return {"success": True, "line_id": int(line.id), "inventory_id": inv_id}
+
+    old_inv_id = int(line.inventory_id) if _outbound_line_has_inventory_id(line) else None
+    old_qty = max(1, int(line.quantity or 1))
+    new_qty = max(1, int(data.quantity if data.quantity is not None else old_qty))
+    holds_stock = _is_stock_holding_line(line)
+    no_op = old_inv_id == inv_id and new_qty == old_qty
+    touched_inv_ids: List[int] = [inv_id]
+
+    if no_op:
+        return {"success": True, "line_id": int(line.id), "inventory_id": inv_id}
+
+    if holds_stock:
+        new_inv_qty = int(inv_rows[0][1] or 0)
+        new_inv_warehouse_id = inv_rows[0][2]
+        if new_inv_qty < new_qty:
+            raise HTTPException(status_code=400, detail=f"目标库存不足，当前库存：{new_inv_qty}")
+
+        with db.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            if old_inv_id is not None and old_inv_id != inv_id:
+                cur.execute(
+                    "UPDATE [inventory] SET [quantity] = COALESCE([quantity], 0) + ? WHERE [id] = ?",
+                    (old_qty, old_inv_id),
+                )
+                touched_inv_ids.append(old_inv_id)
+            elif old_inv_id == inv_id and new_qty != old_qty:
+                cur.execute(
+                    "UPDATE [inventory] SET [quantity] = COALESCE([quantity], 0) + ? WHERE [id] = ?",
+                    (old_qty, inv_id),
+                )
+
+            cur.execute(
+                "UPDATE [inventory] SET [quantity] = COALESCE([quantity], 0) - ? WHERE [id] = ?",
+                (new_qty, inv_id),
+            )
+
+            if int(line.is_stocked_out or 0) == 1 and new_inv_warehouse_id is not None:
+                cur.execute(
+                    """
+                    INSERT INTO [transactions] (
+                        type, inventory_id, warehouse_id, quantity, remark, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "out",
+                        inv_id,
+                        new_inv_warehouse_id,
+                        new_qty,
+                        f"订单出库改绑 {line.order_no} / line#{line.id}",
+                        int(time.time()),
+                    ),
+                )
+
+            cur.execute(
+                "UPDATE [order_outbound_lines] SET [inventory_id] = ?, [quantity] = ? WHERE [id] = ?",
+                (inv_id, new_qty, int(line.id)),
+            )
+            conn.commit()
+    else:
+        line.inventory_id = inv_id
+        line.quantity = new_qty
+        if not line.save():
+            raise HTTPException(status_code=500, detail="保存失败")
+        if old_inv_id is not None and old_inv_id != inv_id:
+            touched_inv_ids.append(old_inv_id)
+
+    refresh_inventory_pending_outbound_qty(list(set(touched_inv_ids)))
+    return {"success": True, "line_id": int(line.id), "inventory_id": inv_id, "quantity": new_qty}
+
+
+def convert_outbound_line_owner(
+    line_id: int,
+    data: OutboundLineConvertOwnerBody,
+    claims: dict = Depends(require_auth),
+):
+    """商品归属转化：把当前明细绑定的库存按行数量拆分到一条新管理番号下并改写归属，再把明细重绑到该新库存。
+
+    仅允许 admin 账号调用（前端按钮也仅 admin 可见）。
+
+    - 校验目标用户存在且不同于当前归属。
+    - 未出库（未预扣）：从原库存扣减 line.quantity 给新库存（持有库存）。
+    - 已出库或已预扣：从原库存回吐 line.quantity，再从新库存扣减同数量（保证账面占用转到新归属）。
+    - 重绑后刷新两条库存的待出库汇总。
+    """
+    if str((claims or {}).get("username") or "").strip() != "admin":
+        raise HTTPException(status_code=403, detail="仅 admin 账号可执行商品归属转化")
+    line = OrderOutboundLineModel.find_by_id(id=int(line_id))
+    if not line:
+        raise HTTPException(status_code=404, detail="出库明细不存在")
+    if not _outbound_line_has_inventory_id(line):
+        raise HTTPException(status_code=400, detail="该明细尚未关联库存，请先编辑绑定库存")
+
+    target_owner = int(data.owner_user_id or 0)
+    if target_owner <= 0:
+        raise HTTPException(status_code=400, detail="目标商品归属无效")
+    owner_rows = db.execute_query("SELECT [id] FROM [users] WHERE [id] = ? LIMIT 1", (target_owner,))
+    if not owner_rows:
+        raise HTTPException(status_code=400, detail="目标商品归属用户不存在")
+
+    src_id = int(line.inventory_id)
+    src_rows = db.execute_query(
+        """
+        SELECT [name], [barcode], [category_id], [product_type_id], [owner_user_id], [warehouse_id],
+               [price], [quantity], [description], [listing_title], [listing_body],
+               [image], [image_front], [image_back], [images_json], [is_combined]
+        FROM [inventory] WHERE [id] = ? LIMIT 1
+        """,
+        (src_id,),
+    )
+    if not src_rows:
+        raise HTTPException(status_code=404, detail="原库存不存在")
+    src = src_rows[0]
+    if int(src[15] or 0) == 1:
+        raise HTTPException(status_code=400, detail="组合商品不能进行归属转化")
+    if int(src[4] or 0) == target_owner:
+        raise HTTPException(status_code=400, detail="目标归属与当前归属一致")
+
+    src_quantity = int(src[7] or 0)
+    qty = max(1, int(line.quantity or 1))
+    holds_stock = _is_stock_holding_line(line)
+    # 未出库（未预扣）：需从原库存实际拨出 qty 给新库存；原库存须够
+    if not holds_stock and src_quantity < qty:
+        raise HTTPException(status_code=400, detail=f"原库存不足以转化，当前库存：{src_quantity}")
+
+    import uuid as _uuid
+    from ...image_storage import get_image_root
+    import os as _os
+    import shutil as _shutil
+
+    def _dup(path):
+        if not path or not isinstance(path, str) or not path.startswith("/imges/"):
+            return path
+        fn = path.split("/imges/", 1)[1].strip("/")
+        if not fn:
+            return path
+        s = _os.path.join(get_image_root(), fn)
+        if not _os.path.exists(s):
+            return path
+        ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else "jpg"
+        new_name = f"inv_split_{_uuid.uuid4().hex}.{ext}"
+        d = _os.path.join(get_image_root(), new_name)
+        try:
+            _shutil.copyfile(s, d)
+        except Exception:
+            return path
+        return f"/imges/{new_name}"
+
+    import json as _json
+    src_images_json = src[14]
+    src_paths: List[str] = []
+    try:
+        if src_images_json:
+            parsed = _json.loads(src_images_json)
+            if isinstance(parsed, list):
+                for p in parsed:
+                    if p and str(p).strip():
+                        src_paths.append(str(p).strip())
+    except Exception:
+        src_paths = []
+    if not src_paths:
+        for p in [src[12], src[11], src[13]]:
+            if p and str(p).strip():
+                src_paths.append(str(p).strip())
+
+    new_paths = [_dup(p) for p in src_paths]
+    new_image = new_paths[0] if new_paths else None
+    new_image_front = new_image
+    new_image_back = new_paths[1] if len(new_paths) > 1 else None
+    new_images_json = (
+        _json.dumps(new_paths, ensure_ascii=False, separators=(",", ":")) if new_paths else None
+    )
+
+    new_barcode = f"SPLIT-{int(time.time() * 1000)}-{_uuid.uuid4().hex[:6]}"
+
+    try:
+        with db.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            if not holds_stock:
+                # 未出库：把 qty 从原库存搬到新库存，新库存 quantity = qty
+                cur.execute(
+                    "UPDATE [inventory] SET [quantity] = COALESCE([quantity], 0) - ? WHERE [id] = ?",
+                    (qty, src_id),
+                )
+                new_qty_value = qty
+            else:
+                # 已出库或已预扣：账面上这 qty 已被占用，原库存先回吐再用新库存扣减
+                cur.execute(
+                    "UPDATE [inventory] SET [quantity] = COALESCE([quantity], 0) + ? WHERE [id] = ?",
+                    (qty, src_id),
+                )
+                # 新库存先以 qty 起始（克隆），再立刻扣减 qty 占用，结果为 0
+                new_qty_value = 0
+
+            cur.execute(
+                """
+                INSERT INTO [inventory] (
+                    name, barcode, category_id, product_type_id, owner_user_id, warehouse_id, price, quantity,
+                    mercari_item_id, on_sale_quantity, pending_outbound_qty,
+                    description, listing_title, listing_body, image, image_front, image_back, images_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    src[0], new_barcode, src[2], src[3], target_owner, src[5], src[6], new_qty_value,
+                    None, 0, 0,
+                    src[8], src[9], src[10],
+                    new_image, new_image_front, new_image_back, new_images_json,
+                ),
+            )
+            new_inv_id = cur.lastrowid
+
+            if int(line.is_stocked_out or 0) == 1:
+                # 已出库：在新库存上补一笔出库 transactions（仓库取新库存继承的 warehouse_id）
+                if src[5] is not None:
+                    cur.execute(
+                        """
+                        INSERT INTO [transactions] (
+                            type, inventory_id, warehouse_id, quantity, remark, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "out",
+                            new_inv_id,
+                            src[5],
+                            qty,
+                            f"订单归属转化（已出库） {line.order_no} / line#{line.id}",
+                            int(time.time()),
+                        ),
+                    )
+
+            cur.execute(
+                "UPDATE [order_outbound_lines] SET [inventory_id] = ? WHERE [id] = ?",
+                (new_inv_id, int(line.id)),
+            )
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="商品归属转化失败，请稍后重试")
+
+    refresh_inventory_pending_outbound_qty([src_id, int(new_inv_id)])
+    return {
+        "success": True,
+        "line_id": int(line.id),
+        "old_inventory_id": src_id,
+        "new_inventory_id": int(new_inv_id),
+        "owner_user_id": target_owner,
+        "quantity": qty,
+    }
 
 
 def stock_out_order_outbound_line(line_id: int, data: OutboundStockOutBody):

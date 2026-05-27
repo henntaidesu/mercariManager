@@ -71,6 +71,11 @@ class CombinedInventoryCreate(PydanticModel):
             return 0
 
 
+class InventorySplitRequest(PydanticModel):
+    owner_user_id: Optional[int] = None
+    split_quantity: int = 0
+
+
 class InventoryUpdate(PydanticModel):
     name: Optional[str] = None
     barcode: Optional[str] = None

@@ -711,6 +711,12 @@
           <div class="product-dialog-footer__left">
             <template v-if="form.id">
               <el-button type="success" @click="openOcrForRow(form)">{{ t('inventory.ocr') }}</el-button>
+              <el-button
+                v-if="Number(form.is_combined || 0) !== 1"
+                type="primary"
+                plain
+                @click="openSplitDialog(form)"
+              >{{ t('inventory.split') }}</el-button>
               <el-popconfirm :title="t('inventory.deleteConfirm')" @confirm="remove(form.id); dialogVisible = false">
                 <template #reference>
                   <el-button type="danger">{{ t('common.delete') }}</el-button>
@@ -950,6 +956,77 @@
         <el-button type="primary" :loading="combinedProductSubmitting" @click="submitCombinedProduct">
           {{ t('inventory.createCombinedProduct') }}
         </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="splitDialogVisible"
+      :title="t('inventory.splitDialogTitle')"
+      :width="isMobile ? '94vw' : '480px'"
+      append-to-body
+      destroy-on-close
+      class="product-dialog"
+    >
+      <el-form :model="splitForm" label-width="112px" class="split-product-form">
+        <el-form-item :label="t('inventory.managementId')">
+          <el-input
+            :model-value="splitSourceId != null ? String(splitSourceId) : ''"
+            readonly
+            disabled
+          />
+        </el-form-item>
+        <el-form-item :label="t('inventory.productNameCol')">
+          <el-input
+            :model-value="splitSourceName || ''"
+            readonly
+            disabled
+          />
+        </el-form-item>
+        <el-form-item :label="t('inventory.currentStock')">
+          <el-input
+            :model-value="String(splitSourceQuantity)"
+            readonly
+            disabled
+          />
+        </el-form-item>
+        <el-form-item :label="t('inventory.splitTargetOwner')" required>
+          <el-select
+            v-model="splitForm.owner_user_id"
+            :placeholder="t('inventory.pleaseSelectOwner')"
+            clearable
+            :filterable="!isIOS"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="u in ownerUsers"
+              :key="u.id"
+              :label="u.display_name || u.username"
+              :value="u.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('inventory.splitQuantity')" required>
+          <el-input-number
+            v-model="splitForm.split_quantity"
+            :min="0"
+            :max="splitSourceQuantity"
+            :step="1"
+            controls-position="right"
+            style="width: 160px"
+          />
+          <span class="split-quantity-hint">
+            {{ t('inventory.splitQuantityHint', { max: splitSourceQuantity }) }}
+          </span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="splitDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button
+          type="primary"
+          :loading="splitSubmitting"
+          :disabled="!splitCanSubmit"
+          @click="submitSplit"
+        >{{ t('inventory.confirmSplit') }}</el-button>
       </template>
     </el-dialog>
 
@@ -1327,6 +1404,67 @@ const combinedProductForm = ref({
   price: 0,
   description: ''
 })
+/** 拆分商品弹窗 */
+const splitDialogVisible = ref(false)
+const splitSubmitting = ref(false)
+const splitSourceId = ref(null)
+const splitSourceName = ref('')
+const splitSourceQuantity = ref(0)
+const splitForm = ref({
+  owner_user_id: null,
+  split_quantity: 0
+})
+const splitCanSubmit = computed(() => {
+  const qty = Number(splitForm.value.split_quantity ?? 0)
+  if (!Number.isFinite(qty) || qty < 0) return false
+  if (qty > Number(splitSourceQuantity.value || 0)) return false
+  return splitForm.value.owner_user_id != null
+})
+
+function openSplitDialog(row) {
+  if (!row || !row.id) return
+  if (Number(row.is_combined || 0) === 1) {
+    ElMessage.warning(t('inventory.splitCombinedForbidden'))
+    return
+  }
+  splitSourceId.value = row.id
+  splitSourceName.value = row.name || ''
+  splitSourceQuantity.value = Number(row.quantity ?? 0)
+  splitForm.value = {
+    owner_user_id: null,
+    split_quantity: 0
+  }
+  splitDialogVisible.value = true
+}
+
+async function submitSplit() {
+  if (!splitSourceId.value) return
+  const qty = Math.max(0, Math.round(Number(splitForm.value.split_quantity ?? 0)))
+  if (qty > Number(splitSourceQuantity.value || 0)) {
+    ElMessage.warning(t('inventory.splitQuantityExceeds', { max: splitSourceQuantity.value }))
+    return
+  }
+  if (splitForm.value.owner_user_id == null) {
+    ElMessage.warning(t('inventory.pleaseSelectOwner'))
+    return
+  }
+  splitSubmitting.value = true
+  try {
+    const res = await inventoryApi.split(splitSourceId.value, {
+      owner_user_id: splitForm.value.owner_user_id,
+      split_quantity: qty
+    })
+    const newId = res?.id ?? ''
+    ElMessage.success(t('inventory.splitSuccess', { id: newId }))
+    splitDialogVisible.value = false
+    dialogVisible.value = false
+    await load({ resetPage: false })
+    loadInventoryStats()
+  } finally {
+    splitSubmitting.value = false
+  }
+}
+
 /** 组合商品「在列表中选择」模式 */
 const listingPickMode = ref(false)
 /** 已选中的库存 id 集合 */
@@ -5397,6 +5535,12 @@ onBeforeUnmount(() => {
 .combined-product-dialog .combined-product-item__qty {
   width: 96px;
   flex: 0 0 auto;
+}
+
+.split-product-form .split-quantity-hint {
+  margin-left: 10px;
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 /* 出品自动化全屏等待（teleport 到 body，须无 scoped；黑色主题） */
