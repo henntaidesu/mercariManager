@@ -106,6 +106,8 @@ export default {
       batchDetailResult: "新增商品已自动获取详情：成功关联库存 {ok} 条，未写入 {fail} 条（请核对商品说明与 DPoP_ItemGet-Info）",
       syncFailedSimple: "同步失败",
       unknownError: "未知错误",
+      alertReasonTitle: "该商品被标红的原因",
+      alertReasonZeroStockOnSale: "商品在售中，但关联库存为 0",
     },
   },
   ja: {
@@ -215,6 +217,8 @@ export default {
       batchDetailResult: "新規商品の詳細を自動取得しました：在庫紐付け成功 {ok} 件、未書き込み {fail} 件（商品説明と DPoP_ItemGet-Info をご確認ください）",
       syncFailedSimple: "同期失敗",
       unknownError: "不明なエラー",
+      alertReasonTitle: "この商品がアラート表示されている理由",
+      alertReasonZeroStockOnSale: "商品は出品中ですが、紐付け在庫が 0 です",
     },
   },
   en: {
@@ -324,6 +328,8 @@ export default {
       batchDetailResult: "Detail auto-fetched for new items: {ok} successfully linked, {fail} not written (please verify description and DPoP_ItemGet-Info)",
       syncFailedSimple: "Sync failed",
       unknownError: "Unknown error",
+      alertReasonTitle: "Why this row is flagged",
+      alertReasonZeroStockOnSale: "Item is on sale but linked inventory is 0",
     },
   },
 }

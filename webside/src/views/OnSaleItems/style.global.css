@@ -44,3 +44,49 @@
   line-height: 1.55;
   word-break: break-word;
 }
+
+/* 标红行商品ID单元格内的警告图标（鼠标悬停时弹出 tooltip 说明原因），与库存管理页一致 */
+.on-sale-alert-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: help;
+}
+.on-sale-alert-icon {
+  color: #ff6b6b;
+  font-size: 16px;
+  vertical-align: middle;
+}
+
+/* 标红行说明 tooltip（teleport 到 body，必须无 scoped）：与项目深蓝暗色主题保持一致 */
+.el-popper.is-dark.on-sale-alert-tooltip-popper {
+  background: #18233a !important;
+  border: 1px solid #3a1f24 !important;
+  color: #e6e8ef !important;
+  padding: 10px 12px !important;
+  max-width: 320px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.el-popper.is-dark.on-sale-alert-tooltip-popper .el-popper__arrow::before {
+  background: #18233a !important;
+  border-color: #3a1f24 !important;
+}
+.on-sale-alert-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #ff8a92;
+  font-size: 13px;
+}
+.on-sale-alert-tooltip-list {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.6;
+  color: #e6e8ef;
+  font-size: 12.5px;
+}
+.on-sale-alert-tooltip-list li {
+  list-style: disc;
+}
+.on-sale-alert-tooltip-list li::marker {
+  color: #ff8a92;
+}

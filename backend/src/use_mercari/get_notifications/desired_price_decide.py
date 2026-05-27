@@ -42,6 +42,19 @@ ACCEPT_CONFIRM_BUTTON_TEXTS: Sequence[str] = (
     "OK",
 )
 
+# reject 之后出现的二次确认弹窗按钮文案。
+# 实际页面: 「依頼を断りますか？」弹窗中的「依頼を断る」按钮
+# (data-location='offer_list:offer_reject_dialog:reject_button')。
+# 其余文案做兜底, 防止煤炉前端改文案。
+REJECT_CONFIRM_BUTTON_TEXTS: Sequence[str] = (
+    "依頼を断る",
+    "売らない",
+    "断る",
+    "確認する",
+    "確認",
+    "OK",
+)
+
 # 已被处理后页面上会出现的提示文案(命中即视为已决定)
 ALREADY_ACCEPTED_TEXTS: Sequence[str] = (
     "依頼を承諾済みです",
@@ -66,6 +79,8 @@ ELEMENT_TIMEOUT_MS = 15_000
 # 二次确认弹窗(「販売価格を変更しますか？」→「価格を変更する」)有时渲染慢,
 # 给充足时间;若未出现到时会优雅返回 None,不影响主流程。
 ACCEPT_CONFIRM_TIMEOUT_MS = 15_000
+# reject 二次确认弹窗(「依頼を断りますか？」→「依頼を断る」)同理。
+REJECT_CONFIRM_TIMEOUT_MS = 15_000
 PAGE_NAV_TIMEOUT_MS = 30_000
 PAGE_SETTLE_SEC = 1.0
 
@@ -291,6 +306,15 @@ async def decide_desired_price(
                 report("click_reject", "正在点击「売らない」（拒绝降价）…")
                 await _click_selector(page, REJECT_BUTTON_SELECTOR)
                 clicked.append("reject_button")
+                # 短等二次确认弹窗(「依頼を断りますか？」→「依頼を断る」, 可能不出现)
+                report("confirm_reject", "等待二次确认弹窗…")
+                confirm_hit = await _try_click_confirm_dialog(
+                    page,
+                    REJECT_CONFIRM_BUTTON_TEXTS,
+                    timeout_ms=REJECT_CONFIRM_TIMEOUT_MS,
+                )
+                if confirm_hit:
+                    clicked.append(f"confirm:{confirm_hit}")
 
             if not skipped_reason:
                 try:

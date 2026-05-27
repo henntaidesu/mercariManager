@@ -1,6 +1,6 @@
 import { defineComponent, ref, computed, onBeforeUnmount, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Loading } from '@element-plus/icons-vue'
+import { Download, Loading, WarningFilled } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { onSaleItemApi, mercariAccountApi, webDriveApi } from '@/api/index.js'
 import { parseMgmtIdsFromDescription } from '@/utils/mgmtIdCipher.js'
@@ -124,6 +124,15 @@ export default defineComponent({
 
     function onSaleRowClassName({ row }) {
       return isOnSaleZeroStockAlert(row) ? 'on-sale-stock-alert-row' : ''
+    }
+
+    /** 标红行原因列表（已本地化），与库存管理页一致，供 tooltip 悬停展示 */
+    function onSaleAlertReasons(row) {
+      const reasons = []
+      if (isOnSaleZeroStockAlert(row)) {
+        reasons.push(t('onSaleItems.alertReasonZeroStockOnSale'))
+      }
+      return reasons
     }
 
     const sellerOptions = computed(() => {
@@ -710,6 +719,7 @@ export default defineComponent({
       ElMessageBox,
       Download,
       Loading,
+      WarningFilled,
       useI18n,
       onSaleItemApi,
       mercariAccountApi,
@@ -746,6 +756,7 @@ export default defineComponent({
       filters,
       sellerFromAccounts,
       isOnSaleZeroStockAlert,
+      onSaleAlertReasons,
       displayList,
       onSaleRowClassName,
       sellerOptions,
