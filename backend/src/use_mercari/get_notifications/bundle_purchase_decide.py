@@ -14,14 +14,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 from ...db_manage.database import DatabaseManager
 from ...db_manage.models.mercari_account import MercariAccountModel
 from ...web_drive.core.manager import EdgeWebDriveManager
 from ...web_drive.core.mitm_session import mitm_automation_browser
 from ...web_drive.core.paths import mercari_account_key
-from .bundle_purchase_capture import build_bundle_offer_url
+from .bundle_purchase_capture import (
+    build_bundle_offer_url,
+    detect_decided_state_on_page,
+)
 
 log = logging.getLogger(__name__)
 
@@ -79,11 +82,8 @@ ACCEPT_BUTTON_TEXT = "依頼を承諾する"
 ACCEPT_CONFIRM_BUTTON_TEXT = "承諾して出品する"  # 「依頼を承諾する」之后的二次确认
 REJECT_BUTTON_TEXT = "依頼を断る"
 
-# 已被承諾后页面上会出现的提示文案;命中即视为已承諾,跳过所有点击/填表。
-ALREADY_ACCEPTED_TEXTS = ("依頼を承諾済みです", "承諾済み")
-# 已拒绝 / 已过期的类似提示(命中也按已决定处理)
-ALREADY_REJECTED_TEXTS = ("依頼を断りました", "依頼を断りました。", "断り済み")
-ALREADY_EXPIRED_TEXTS = ("依頼の有効期限が切れました", "有効期限が切れ")
+# 「已承諾 / 已拒绝 / 已过期」的页面文案检测已抽到
+# ``bundle_purchase_capture.detect_decided_state_on_page``（与同步逻辑共用）。
 
 ELEMENT_TIMEOUT_MS = 15_000
 ACCEPT_CONFIRM_TIMEOUT_MS = 20_000
@@ -242,21 +242,6 @@ async def _fill_offer_form(
     )
 
 
-async def _any_text_present(page: Any, candidates: Sequence[str]) -> Optional[str]:
-    """返回命中的首个文案;一个都没出现返回 None。"""
-    for text in candidates:
-        t = (text or "").strip()
-        if not t:
-            continue
-        try:
-            n = await page.get_by_text(t, exact=False).count()
-            if n and n > 0:
-                return t
-        except Exception:
-            continue
-    return None
-
-
 async def _click_button_by_text(
     page: Any, text: str, *, timeout_ms: int = ELEMENT_TIMEOUT_MS
 ) -> None:
@@ -411,20 +396,7 @@ async def decide_bundle_purchase(
                 pass
             await asyncio.sleep(PAGE_SETTLE_SEC)
 
-            hit_accepted = await _any_text_present(page, ALREADY_ACCEPTED_TEXTS)
-            if hit_accepted:
-                detected_state = "ACCEPTED"
-                skipped_reason = hit_accepted
-            else:
-                hit_rejected = await _any_text_present(page, ALREADY_REJECTED_TEXTS)
-                if hit_rejected:
-                    detected_state = "REJECTED"
-                    skipped_reason = hit_rejected
-                else:
-                    hit_expired = await _any_text_present(page, ALREADY_EXPIRED_TEXTS)
-                    if hit_expired:
-                        detected_state = "EXPIRED"
-                        skipped_reason = hit_expired
+            detected_state, skipped_reason = await detect_decided_state_on_page(page)
 
             if skipped_reason:
                 log.info(

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -23,8 +24,10 @@ from ...db_manage.models.mercari_account import MercariAccountModel
 from ...ssl_mitm_proxy.capture_config import clear_bundle_purchase_response_file
 from ...web_drive.core.mitm_session import mitm_automation_browser
 from .bundle_purchase_capture import (
+    PAGE_SETTLE_SEC,
     build_bundle_offer_url,
     capture_bundle_purchase_via_mitm_session,
+    detect_decided_state_on_page,
 )
 
 log = logging.getLogger(__name__)
@@ -144,11 +147,18 @@ def apply_bundle_purchase_sync(
     body: Dict[str, Any],
     *,
     notification_id: Optional[int] = None,
+    state_override: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """写入本地 ``bundle_purchase_requests``，返回 inserted/updated 标志。"""
+    """写入本地 ``bundle_purchase_requests``，返回 inserted/updated 标志。
+
+    ``state_override`` 非空时（页面检测到「依頼を承諾済みです」等终态），
+    以其覆盖响应体里的 state，用于「其他设备已完成确认」的场景。
+    """
     db = DatabaseManager()
     synced_at_ms = int(time.time() * 1000)
     row = _normalize_bundle_row(int(account_id), str(bundle_id), body, synced_at_ms)
+    if state_override:
+        row["state"] = state_override
     action = _upsert_bundle_row(db, row, notification_id=notification_id)
     log.info(
         "[bundle_purchase] sync account_id=%d bundle_id=%s action=%s items=%d",
@@ -162,6 +172,19 @@ def apply_bundle_purchase_sync(
         "account_id": int(account_id),
         "bundle_id": str(bundle_id),
     }
+
+
+def _mark_state_if_exists(account_id: int, bundle_id: str, new_state: str) -> int:
+    """仅当本地已存在该 bundle 行时更新其 state，返回受影响行数。"""
+    db = DatabaseManager()
+    return int(
+        db.execute_update(
+            "UPDATE [bundle_purchase_requests] SET [state] = ?, [synced_at] = ? "
+            "WHERE [account_id] = ? AND [bundle_id] = ?",
+            (new_state, int(time.time() * 1000), int(account_id), str(bundle_id)),
+        )
+        or 0
+    )
 
 
 def _resolve_account_id(account_id: Optional[int]) -> int:
@@ -209,26 +232,67 @@ async def sync_bundle_purchase_from_mercari(
     start_url = build_bundle_offer_url(bid)
 
     report("open_browser", f"正在打开合并购买请求页（{bid}）…")
+    detected_state: Optional[str] = None
+    detected_text: Optional[str] = None
     async with mitm_automation_browser(int(aid), start_url=start_url) as (mgr, main_key):
         report("wait_capture", "等待煤炉返回合并购买请求详情…")
         body = await capture_bundle_purchase_via_mitm_session(
             mgr, main_key, bundle_id=bid, since_ms=since_ms
         )
+        # 额外检查：页面可能已显示「依頼を承諾済みです」等终态文案
+        # （其他设备已完成确认）。命中则以页面状态为准覆盖本地 state，
+        # 即便接口返回的 state 仍是 PENDING/APPROVED。
+        try:
+            page = await mgr.active_tab_page(main_key)
+            await asyncio.sleep(PAGE_SETTLE_SEC)
+            detected_state, detected_text = await detect_decided_state_on_page(page)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[bundle_purchase] 终态文案检测失败(忽略): %s", exc)
+
+    if detected_state:
+        log.info(
+            "[bundle_purchase] 页面已显示终态 account_id=%s bundle_id=%s state=%s text=%s",
+            aid, bid, detected_state, detected_text,
+        )
 
     if not isinstance(body, dict):
+        # 未截获响应体：若页面已显示终态，则仅更新本地 state，避免误报失败
+        if detected_state:
+            updated = _mark_state_if_exists(int(aid), bid, detected_state)
+            log.info(
+                "[bundle_purchase] 未截获响应但页面已终态 account_id=%s bundle_id=%s "
+                "state=%s updated_rows=%d",
+                aid, bid, detected_state, updated,
+            )
+            report("done", f"该请求已在其他设备完成（{detected_state}）")
+            return {
+                "action": "updated" if updated else "noop",
+                "account_id": int(aid),
+                "bundle_id": bid,
+                "state": detected_state,
+                "detected_text": detected_text,
+            }
         raise RuntimeError(
             f"未截获 /v1/bundlePurchases/{bid} 响应或响应体异常"
         )
 
     report("apply_sync", "正在解析并写入本地数据库…")
     stats = apply_bundle_purchase_sync(
-        int(aid), bid, body, notification_id=notification_id
+        int(aid),
+        bid,
+        body,
+        notification_id=notification_id,
+        state_override=detected_state,
     )
+    if detected_state:
+        stats["state"] = detected_state
+        stats["detected_text"] = detected_text
     log.info(
-        "[bundle_purchase] 同步完成 account_id=%s bundle_id=%s action=%s",
+        "[bundle_purchase] 同步完成 account_id=%s bundle_id=%s action=%s state=%s",
         aid,
         bid,
         stats.get("action"),
+        detected_state or (body.get("state") if isinstance(body, dict) else None),
     )
     report("done", f"已同步合并购买请求（{stats.get('action')}）")
     return stats

@@ -156,13 +156,13 @@
           :disabled="accepting || isDecided"
           @click="onReject"
         >
-          {{ t('common.cancel') }}
+          {{ t('dialogs.bundlePurchase.rejectRequest') }}
         </el-button>
         <el-button
           v-if="bundle"
           type="success"
           :loading="accepting"
-          :disabled="rejecting || isDecided"
+          :disabled="rejecting || isDecided || !formComplete"
           @click="onAccept"
         >
           {{ t('dialogs.bundlePurchase.acceptRequest') }}
@@ -236,6 +236,17 @@ const form = ref({
   shipping_method: '',
   shipping_from: '',
   shipping_days: '',
+})
+
+// 出品表单 4 项必填全部填写后才允许「同意报价」
+const formComplete = computed(() => {
+  const f = form.value
+  return Boolean(
+    String(f.shipping_payer || '').trim() &&
+    String(f.shipping_method || '').trim() &&
+    String(f.shipping_from || '').trim() &&
+    String(f.shipping_days || '').trim(),
+  )
 })
 
 const rules = {

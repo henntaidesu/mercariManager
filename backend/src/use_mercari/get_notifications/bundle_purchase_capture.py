@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from functools import partial
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from ...ssl_mitm_proxy.capture_config import read_bundle_purchase_response
 from ...web_drive.core.manager import EdgeWebDriveManager
@@ -63,3 +63,52 @@ async def capture_bundle_purchase_via_mitm_session(
         len(body.get("items") or []),
     )
     return body
+
+
+# ───────── 页面终态文案检测（其他设备可能已完成确认） ─────────
+# 页面上一旦出现这些文案即视为已承諾。
+ALREADY_ACCEPTED_TEXTS = ("依頼を承諾済みです", "承諾済み")
+# 已拒绝 / 已过期的类似提示。
+ALREADY_REJECTED_TEXTS = ("依頼を断りました", "依頼を断りました。", "断り済み")
+ALREADY_EXPIRED_TEXTS = ("依頼の有効期限が切れました", "有効期限が切れ")
+
+# goto 之后留给 React 渲染的稳定期（再做文案检测）
+PAGE_SETTLE_SEC = 0.8
+
+
+async def any_text_present(page: Any, candidates: Sequence[str]) -> Optional[str]:
+    """返回命中的首个文案；一个都没出现返回 None。"""
+    for text in candidates:
+        t = (text or "").strip()
+        if not t:
+            continue
+        try:
+            n = await page.get_by_text(t, exact=False).count()
+            if n and n > 0:
+                return t
+        except Exception:
+            continue
+    return None
+
+
+async def detect_decided_state_on_page(
+    page: Any,
+) -> Tuple[Optional[str], Optional[str]]:
+    """检测页面是否已显示「已承諾 / 已拒绝 / 已过期」文案。
+
+    用于「其他设备已完成确认」的场景：即便接口返回的 state 仍是
+    PENDING/APPROVED，只要页面出现终态文案就以页面为准。
+
+    返回 ``(state, matched_text)``，``state`` ∈ {ACCEPTED, REJECTED, EXPIRED}；
+    一个都没命中返回 ``(None, None)``。
+    """
+    hit = await any_text_present(page, ALREADY_ACCEPTED_TEXTS)
+    if hit:
+        return "ACCEPTED", hit
+    hit = await any_text_present(page, ALREADY_REJECTED_TEXTS)
+    if hit:
+        return "REJECTED", hit
+    hit = await any_text_present(page, ALREADY_EXPIRED_TEXTS)
+    if hit:
+        return "EXPIRED", hit
+    return None, None
