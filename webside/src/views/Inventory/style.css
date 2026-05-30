@@ -104,12 +104,7 @@
   width: 100%;
 }
 .product-qty-input {
-  width: 30px;
-}
-.product-qty-input :deep(.el-input__wrapper) {
-  padding-left: 1px;
-  padding-right: 1px;
-  justify-content: center;
+  width: 100%;
 }
 .product-qty-input :deep(input) {
   text-align: center;
@@ -117,6 +112,17 @@
 .product-edit-mgmt-cipher-input :deep(.el-input__inner) {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
   letter-spacing: 0.04em;
+}
+/* 编辑商品弹窗：两栏表单统一行距与标签对齐（中线整齐） */
+.product-edit-form :deep(.el-form-item) {
+  margin-bottom: 16px;
+}
+.product-edit-form :deep(.el-row) {
+  width: 100%;
+}
+.product-edit-form :deep(.el-form-item__label) {
+  font-size: 13px;
+  color: var(--el-text-color-regular, #c0c4cc);
 }
 /* 编辑商品弹窗：左侧表单，右侧商品图片区（组合商品再追加组成明细 aside） */
 .product-edit-dialog-layout {

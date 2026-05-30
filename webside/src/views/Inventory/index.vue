@@ -349,71 +349,84 @@
       class="product-dialog"
       destroy-on-close
     >
-      <el-form :model="form" :rules="rules" ref="formRef">
+      <el-form
+        :model="form"
+        :rules="rules"
+        ref="formRef"
+        label-width="92px"
+        label-position="right"
+        class="product-edit-form"
+      >
       <div
         class="product-edit-dialog-layout product-edit-dialog-layout--with-aside"
         :class="{ 'product-edit-dialog-layout--combined': showCombinedEditDetail }"
       >
         <div class="product-edit-dialog-layout__form">
-        <!-- 条形码行 -->
-        <el-form-item :label="t('inventory.barcode')" prop="barcode">
-          <el-input
-            v-model="form.barcode"
-            :placeholder="t('inventory.barcodeRequired')"
-            class="listing-field-fullwidth"
-            size="large"
-            clearable
-            :disabled="Boolean(form.id)"
-          >
-            <template #append>
-              <el-button @click="openScanDialog">
-                <el-icon><Camera /></el-icon> {{ barcodePickButtonLabel }}
-              </el-button>
-            </template>
-          </el-input>
-        </el-form-item>
-        <el-form-item v-if="form.id && editFormMgmtIdCipher" :label="t('inventory.mgmtCipher')">
-          <el-input
-            :model-value="editFormMgmtIdCipher"
-            class="listing-field-fullwidth product-edit-mgmt-cipher-input"
-            size="large"
-            readonly
-            disabled
-            :title="t('inventory.mgmtCipherTitle')"
-          />
-        </el-form-item>
-        <el-form-item :label="t('inventory.productNameCol')">
-          <el-input v-model="form.name" class="listing-field-fullwidth" type="text" clearable />
-        </el-form-item>
-        <el-form-item :label="t('inventory.gameCategory')" prop="category_id">
-          <div class="product-field-inline">
-            <template v-if="!categoryCreateMode">
-              <el-select
-                v-model="form.category_id"
-                clearable
-                :filterable="!isIOS"
-                :placeholder="t('inventory.pleaseSelectCategory')"
-                class="product-field-inline__main"
-              >
-                <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
-              </el-select>
-              <el-button type="primary" plain @click="startCreateCategory">{{ t('inventory.newCategory') }}</el-button>
-            </template>
-            <template v-else>
+        <!-- ===== 基础信息 ===== -->
+        <el-row :gutter="16">
+          <el-col :span="24">
+            <el-form-item :label="t('inventory.barcode')" prop="barcode">
               <el-input
-                v-model="newCategoryName"
-                :placeholder="t('inventory.inputNewCategoryName')"
+                v-model="form.barcode"
+                :placeholder="t('inventory.barcodeRequired')"
+                class="listing-field-fullwidth"
                 clearable
-                class="product-field-inline__main"
-                @keyup.enter="confirmCreateCategory"
+                :disabled="Boolean(form.id)"
+              >
+                <template #append>
+                  <el-button @click="openScanDialog">
+                    <el-icon><Camera /></el-icon> {{ barcodePickButtonLabel }}
+                  </el-button>
+                </template>
+              </el-input>
+            </el-form-item>
+          </el-col>
+          <el-col v-if="form.id && editFormMgmtIdCipher" :span="24">
+            <el-form-item :label="t('inventory.mgmtCipher')">
+              <el-input
+                :model-value="editFormMgmtIdCipher"
+                class="listing-field-fullwidth product-edit-mgmt-cipher-input"
+                readonly
+                disabled
+                :title="t('inventory.mgmtCipherTitle')"
               />
-              <el-button type="primary" @click="confirmCreateCategory">{{ t('common.confirm') }}</el-button>
-              <el-button @click="cancelCreateCategory">{{ t('common.cancel') }}</el-button>
-            </template>
-          </div>
-        </el-form-item>
-        <el-row :gutter="12">
-          <el-col :xs="24" :sm="16">
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item :label="t('inventory.productNameCol')">
+              <el-input v-model="form.name" class="listing-field-fullwidth" type="text" clearable />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item :label="t('inventory.gameCategory')" prop="category_id">
+              <div class="product-field-inline">
+                <template v-if="!categoryCreateMode">
+                  <el-select
+                    v-model="form.category_id"
+                    clearable
+                    :filterable="!isIOS"
+                    :placeholder="t('inventory.pleaseSelectCategory')"
+                    class="product-field-inline__main"
+                  >
+                    <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
+                  </el-select>
+                  <el-button type="primary" plain @click="startCreateCategory">{{ t('inventory.newCategory') }}</el-button>
+                </template>
+                <template v-else>
+                  <el-input
+                    v-model="newCategoryName"
+                    :placeholder="t('inventory.inputNewCategoryName')"
+                    clearable
+                    class="product-field-inline__main"
+                    @keyup.enter="confirmCreateCategory"
+                  />
+                  <el-button type="primary" @click="confirmCreateCategory">{{ t('common.confirm') }}</el-button>
+                  <el-button @click="cancelCreateCategory">{{ t('common.cancel') }}</el-button>
+                </template>
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :sm="12">
             <el-form-item :label="t('inventory.productType')" prop="product_type_id">
               <el-cascader
                 v-model="productTypeCascaderPath"
@@ -423,14 +436,13 @@
                 clearable
                 filterable
                 :placeholder="t('inventory.pleaseSelectProductType')"
-                class="product-field-inline__main"
                 style="width: 100%"
                 popper-class="product-type-cascader-popper"
                 @change="handleProductTypeCascaderChange"
               />
             </el-form-item>
           </el-col>
-          <el-col :xs="24" :sm="8">
+          <el-col :xs="24" :sm="12">
             <el-form-item :label="t('inventory.unitPrice')" prop="price">
               <el-input
                 v-model="priceEdit"
@@ -441,8 +453,6 @@
               />
             </el-form-item>
           </el-col>
-        </el-row>
-        <el-row :gutter="12">
           <el-col :xs="24" :sm="12">
             <el-form-item :label="t('inventory.productOwner')" prop="owner_user_id">
               <el-select
@@ -450,7 +460,6 @@
                 clearable
                 :filterable="!isIOS"
                 :placeholder="t('inventory.pleaseSelectOwner')"
-                class="product-field-inline__main"
                 style="width: 100%"
               >
                 <el-option v-for="u in ownerUsers" :key="u.id" :label="u.display_name || u.username" :value="u.id" />
@@ -459,25 +468,20 @@
           </el-col>
           <el-col :xs="24" :sm="12">
             <el-form-item :label="t('inventory.belongingShelf')" prop="warehouse_id">
-              <div class="product-field-inline">
-                <el-cascader
-                  v-model="warehouseCascaderPath"
-                  :options="warehouseCascaderOptions"
-                  :props="warehouseCascaderProps"
-                  :show-all-levels="false"
-                  clearable
-                  :filterable="!isIOS"
-                  :placeholder="t('inventory.warehouseShelfArrowPlaceholder')"
-                  class="product-field-inline__main"
-                  style="width: 100%"
-                  popper-class="product-type-cascader-popper"
-                  @change="handleWarehouseCascaderChange"
-                />
-              </div>
+              <el-cascader
+                v-model="warehouseCascaderPath"
+                :options="warehouseCascaderOptions"
+                :props="warehouseCascaderProps"
+                :show-all-levels="false"
+                clearable
+                :filterable="!isIOS"
+                :placeholder="t('inventory.warehouseShelfArrowPlaceholder')"
+                style="width: 100%"
+                popper-class="product-type-cascader-popper"
+                @change="handleWarehouseCascaderChange"
+              />
             </el-form-item>
           </el-col>
-        </el-row>
-        <el-row :gutter="12">
           <el-col :xs="24" :sm="12">
             <el-form-item :label="t('inventory.stockQuantity')" prop="quantity">
               <el-input
@@ -496,51 +500,60 @@
                 :min="0"
                 :max="999999"
                 :step="1"
-                controls-position="right"
+                :controls="false"
                 style="width: 100%"
                 disabled
               />
             </el-form-item>
           </el-col>
         </el-row>
-        <el-form-item :label="t('inventory.listingTitle')">
-          <el-input v-model="form.listing_title" class="listing-field-fullwidth" type="text" clearable />
-        </el-form-item>
-        <el-form-item :label="t('inventory.productDescription')">
-          <el-input
-            v-model="form.listing_body"
-            class="listing-field-fullwidth"
-            type="textarea"
-            :rows="5"
-            clearable
-          />
-        </el-form-item>
         <template v-if="form.id">
-          <el-form-item :label="t('inventory.mercariItemId')">
-            <div class="mercari-id-editor">
-              <div
-                v-for="(mid, idx) in mercariIdList.filter((v) => String(v || '').trim() !== '')"
-                :key="idx"
-                class="mercari-id-row"
-              >
-                <el-input
-                  :model-value="mid"
-                  size="small"
-                  class="mercari-id-input"
-                  readonly
-                  disabled
-                />
-              </div>
-            </div>
-          </el-form-item>
-          <el-form-item :label="t('inventory.autoListing')">
-            <el-switch v-model="form.auto_listing_enabled" :active-value="1" :inactive-value="0" />
-          </el-form-item>
+          <el-row :gutter="16">
+            <el-col :span="24">
+              <el-form-item :label="t('inventory.mercariItemId')">
+                <div class="mercari-id-editor">
+                  <div
+                    v-for="(mid, idx) in mercariIdList.filter((v) => String(v || '').trim() !== '')"
+                    :key="idx"
+                    class="mercari-id-row"
+                  >
+                    <el-input
+                      :model-value="mid"
+                      size="small"
+                      class="mercari-id-input"
+                      readonly
+                      disabled
+                    />
+                  </div>
+                </div>
+              </el-form-item>
+            </el-col>
+          </el-row>
           <!-- ===== 出品信息（融合自出品表单） ===== -->
           <el-divider content-position="left" class="product-listing-divider">
             {{ t('inventory.listingSectionTitle') }}
           </el-divider>
-          <el-row :gutter="12">
+          <el-row :gutter="16">
+            <el-col :span="24">
+              <el-form-item :label="t('inventory.listingTitle')">
+                <el-input v-model="form.listing_title" class="listing-field-fullwidth" type="text" clearable />
+              </el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item :label="t('inventory.productDescription')">
+                <el-input
+                  v-model="form.listing_body"
+                  class="listing-field-fullwidth"
+                  type="textarea"
+                  :rows="5"
+                  :maxlength="900"
+                  show-word-limit
+                  clearable
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16">
             <el-col :xs="24" :sm="12">
               <el-form-item :label="t('dialogs.singleListing.productStatus')">
                 <el-select
@@ -573,7 +586,7 @@
               </el-form-item>
             </el-col>
           </el-row>
-          <el-row :gutter="12">
+          <el-row :gutter="16">
             <el-col :xs="24" :sm="12">
               <el-form-item :label="t('dialogs.singleListing.shippingPayer')">
                 <el-select v-model="form.shipping_payer" :placeholder="t('dialogs.singleListing.shippingPayerPlaceholder')" style="width: 100%" @change="persistListingField('shipping_payer')">
@@ -589,7 +602,7 @@
               </el-form-item>
             </el-col>
           </el-row>
-          <el-row :gutter="12">
+          <el-row :gutter="16">
             <el-col :xs="24" :sm="12">
               <el-form-item :label="t('dialogs.singleListing.shippingFrom')">
                 <el-cascader
@@ -613,7 +626,7 @@
               </el-form-item>
             </el-col>
           </el-row>
-          <el-row :gutter="12">
+          <el-row :gutter="16">
             <el-col :xs="24" :sm="12">
               <el-form-item :label="t('dialogs.singleListing.saleType')">
                 <el-select
@@ -626,7 +639,14 @@
                 </el-select>
               </el-form-item>
             </el-col>
-            <el-col v-if="form.sale_type === 'auction'" :xs="24" :sm="12">
+            <el-col :xs="24" :sm="12">
+              <el-form-item :label="t('inventory.autoListing')">
+                <el-switch v-model="form.auto_listing_enabled" :active-value="1" :inactive-value="0" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row v-if="form.sale_type === 'auction'" :gutter="16">
+            <el-col :xs="24" :sm="12">
               <el-form-item :label="t('dialogs.singleListing.auctionDuration')">
                 <el-select v-model="form.auction_duration" :placeholder="t('dialogs.singleListing.auctionDurationPlaceholder')" style="width: 100%" @change="persistListingField('auction_duration')">
                   <el-option :label="t('dialogs.singleListing.auctionDurationNormal')" value="normal" />
