@@ -254,16 +254,27 @@ async def _relist_single_inventory(inventory_id: int, account_id: int) -> None:
     description = _build_relist_description(body_raw, inventory_id)
     price = int(getattr(inv, "price", 0) or 0)
 
-    # 系统出品默认值兜底（库存不存配送/状态/售卖类型）
+    # 出品设置：优先商品自身保存值，缺省回落系统出品默认值
     from ..use_web.system.units.app_config_handler import _read_listing_defaults
 
     ld = _read_listing_defaults()
-    status = (ld.get("condition") or "new_unused").strip() or "new_unused"
-    sale_type = (ld.get("sale_type") or "instant_buy").strip() or "instant_buy"
-    shipping_payer = (ld.get("shipping_payer") or "seller").strip() or "seller"
-    shipping_method = (ld.get("shipping_method") or "undecided").strip() or "undecided"
-    shipping_days = (ld.get("shipping_days") or "2_3_days").strip() or "2_3_days"
-    shipping_from_area_id = str(ld.get("shipping_from_area_id") or "").strip()
+
+    def _pick(item_val, cfg_val, fallback):
+        s = str(item_val if item_val is not None else "").strip()
+        if s:
+            return s
+        s2 = str(cfg_val if cfg_val is not None else "").strip()
+        return s2 or fallback
+
+    status = _pick(getattr(inv, "listing_status", None), ld.get("condition"), "new_unused")
+    sale_type = _pick(getattr(inv, "sale_type", None), ld.get("sale_type"), "instant_buy")
+    shipping_payer = _pick(getattr(inv, "shipping_payer", None), ld.get("shipping_payer"), "seller")
+    shipping_method = _pick(getattr(inv, "shipping_method", None), ld.get("shipping_method"), "undecided")
+    shipping_days = _pick(getattr(inv, "shipping_days", None), ld.get("shipping_days"), "2_3_days")
+    shipping_from_area_id = _pick(
+        getattr(inv, "shipping_from_area_id", None), ld.get("shipping_from_area_id"), ""
+    )
+    auction_duration = str(getattr(inv, "auction_duration", None) or "normal").strip() or "normal"
     if not shipping_from_area_id:
         log.warning(
             "[auto_relist] 商品 %s：系统出品默认未配置发货地，出品可能失败（仍尝试）",
@@ -287,7 +298,7 @@ async def _relist_single_inventory(inventory_id: int, account_id: int) -> None:
         shipping_payer=shipping_payer,
         shipping_method=shipping_method,
         sale_type=sale_type,
-        auction_duration="normal",
+        auction_duration=auction_duration,
         price=price,
         shipping_days=shipping_days,
         shipping_from_area_id=shipping_from_area_id,

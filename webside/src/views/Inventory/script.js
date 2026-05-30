@@ -13,15 +13,20 @@ import {
   productTypeCategoryMappingApi,
   onSaleItemApi,
   listingApi,
-  configApi
+  configApi,
+  mercariAccountApi
 } from '@/api/index.js'
-import SingleListingFormDialog from '@/components/SingleListingFormDialog.vue'
-import { encodeMgmtId } from '@/utils/mgmtIdCipher.js'
+import { encodeMgmtId, encodeMgmtIds, stripTrailingMgmtBlock } from '@/utils/mgmtIdCipher.js'
 import { warehouseShelfLeafLabel } from '@/utils/warehouseLabel.js'
+import {
+  MERCARI_AREAS,
+  JP_REGION_OPTIONS,
+  getRegionIdForAreaId,
+  normalizeShippingFromSeed
+} from '@/constants/mercariJapanAreas.js'
 
 export default defineComponent({
   components: {
-    SingleListingFormDialog,
     Loading,
     WarningFilled,
   },
@@ -144,9 +149,7 @@ export default defineComponent({
       return t('inventory.takeImageN', { n: idx + 1, primary: idx === 0 ? t('inventory.primaryImageInParen') : '' })
     })
     let productImgStream = null
-    const listingDialogVisible = ref(false)
-    const listingSeedData = ref(null)
-    /** 系统页「出品默认值」，打开出品弹窗时与 seed 合并（与 SingleListingFormDialog 字段一致） */
+    /** 系统页「出品默认值」，打开编辑弹窗时填充出品字段（与出品自动化字段一致） */
     const listingDefaultsFromServer = ref({
       shipping_from_area_id: null,
       shipping_method: null,
@@ -154,6 +157,214 @@ export default defineComponent({
       shipping_days: null,
       mercari_account_id: null
     })
+
+    // ============ 出品表单（已融合进编辑弹窗） ============
+    const SHIPPING_FROM_AREA_PREFIX = 'AREA:'
+    const SHIPPING_FROM_REGION_PREFIX = 'REGION:'
+    /** 出品时是否正在派发自动化（用于按钮 loading） */
+    const listingSubmitting = ref(false)
+    /** 出品账号下拉 */
+    const mercariAccountOptions = ref([])
+    const mercariAccountsLoading = ref(false)
+    const shippingFromCascaderPath = ref([])
+
+    const listingStatusOptions = computed(() => [
+      { label: t('dialogs.singleListing.statusNewUnused'), value: 'new_unused' },
+      { label: t('dialogs.singleListing.statusAlmostUnused'), value: 'almost_unused' },
+      { label: t('dialogs.singleListing.statusGood'), value: 'good' },
+      { label: t('dialogs.singleListing.statusFair'), value: 'fair' },
+      { label: t('dialogs.singleListing.statusUsed'), value: 'used' }
+    ])
+    const shippingPayerOptions = computed(() => [
+      { label: t('dialogs.singleListing.shippingPayerSeller'), value: 'seller' },
+      { label: t('dialogs.singleListing.shippingPayerBuyer'), value: 'buyer' }
+    ])
+    const shippingMethodOptions = computed(() => [
+      { label: t('dialogs.singleListing.shippingMethodUndecided'), value: 'undecided' },
+      { label: t('dialogs.singleListing.shippingMethodRakuraku'), value: 'rakuraku' },
+      { label: t('dialogs.singleListing.shippingMethodYuuyu'), value: 'yuuyu' },
+      { label: t('dialogs.singleListing.shippingMethodRegularMail'), value: 'regular_mail' }
+    ])
+    const shippingDaysOptions = computed(() => [
+      { label: t('dialogs.singleListing.shippingDays1_2'), value: '1_2_days' },
+      { label: t('dialogs.singleListing.shippingDays2_3'), value: '2_3_days' },
+      { label: t('dialogs.singleListing.shippingDays4_7'), value: '4_7_days' }
+    ])
+    const saleTypeOptions = computed(() => [
+      { label: t('dialogs.singleListing.saleTypeInstantBuy'), value: 'instant_buy' },
+      { label: t('dialogs.singleListing.saleTypeAuction'), value: 'auction' }
+    ])
+
+    const shippingFromCascaderProps = {
+      value: 'value',
+      label: 'label',
+      children: 'children',
+      emitPath: true,
+      checkStrictly: false,
+    }
+
+    /** 发货地两级级联：一级=日本地域，二级=都道府県（叶子值=AREA:<id>） */
+    const shippingFromCascaderOptions = computed(() =>
+      JP_REGION_OPTIONS.map((r) => ({
+        value: `${SHIPPING_FROM_REGION_PREFIX}${r.id}`,
+        label: r.label,
+        children: r.areaIds
+          .map((aid) => {
+            const a = MERCARI_AREAS.find((x) => x.id === aid)
+            return a ? { value: `${SHIPPING_FROM_AREA_PREFIX}${a.id}`, label: a.name } : null
+          })
+          .filter(Boolean)
+      }))
+    )
+
+    function buildShippingFromPath(areaId) {
+      if (!areaId) return []
+      const regionId = getRegionIdForAreaId(areaId)
+      if (!regionId) return []
+      return [`${SHIPPING_FROM_REGION_PREFIX}${regionId}`, `${SHIPPING_FROM_AREA_PREFIX}${areaId}`]
+    }
+
+    function syncShippingFromPathFromForm() {
+      shippingFromCascaderPath.value = buildShippingFromPath(form.value.shipping_from)
+    }
+
+    function handleShippingFromChange(path) {
+      const picked = Array.isArray(path) ? path[path.length - 1] : null
+      if (!picked || !String(picked).startsWith(SHIPPING_FROM_AREA_PREFIX)) {
+        form.value.shipping_from = ''
+      } else {
+        form.value.shipping_from = String(picked).slice(SHIPPING_FROM_AREA_PREFIX.length)
+      }
+      persistListingField('shipping_from')
+    }
+
+    function onListingSaleTypeChange() {
+      if (form.value.sale_type !== 'auction') {
+        form.value.auction_duration = 'normal'
+        persistListingField('sale_type', 'auction_duration')
+      } else {
+        persistListingField('sale_type')
+      }
+    }
+
+    function mercariAccountOptionLabel(a) {
+      const name = (a?.account_name || '').trim() || `ID ${a?.id}`
+      const sid = String(a?.seller_id || '').trim()
+      const tail = sid ? ` · ${t('dialogs.singleListing.sellerLabel')} ${sid}` : ''
+      const inactive = a?.status === 'disabled' ? t('dialogs.singleListing.inactiveSuffix') : ''
+      return `${name}${tail}${inactive}`
+    }
+
+    async function fetchMercariAccounts() {
+      mercariAccountsLoading.value = true
+      try {
+        const res = await mercariAccountApi.list({ page: 1, page_size: 500 })
+        mercariAccountOptions.value = Array.isArray(res?.items) ? res.items : []
+      } catch {
+        mercariAccountOptions.value = []
+      } finally {
+        mercariAccountsLoading.value = false
+      }
+    }
+
+    /**
+     * 仅为「缺省」的出品字段回落系统出品默认值。
+     * 商品已保存的出品设置（openDialog 已从行写入）优先，不被覆盖。
+     */
+    function applyListingDefaultsToForm() {
+      const cfg = listingDefaultsFromServer.value || {}
+      const pick = (cur, cfgVal, fallback) => {
+        if (cur != null && String(cur).trim()) return String(cur).trim()
+        if (cfgVal != null && String(cfgVal).trim()) return String(cfgVal).trim()
+        return fallback
+      }
+      form.value.listing_status = form.value.listing_status || 'new_unused'
+      form.value.shipping_payer = pick(form.value.shipping_payer, cfg.shipping_payer, 'seller')
+      form.value.shipping_method = pick(form.value.shipping_method, cfg.shipping_method, 'undecided')
+      form.value.shipping_days = pick(form.value.shipping_days, cfg.shipping_days, '2_3_days')
+      form.value.sale_type = form.value.sale_type || 'instant_buy'
+      form.value.auction_duration = form.value.auction_duration || 'normal'
+      form.value.shipping_from =
+        normalizeShippingFromSeed(form.value.shipping_from) ||
+        normalizeShippingFromSeed(cfg.shipping_from_area_id) ||
+        ''
+      const cfgMid = cfg.mercari_account_id != null ? Number(cfg.mercari_account_id) : null
+      if (form.value.mercari_account_id == null && Number.isFinite(cfgMid) && cfgMid > 0) {
+        form.value.mercari_account_id = cfgMid
+      }
+      syncShippingFromPathFromForm()
+    }
+
+    // 出品字段（表单名）→ 库存列名
+    const LISTING_FIELD_DB_COL = {
+      listing_status: 'listing_status',
+      mercari_account_id: 'listing_account_id',
+      shipping_payer: 'shipping_payer',
+      shipping_method: 'shipping_method',
+      shipping_from: 'shipping_from_area_id',
+      shipping_days: 'shipping_days',
+      sale_type: 'sale_type',
+      auction_duration: 'auction_duration'
+    }
+    // 出品字段（表单名）→ 系统出品默认值键（put_listing_defaults）；无对应者不写默认
+    const LISTING_FIELD_DEFAULT_KEY = {
+      listing_status: 'condition',
+      mercari_account_id: 'mercari_account_id',
+      shipping_payer: 'shipping_payer',
+      shipping_method: 'shipping_method',
+      shipping_from: 'shipping_from_area_id',
+      shipping_days: 'shipping_days',
+      sale_type: 'sale_type'
+    }
+    // listingDefaultsFromServer 本地仅跟踪这些键
+    const LISTING_DEFAULT_LOCAL_KEYS = new Set([
+      'shipping_from_area_id', 'shipping_method', 'shipping_payer', 'shipping_days', 'mercari_account_id'
+    ])
+
+    function listingFieldDbValue(field) {
+      const v = form.value[field]
+      if (field === 'mercari_account_id') return v != null ? Number(v) : null
+      if (field === 'shipping_from') return String(v || '').trim() || null
+      return v != null && String(v).trim() ? String(v) : null
+    }
+
+    /**
+     * 出品字段改动即时保存：①写回当前库存条目（无需点保存）②同步保存为系统出品默认值。
+     * 多字段联动（如 sale_type 重置 auction_duration）可传入多个 field 一并保存。
+     */
+    async function persistListingField(...fields) {
+      const id = Number(form.value.id)
+      const hasItem = Number.isFinite(id) && id > 0
+      const validFields = fields.filter((f) => LISTING_FIELD_DB_COL[f])
+      if (!validFields.length) return
+
+      // 1. 写回当前库存条目（合并为一次更新）
+      if (hasItem) {
+        const patch = {}
+        for (const f of validFields) patch[LISTING_FIELD_DB_COL[f]] = listingFieldDbValue(f)
+        try {
+          await inventoryApi.update(id, patch)
+        } catch {
+          return // 错误由拦截器提示
+        }
+      }
+
+      // 2. 同步保存为系统出品默认值（逐字段，按 put_listing_defaults 入参）
+      for (const f of validFields) {
+        const defKey = LISTING_FIELD_DEFAULT_KEY[f]
+        if (!defKey) continue
+        const val = listingFieldDbValue(f)
+        try {
+          await configApi.putListingDefaults({ [defKey]: val })
+          if (LISTING_DEFAULT_LOCAL_KEYS.has(defKey)) {
+            listingDefaultsFromServer.value = { ...listingDefaultsFromServer.value, [defKey]: val }
+          }
+        } catch {
+          /* 默认值保存失败不阻断；拦截器已提示 */
+        }
+      }
+      ElMessage.success(t('inventory.listingSettingSaved'))
+    }
     /** 组合商品创建弹窗 */
     const combinedProductDialogVisible = ref(false)
     const combinedProductSubmitting = ref(false)
@@ -609,6 +820,15 @@ export default defineComponent({
       images: [],
       image_front: null,
       image_back: null,
+      /** 出品字段（融合自出品表单；提交库存前会从 payload 剔除） */
+      listing_status: 'new_unused',
+      mercari_account_id: null,
+      shipping_payer: 'seller',
+      shipping_method: 'undecided',
+      shipping_from: '',
+      shipping_days: '2_3_days',
+      sale_type: 'instant_buy',
+      auction_duration: 'normal',
       /** 仅展示：组合商品标记（提交前会从 payload 剔除） */
       is_combined: 0,
       combined_items: null
@@ -2012,10 +2232,18 @@ export default defineComponent({
             auto_listing_enabled: Number(row.auto_listing_enabled || 0) === 1 ? 1 : 0,
             description: row.description || null,
             listing_title: row.listing_title ?? '',
-            listing_body: row.listing_body ?? '',
+            listing_body: stripTrailingMgmtBlock(row.listing_body ?? ''),
             images: inventoryRowImages(row),
             image_front: row.image_front || row.image || null,
             image_back: row.image_back || null,
+            listing_status: row.listing_status || 'new_unused',
+            mercari_account_id: row.listing_account_id != null ? Number(row.listing_account_id) : null,
+            shipping_payer: row.shipping_payer || 'seller',
+            shipping_method: row.shipping_method || 'undecided',
+            shipping_from: row.shipping_from_area_id || '',
+            shipping_days: row.shipping_days || '2_3_days',
+            sale_type: row.sale_type || 'instant_buy',
+            auction_duration: row.auction_duration || 'normal',
             is_combined: Number(row.is_combined || 0),
             combined_items: row.combined_items ?? null
           }
@@ -2039,6 +2267,14 @@ export default defineComponent({
             images: [],
             image_front: null,
             image_back: null,
+            listing_status: 'new_unused',
+            mercari_account_id: null,
+            shipping_payer: 'seller',
+            shipping_method: 'undecided',
+            shipping_from: '',
+            shipping_days: '2_3_days',
+            sale_type: 'instant_buy',
+            auction_duration: 'normal',
             is_combined: 0,
             combined_items: null
           }
@@ -2048,6 +2284,8 @@ export default defineComponent({
       syncMercariIdListFromForm()
       syncCascaderPathByProductTypeId(form.value.product_type_id)
       syncWarehouseCascaderPathByWarehouseId(form.value.warehouse_id)
+      applyListingDefaultsToForm()
+      if (mercariAccountOptions.value.length === 0) fetchMercariAccounts()
       dialogVisible.value = true
       if (row && Number(row.is_combined || 0) === 1) {
         loadCombinedEditDetailForRow(row)
@@ -2302,7 +2540,7 @@ export default defineComponent({
         .join('；')
     }
 
-    /** 出品表单保存：写回所选库存的出品标题、listing_body、price（与编辑商品一致） */
+    /** 出品保存：写回所选库存的出品标题、listing_body、price 与出品设置（供自动出品复用） */
     async function onListingFormSaved(data) {
       const ids = (data.inventory_ids || []).map((id) => Number(id)).filter((x) => Number.isFinite(x))
       if (!ids.length) return
@@ -2311,10 +2549,21 @@ export default defineComponent({
       const price = Math.round(Number(data.price ?? 0))
       const safePrice = Number.isFinite(price) && price >= 0 ? price : 0
 
-      // ── 1. 写回库存 出品标题、listing_body 与 price ───────────────────────── //
+      // 出品设置补丁：仅写入 data 中已提供的字段（与库存列名对应）
+      const settingPatch = {}
+      if (data.status != null) settingPatch.listing_status = String(data.status)
+      if (data.mercari_account_id != null) settingPatch.listing_account_id = Number(data.mercari_account_id)
+      if (data.shipping_payer != null) settingPatch.shipping_payer = String(data.shipping_payer)
+      if (data.shipping_method != null) settingPatch.shipping_method = String(data.shipping_method)
+      if (data.shipping_from != null) settingPatch.shipping_from_area_id = String(data.shipping_from)
+      if (data.shipping_days != null) settingPatch.shipping_days = String(data.shipping_days)
+      if (data.sale_type != null) settingPatch.sale_type = String(data.sale_type)
+      if (data.auction_duration != null) settingPatch.auction_duration = String(data.auction_duration)
+
+      // ── 1. 写回库存 出品标题、listing_body、price 与出品设置 ───────────────── //
       try {
         for (const id of ids) {
-          await inventoryApi.update(id, { listing_title, listing_body, price: safePrice })
+          await inventoryApi.update(id, { listing_title, listing_body, price: safePrice, ...settingPatch })
         }
       } catch {
         // 错误提示由拦截器处理
@@ -2480,20 +2729,85 @@ export default defineComponent({
       await load({ resetPage: false })
     }
 
-    /** 「出品」：当前行直接打开出品表单（单条库存） */
-    function openListingFormForRow(row) {
-      if (!row || row.id == null) return
-      if (Number(row?.quantity ?? 0) <= 0) {
+    /** 编辑弹窗内「出品」：用当前表单字段派发出品自动化（单条库存） */
+    async function submitListingFromEditForm() {
+      const id = Number(form.value?.id)
+      if (!Number.isFinite(id) || id <= 0) return
+      applyPriceEditToForm()
+
+      // ── 与列表「出品」一致的前置校验（库存>0、未标红） ── //
+      const row = list.value.find((r) => Number(r.id) === id)
+      if (Number(form.value.quantity ?? row?.quantity ?? 0) <= 0) {
         ElMessage.warning(t('inventory.cannotListZeroStock'))
         return
       }
-      if (isInventoryAlertRow(row)) {
+      if (row && isInventoryAlertRow(row)) {
         const reasons = inventoryAlertReasons(row).join('；')
         ElMessage.warning(t('inventory.cannotListAlertRow', { reasons }))
         return
       }
-      listingSeedData.value = buildListingSeedFromInventoryRows([row])
-      listingDialogVisible.value = true
+
+      // ── 出品必填字段校验 ── //
+      const images = (Array.isArray(form.value.images) ? form.value.images : [])
+        .map((u) => String(u || '').trim())
+        .filter(Boolean)
+      const listingTitle = String(form.value.listing_title || form.value.name || '').trim()
+      const price = Math.round(Number(form.value.price ?? 0))
+      const checks = [
+        [images.length > 0, t('dialogs.singleListing.ruleImageRequired')],
+        [!!listingTitle, t('dialogs.singleListing.ruleTitleRequired')],
+        [form.value.product_type_id != null, t('dialogs.singleListing.ruleProductTypeRequired')],
+        [!!form.value.listing_status, t('dialogs.singleListing.ruleStatusRequired')],
+        [form.value.mercari_account_id != null, t('dialogs.singleListing.ruleAccountRequired')],
+        [!!form.value.shipping_payer, t('dialogs.singleListing.ruleShippingPayerRequired')],
+        [!!form.value.shipping_method, t('dialogs.singleListing.ruleShippingMethodRequired')],
+        [!!String(form.value.shipping_from || '').trim(), t('dialogs.singleListing.ruleShippingFromRequired')],
+        [!!form.value.shipping_days, t('dialogs.singleListing.ruleShippingDaysRequired')],
+        [Number.isFinite(price) && price > 0, t('dialogs.singleListing.rulePriceRequired')]
+      ]
+      const failed = checks.find(([ok]) => !ok)
+      if (failed) {
+        ElMessage.warning(failed[1])
+        return
+      }
+
+      // ── 商品说明：剥离旧暗号末行后，按所选库存重拼末行暗号 ── //
+      const ids = [id]
+      const foot = encodeMgmtIds(ids)
+      let body = stripTrailingMgmtBlock(String(form.value.listing_body || '')).trimEnd()
+      if (foot) {
+        const maxBody = Math.max(0, 1000 - foot.length - 2)
+        if (body.length > maxBody) body = body.slice(0, maxBody)
+      }
+      const fullDescription = foot ? (body ? `${body}\n\n${foot}` : foot) : body
+
+      const data = {
+        inventory_ids: ids,
+        listing_title: listingTitle,
+        description: fullDescription,
+        price,
+        category_mapping_id:
+          form.value.product_type_id != null ? String(form.value.product_type_id) : null,
+        status: form.value.listing_status,
+        mercari_account_id: form.value.mercari_account_id,
+        shipping_payer: form.value.shipping_payer,
+        shipping_method: form.value.shipping_method,
+        shipping_from: form.value.shipping_from,
+        shipping_days: form.value.shipping_days,
+        sale_type: form.value.sale_type,
+        auction_duration: form.value.auction_duration,
+        listing_image_urls: images,
+        image: images[0] || '',
+        image_back: images[1] || ''
+      }
+
+      listingSubmitting.value = true
+      dialogVisible.value = false
+      try {
+        await onListingFormSaved(data)
+      } finally {
+        listingSubmitting.value = false
+      }
     }
 
     async function exitListingPickMode() {
@@ -2885,6 +3199,12 @@ export default defineComponent({
         delete payload.is_combined
         delete payload.combined_items
         delete payload.sku
+        // 出品设置：表单字段映射为库存列名后写入数据库（供自动出品逻辑使用）
+        payload.listing_account_id =
+          payload.mercari_account_id != null ? Number(payload.mercari_account_id) : null
+        payload.shipping_from_area_id = String(payload.shipping_from || '').trim() || null
+        delete payload.mercari_account_id
+        delete payload.shipping_from
         const imgs = (Array.isArray(payload.images) ? payload.images : []).filter(
           (x) => x != null && String(x).trim()
         )
@@ -3257,7 +3577,7 @@ export default defineComponent({
       onSaleItemApi,
       listingApi,
       configApi,
-      SingleListingFormDialog,
+      mercariAccountApi,
       encodeMgmtId,
       warehouseShelfLeafLabel,
       t,
@@ -3306,9 +3626,23 @@ export default defineComponent({
       productImgCameraSelectId,
       productImgCameraTitle,
       productImgStream,
-      listingDialogVisible,
-      listingSeedData,
       listingDefaultsFromServer,
+      listingSubmitting,
+      mercariAccountOptions,
+      mercariAccountsLoading,
+      shippingFromCascaderPath,
+      listingStatusOptions,
+      shippingPayerOptions,
+      shippingMethodOptions,
+      shippingDaysOptions,
+      saleTypeOptions,
+      shippingFromCascaderProps,
+      shippingFromCascaderOptions,
+      handleShippingFromChange,
+      onListingSaleTypeChange,
+      mercariAccountOptionLabel,
+      persistListingField,
+      submitListingFromEditForm,
       combinedProductDialogVisible,
       combinedProductSubmitting,
       combinedProductRows,
@@ -3551,7 +3885,6 @@ export default defineComponent({
       onListingFormSaved,
       isListingPickSelectable,
       enterListingPickMode,
-      openListingFormForRow,
       exitListingPickMode,
       toggleListingPickRow,
       rowClassName,

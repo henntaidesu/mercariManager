@@ -319,31 +319,7 @@
         <el-table-column v-if="!listingPickMode" :label="t('common.operate')" :width="isMobile ? 140 : 160" align="center" header-align="center" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-tooltip
-                v-if="isInventoryAlertRow(row)"
-                effect="dark"
-                placement="top"
-                :show-after="100"
-                popper-class="inventory-alert-tooltip-popper"
-              >
-                <template #content>
-                  <div class="inventory-alert-tooltip-title">{{ t('inventory.cannotListAlertRowTitle') }}</div>
-                  <ul class="inventory-alert-tooltip-list">
-                    <li v-for="(reason, i) in inventoryAlertReasons(row)" :key="i">{{ reason }}</li>
-                  </ul>
-                </template>
-                <span class="row-action-disabled-wrap">
-                  <el-button size="small" type="warning" disabled>{{ t('inventory.list') }}</el-button>
-                </span>
-              </el-tooltip>
-              <el-button
-                v-else
-                size="small"
-                type="warning"
-                :disabled="Number(row.quantity ?? 0) <= 0"
-                @click.stop="openListingFormForRow(row)"
-              >{{ t('inventory.list') }}</el-button>
-              <el-button size="small" @click.stop="openDialog(row)">{{ t('common.edit') }}</el-button>
+              <el-button size="small" type="primary" @click.stop="openDialog(row)">{{ t('common.operate') }}</el-button>
             </div>
           </template>
         </el-table-column>
@@ -560,6 +536,105 @@
           <el-form-item :label="t('inventory.autoListing')">
             <el-switch v-model="form.auto_listing_enabled" :active-value="1" :inactive-value="0" />
           </el-form-item>
+          <!-- ===== 出品信息（融合自出品表单） ===== -->
+          <el-divider content-position="left" class="product-listing-divider">
+            {{ t('inventory.listingSectionTitle') }}
+          </el-divider>
+          <el-row :gutter="12">
+            <el-col :xs="24" :sm="12">
+              <el-form-item :label="t('dialogs.singleListing.productStatus')">
+                <el-select
+                  v-model="form.listing_status"
+                  :placeholder="t('dialogs.singleListing.productStatusPlaceholder')"
+                  style="width: 100%"
+                  @change="persistListingField('listing_status')"
+                >
+                  <el-option v-for="s in listingStatusOptions" :key="s.value" :label="s.label" :value="s.value" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <el-form-item :label="t('dialogs.singleListing.listingAccount')">
+                <el-select
+                  v-model="form.mercari_account_id"
+                  :placeholder="t('dialogs.singleListing.listingAccountPlaceholder')"
+                  style="width: 100%"
+                  :filterable="!isIOS"
+                  :loading="mercariAccountsLoading"
+                  @change="persistListingField('mercari_account_id')"
+                >
+                  <el-option
+                    v-for="a in mercariAccountOptions"
+                    :key="a.id"
+                    :label="mercariAccountOptionLabel(a)"
+                    :value="a.id"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="12">
+            <el-col :xs="24" :sm="12">
+              <el-form-item :label="t('dialogs.singleListing.shippingPayer')">
+                <el-select v-model="form.shipping_payer" :placeholder="t('dialogs.singleListing.shippingPayerPlaceholder')" style="width: 100%" @change="persistListingField('shipping_payer')">
+                  <el-option v-for="s in shippingPayerOptions" :key="s.value" :label="s.label" :value="s.value" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <el-form-item :label="t('dialogs.singleListing.shippingMethod')">
+                <el-select v-model="form.shipping_method" :placeholder="t('dialogs.singleListing.shippingMethodPlaceholder')" style="width: 100%" @change="persistListingField('shipping_method')">
+                  <el-option v-for="s in shippingMethodOptions" :key="s.value" :label="s.label" :value="s.value" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="12">
+            <el-col :xs="24" :sm="12">
+              <el-form-item :label="t('dialogs.singleListing.shippingFrom')">
+                <el-cascader
+                  v-model="shippingFromCascaderPath"
+                  :options="shippingFromCascaderOptions"
+                  :props="shippingFromCascaderProps"
+                  :show-all-levels="false"
+                  filterable
+                  :placeholder="t('dialogs.singleListing.shippingFromPlaceholder')"
+                  style="width: 100%"
+                  popper-class="product-type-cascader-popper"
+                  @change="handleShippingFromChange"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <el-form-item :label="t('dialogs.singleListing.shippingDays')">
+                <el-select v-model="form.shipping_days" :placeholder="t('dialogs.singleListing.shippingDaysPlaceholder')" style="width: 100%" @change="persistListingField('shipping_days')">
+                  <el-option v-for="s in shippingDaysOptions" :key="s.value" :label="s.label" :value="s.value" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="12">
+            <el-col :xs="24" :sm="12">
+              <el-form-item :label="t('dialogs.singleListing.saleType')">
+                <el-select
+                  v-model="form.sale_type"
+                  :placeholder="t('dialogs.singleListing.saleTypePlaceholder')"
+                  style="width: 100%"
+                  @change="onListingSaleTypeChange"
+                >
+                  <el-option v-for="s in saleTypeOptions" :key="s.value" :label="s.label" :value="s.value" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col v-if="form.sale_type === 'auction'" :xs="24" :sm="12">
+              <el-form-item :label="t('dialogs.singleListing.auctionDuration')">
+                <el-select v-model="form.auction_duration" :placeholder="t('dialogs.singleListing.auctionDurationPlaceholder')" style="width: 100%" @change="persistListingField('auction_duration')">
+                  <el-option :label="t('dialogs.singleListing.auctionDurationNormal')" value="normal" />
+                  <el-option :label="t('dialogs.singleListing.auctionDuration3Hours')" value="3hours" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
         </template>
         </div>
         <aside class="product-edit-dialog-layout__aside product-edit-dialog-layout__aside--images">
@@ -770,7 +845,6 @@
         <div class="product-dialog-footer">
           <div class="product-dialog-footer__left">
             <template v-if="form.id">
-              <el-button type="success" @click="openOcrForRow(form)">{{ t('inventory.ocr') }}</el-button>
               <el-button
                 v-if="Number(form.is_combined || 0) !== 1"
                 type="primary"
@@ -792,6 +866,13 @@
               :loading="submitting"
               :disabled="inventorySaveBlockedByImageUpload"
             >{{ t('common.save') }}</el-button>
+            <el-button
+              v-if="form.id"
+              type="warning"
+              @click="submitListingFromEditForm"
+              :loading="listingSubmitting"
+              :disabled="inventorySaveBlockedByImageUpload || Number(form.quantity ?? 0) <= 0"
+            >{{ t('inventory.list') }}</el-button>
           </div>
         </div>
       </template>
@@ -925,15 +1006,6 @@
         </template>
       </template>
     </el-dialog>
-
-    <SingleListingFormDialog
-      v-model="listingDialogVisible"
-      :category-mappings="listingCategoryMappings"
-      :initial-data="listingSeedData"
-      :listing-defaults="listingDefaultsFromServer"
-      :is-mobile="isMobile"
-      @saved="onListingFormSaved"
-    />
 
     <el-dialog
       v-model="combinedProductDialogVisible"

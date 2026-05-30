@@ -116,6 +116,49 @@ class InventoryModel(BaseModel):
                 'not_null': False,
                 'default': None,
             },
+            # 出品设置：手动「出品」与自动补挂（auto_relist）共用，缺省回落系统出品默认值
+            'listing_status': {
+                'type': 'TEXT',
+                'not_null': False,
+                'default': "'new_unused'",
+            },
+            # 出品账号（mercari_accounts.id）：手动出品时记住上次选择
+            'listing_account_id': {
+                'type': 'INTEGER',
+                'not_null': False,
+                'default': None,
+            },
+            'shipping_payer': {
+                'type': 'TEXT',
+                'not_null': False,
+                'default': "'seller'",
+            },
+            'shipping_method': {
+                'type': 'TEXT',
+                'not_null': False,
+                'default': "'undecided'",
+            },
+            # 发货地：Mercari areas[].id
+            'shipping_from_area_id': {
+                'type': 'TEXT',
+                'not_null': False,
+                'default': None,
+            },
+            'shipping_days': {
+                'type': 'TEXT',
+                'not_null': False,
+                'default': "'2_3_days'",
+            },
+            'sale_type': {
+                'type': 'TEXT',
+                'not_null': False,
+                'default': "'instant_buy'",
+            },
+            'auction_duration': {
+                'type': 'TEXT',
+                'not_null': False,
+                'default': "'normal'",
+            },
             'image': {
                 'type': 'TEXT',
                 'not_null': False,

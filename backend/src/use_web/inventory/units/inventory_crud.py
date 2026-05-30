@@ -42,8 +42,11 @@ def create_inventory(data: InventoryCreate, _claims: dict = Depends(require_auth
             INSERT INTO [inventory] (
                 name, barcode, category_id, product_type_id, owner_user_id, warehouse_id, price, quantity,
                 mercari_item_id, on_sale_quantity, pending_outbound_qty, auto_listing_enabled,
-                description, listing_title, listing_body, image, image_front, image_back, images_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                description, listing_title, listing_body,
+                listing_status, listing_account_id, shipping_payer, shipping_method,
+                shipping_from_area_id, shipping_days, sale_type, auction_duration,
+                image, image_front, image_back, images_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data.name,
@@ -61,6 +64,14 @@ def create_inventory(data: InventoryCreate, _claims: dict = Depends(require_auth
                 data.description,
                 data.listing_title,
                 data.listing_body,
+                data.listing_status,
+                data.listing_account_id,
+                data.shipping_payer,
+                data.shipping_method,
+                data.shipping_from_area_id,
+                data.shipping_days,
+                data.sale_type,
+                data.auction_duration,
                 img_cols["image"],
                 img_cols["image_front"],
                 img_cols["image_back"],
@@ -141,7 +152,10 @@ def update_inventory(pid: int, data: InventoryUpdate, _claims: dict = Depends(re
         "name", "barcode", "category_id", "product_type_id", "owner_user_id", "warehouse_id", "price",
         "quantity",
         "mercari_item_id", "on_sale_quantity", "auto_listing_enabled",
-        "description", "listing_title", "listing_body", "image", "image_front", "image_back", "images_json",
+        "description", "listing_title", "listing_body",
+        "listing_status", "listing_account_id", "shipping_payer", "shipping_method",
+        "shipping_from_area_id", "shipping_days", "sale_type", "auction_duration",
+        "image", "image_front", "image_back", "images_json",
     }
     update_data = {k: v for k, v in update_data.items() if k in allowed_fields}
     if update_data:
