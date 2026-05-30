@@ -1,144 +1,129 @@
 @echo off
 chcp 65001 >nul
 echo ========================================
-echo   mercari 打包 ^(PyInstaller + 前端 build^)
+echo   mercari 一键打包 (PyInstaller)
 echo ========================================
-echo.
 
-set ROOT=%~dp0
-cd /d "%ROOT%"
-
-:: 版本号（发布前修改）
+:: ===== 版本号（每次发布修改这里）=====
 set VERSION=v1.0.0
 
-:: 同步版本到 webside\package.json
-echo 同步版本到 webside\package.json...
-set VERSION_NUM=%VERSION%
-if "%VERSION_NUM:~0,1%"=="v" set VERSION_NUM=%VERSION_NUM:~1%
-set TEMP_PS=%TEMP%\mercari_sync_version.ps1
-echo $filePath = Join-Path '%ROOT%webside' 'package.json' > "%TEMP_PS%"
-echo $content = [System.IO.File]::ReadAllText($filePath, [System.Text.Encoding]::UTF8) >> "%TEMP_PS%"
-echo $content = $content -replace '^\uFEFF', '' >> "%TEMP_PS%"
-echo $oldVersion = 'unknown' >> "%TEMP_PS%"
-echo if ($content -match '"version"\s*:\s*"([^"]+)"'^) { $oldVersion = $matches[1] } >> "%TEMP_PS%"
-echo $content = [regex]::Replace($content, '"version"\s*:\s*"([^"]+)"', '"version": "%VERSION_NUM%"') >> "%TEMP_PS%"
-echo $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding $False >> "%TEMP_PS%"
-echo [System.IO.File]::WriteAllText($filePath, $content, $Utf8NoBomEncoding) >> "%TEMP_PS%"
-echo Write-Host "Version synced: $oldVersion -^> %VERSION_NUM%" >> "%TEMP_PS%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP_PS%"
-if %errorlevel% neq 0 (
-    echo [警告] 同步 package.json 版本失败，可手动检查 webside\package.json
-) else (
-    echo 已同步版本。
-)
-del "%TEMP_PS%" >nul 2>&1
+:: ===== 是否打入 OCR(easyocr/torch，体积约 2GB，启动变慢)。0=否 1=是 =====
+set BUNDLE_OCR=0
 
+set ROOT=%~dp0
+set RELEASE=%ROOT%Releases\%VERSION%
+
+:: ===== 激活 conda 环境 mercari =====
+echo.
+echo [0/6] 激活 conda 环境 mercari ...
 call conda activate mercari
 if %errorlevel% neq 0 (
-    echo [错误] 无法激活 conda 环境 mercari，请先创建并安装 backend\requirements.txt
+    echo 错误: 无法激活 conda 环境 mercari
     pause
     exit /b 1
 )
 
-if not exist "Releases" mkdir Releases
-if not exist "Releases\%VERSION%" mkdir "Releases\%VERSION%"
-echo 输出目录: Releases\%VERSION%
-echo.
-
-echo 清理旧构建...
-if exist "backend\dist" rmdir /s /q "backend\dist"
-if exist "backend\build" rmdir /s /q "backend\build"
-
-echo.
-echo [1/4] PyInstaller 打包 mercari-server.exe...
-cd /d "%ROOT%backend"
-python -m PyInstaller --version >nul 2>&1
-if errorlevel 1 (
-    echo [提示] 当前 conda 环境未安装 PyInstaller，正在 pip install...
+:: 确保 pyinstaller 可用
+where pyinstaller >nul 2>&1
+if %errorlevel% neq 0 (
+    echo 未检测到 pyinstaller，正在安装...
     pip install pyinstaller
 )
-python -m PyInstaller mercari.spec --clean --noconfirm --distpath "%ROOT%Releases\%VERSION%"
+
+:: ===== 准备发布目录 =====
+echo.
+echo [1/6] 清理并创建发布目录 %RELEASE% ...
+if exist "%RELEASE%" rmdir /s /q "%RELEASE%"
+mkdir "%RELEASE%"
+if exist "%ROOT%build" rmdir /s /q "%ROOT%build"
+
+:: ===== 构建前端 =====
+echo.
+echo [2/6] 构建前端 webside ...
+where npm >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [错误] PyInstaller 失败。若缺模块，请编辑 backend\mercari.spec 的 collect_all / hiddenimports。
-    cd /d "%ROOT%"
+    echo 错误: 未找到 npm，请安装 Node.js: https://nodejs.org/
     pause
     exit /b 1
 )
-cd /d "%ROOT%"
-
-echo.
-echo [2/4] 构建前端 production...
-cd /d "%ROOT%webside"
+pushd "%ROOT%webside"
 if not exist "node_modules" (
     echo 安装前端依赖...
     call npm install
-    if %errorlevel% neq 0 (
-        echo [错误] npm install 失败
-        cd /d "%ROOT%"
-        pause
-        exit /b 1
-    )
+    if %errorlevel% neq 0 ( echo 错误: npm install 失败 & popd & pause & exit /b 1 )
 )
 call npm run build
-if %errorlevel% neq 0 (
-    echo [错误] npm run build 失败
-    cd /d "%ROOT%"
+if %errorlevel% neq 0 ( echo 错误: 前端构建失败 & popd & pause & exit /b 1 )
+popd
+if not exist "%ROOT%webside\dist\index.html" (
+    echo 错误: 未找到 webside\dist\index.html，前端构建可能失败
     pause
     exit /b 1
 )
-cd /d "%ROOT%"
 
+:: ===== 打包主程序 mercari.exe =====
 echo.
-echo [3/4] 复制前端 dist 与启动脚本...
-if not exist "webside\dist" (
-    echo [错误] 未找到 webside\dist
+echo [3/6] 打包 mercari.exe ...
+pyinstaller --clean --noconfirm "%ROOT%mercari.spec" ^
+    --distpath "%RELEASE%" --workpath "%ROOT%build\mercari"
+if %errorlevel% neq 0 (
+    echo 错误: mercari.exe 打包失败
     pause
     exit /b 1
 )
-if not exist "Releases\%VERSION%\webside" mkdir "Releases\%VERSION%\webside"
-xcopy "webside\dist" "Releases\%VERSION%\webside\dist\" /E /I /H /Y /Q
 
-copy /y "scripts\release\start_mercari.bat" "Releases\%VERSION%\start_mercari.bat" >nul
+:: ===== 打包 mitmdump.exe 到 Scripts\ (供 MITM 子进程调用) =====
+echo.
+echo [4/6] 打包 Scripts\mitmdump.exe ...
+pyinstaller --clean --noconfirm "%ROOT%mitmdump.spec" ^
+    --distpath "%RELEASE%\Scripts" --workpath "%ROOT%build\mitmdump"
 if %errorlevel% neq 0 (
-    echo [警告] 未复制 start_mercari.bat ^(请确认存在 scripts\release\start_mercari.bat^)
-) else (
-    echo - start_mercari.bat 已复制
+    echo 警告: mitmdump.exe 打包失败 —— MITM 抓包功能在该包中将不可用，主程序其余功能不受影响。
 )
 
-copy /y "scripts\release\restart.bat" "Releases\%VERSION%\restart.bat" >nul
+:: ===== 复制前端 dist 到 exe 同级 webside\dist =====
+echo.
+echo [5/6] 复制前端 webside\dist ...
+mkdir "%RELEASE%\webside\dist"
+xcopy "%ROOT%webside\dist" "%RELEASE%\webside\dist\" /E /I /H /Y /Q
 if %errorlevel% neq 0 (
-    echo [警告] 未复制 restart.bat ^(请确认存在 scripts\release\restart.bat^)
-) else (
-    echo - restart.bat 已复制
+    echo 错误: 复制 webside\dist 失败
+    pause
+    exit /b 1
 )
 
-if not exist "Releases\%VERSION%\log" mkdir "Releases\%VERSION%\log"
-
+:: ===== 生成启动脚本 =====
 echo.
-echo [4/4] 清理 backend 中间产物 ^(保留 mercari.spec^)...
-if exist "backend\build" rmdir /s /q "backend\build"
+echo [6/6] 生成启动脚本与打包 ZIP ...
+(
+    echo @echo off
+    echo chcp 65001 ^>nul
+    echo cd /d %%~dp0
+    echo echo mercari 启动中... 浏览器访问 http://localhost:9601
+    echo start "" http://localhost:9601
+    echo mercari.exe
+    echo pause
+) > "%RELEASE%\start_mercari.bat"
 
-echo.
-echo 打包完成: Releases\%VERSION%
-dir /b "Releases\%VERSION%\*.exe" 2>nul
+:: 提示: Playwright 用系统已装的 Microsoft Edge(channel=msedge)，目标机需安装 Edge(Win11 自带)。
 
-set ZIP_FILE=%ROOT%Releases\mercari-%VERSION_NUM%.zip
+:: ===== 打 ZIP =====
+set ZIP_FILE=%ROOT%Releases\mercari_%VERSION%.zip
 if exist "%ZIP_FILE%" del /q "%ZIP_FILE%"
-echo.
-echo 正在生成 ZIP: %ZIP_FILE%
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '%ROOT%Releases\%VERSION%\*' -DestinationPath '%ZIP_FILE%' -CompressionLevel Optimal -Force"
-if %errorlevel% neq 0 (
-    echo [警告] ZIP 创建失败
-) else (
-    echo ZIP 已生成。
-)
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Compress-Archive -Path '%RELEASE%\*' -DestinationPath '%ZIP_FILE%' -CompressionLevel Optimal -Force"
+
+:: ===== 清理构建中间产物 =====
+if exist "%ROOT%build" rmdir /s /q "%ROOT%build"
 
 echo.
 echo ========================================
-echo 发布目录结构与使用说明
+echo   打包完成! 输出目录: %RELEASE%
 echo ========================================
-echo - mercari-server.exe 与 webside\dist 须在同一发布目录 ^(本脚本已复制^)。
-echo - 用户双击 start_mercari.bat：启动服务并打开 launcher 页面。
-echo - 开发调试不加静态页时: set MERCARI_NO_STATIC=1
+dir /b "%RELEASE%"
+echo ----------------------------------------
+echo   双击运行: %RELEASE%\start_mercari.bat
+echo   或直接运行 mercari.exe，然后访问 http://localhost:9601
+echo   ZIP: %ZIP_FILE%
 echo ========================================
 pause
