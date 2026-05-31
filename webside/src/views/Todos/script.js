@@ -41,6 +41,13 @@ export default defineComponent({
     // 「発送をしてください」（待发货）待办：处理时按商品 ID 反查本地库存图片与关联订单号
     const WAIT_SHIPPING_TITLE = '発送をしてください'
 
+    // ゆうゆうメルカリ便 各尺寸共用的发送方法（发货地）：郵便局 / ローソン。
+    // code 与煤炉 /shipping_facilities 页 radio 的 value 属性完全一致（大写）。
+    const YUYU_FACILITIES = [
+      { code: 'POST_OFFICE', label: '郵便局', img: 'japan-post' },
+      { code: 'LAWSON', label: 'ローソン', img: 'lawson' },
+    ]
+
     // 发货尺寸硬编码列表，按 shipping_method_name 区分。
     // name 字段必须与煤炉 /shipping_class 页 radio 卡片标题文本完全一致（用于 Playwright 文本匹配点击）
     const SHIPPING_OPTIONS = {
@@ -53,6 +60,7 @@ export default defineComponent({
             ['厚さ', '3cm以内'],
             ['重さ', '1kg以内'],
           ],
+          facilities: YUYU_FACILITIES,
         },
         {
           name: 'ゆうパケットポストmini',
@@ -84,6 +92,7 @@ export default defineComponent({
             ['重さ', '2kg以内'],
           ],
           caveats: ['※専用箱(¥65)の購入が必要です'],
+          facilities: YUYU_FACILITIES,
         },
         {
           name: 'ゆうパック60 - 100',
@@ -92,6 +101,7 @@ export default defineComponent({
             ['送料', '¥750 - ¥1,070'],
             ['重さ', '25kg以内'],
           ],
+          facilities: YUYU_FACILITIES,
         },
         {
           name: 'ゆうパック120 - 170',
@@ -100,6 +110,7 @@ export default defineComponent({
             ['送料', '¥1,200 - ¥1,900'],
             ['重さ', '25kg以内'],
           ],
+          facilities: YUYU_FACILITIES,
         },
       ],
       'らくらくメルカリ便': [
@@ -109,6 +120,13 @@ export default defineComponent({
             ['サイズ', '3辺合計60cm以内'],
             ['長辺', '34cm以内'],
             ['最小', '23cm × 11.5cm'],
+          ],
+          // 发货地（与煤炉 /shipping_facilities radio 的 value 属性一致）。img 为 public/static/post_hukuro 下文件名（无扩展名）
+          facilities: [
+            { code: 'SEVEN_ELEVEN', label: 'セブン-イレブン', img: '7-eleven' },
+            { code: 'FAMILY_MART', label: 'ファミリーマート', img: 'family-mart' },
+            { code: 'YAMATO_OFFICE', label: 'ヤマト運輸 営業所', img: 'yamato' },
+            { code: 'PUDO', label: '宅配便ロッカーPUDO', img: 'pudo' },
           ],
         },
         {
@@ -374,6 +392,10 @@ export default defineComponent({
         shipment_status: null,
         has_size_location_btn: false,
         has_change_method_btn: false,
+        // 发行后保存到本地的发货二维码图片（/imges/...）
+        qr_image_url: '',
+        // 上次从煤炉抓取的时间戳（缓存命中时显示）
+        detail_synced_at: null,
         messages: [], // [{ from, text, at, is_buyer, user_id }]
         captured: { shipping_info: false, transaction_messages: false },
         // 回复草稿（默认为空，点「默认回复」按钮可一键填入模板）
@@ -433,6 +455,23 @@ export default defineComponent({
       const opt = shippingOptions.value[shippingPickedIdx.value]
       return !!opt && !opt.auto_finish_no_facility
     })
+    // 当前选中尺寸对应的发货地卡片列表（按尺寸不同；未定义则回落到旧式 邮局/罗森 radio）
+    const shippingFacilities = computed(() => {
+      if (shippingPickedIdx.value == null) return []
+      const opt = shippingOptions.value[shippingPickedIdx.value]
+      return Array.isArray(opt?.facilities) ? opt.facilities : []
+    })
+    // 选择尺寸：切换后重置已选发货地（不同尺寸可选发货地不同）
+    function onPickShipping(idx) {
+      shippingPickedIdx.value = idx
+      shippingFacility.value = null
+    }
+    // 发货地图标：public/static/post_hukuro/<img>.png
+    function facilityImageUrl(img) {
+      const s = String(img || '').trim()
+      if (!s) return ''
+      return `/static/post_hukuro/${encodeURIComponent(s)}.png?v=1`
+    }
 
     // 配送尺寸卡片插图：public/static/post_hukuro/<尺寸名>.png（文件名与 opt.name 完全一致）
     // 带版本号 query 防止旧的 404 负缓存命中（文件后补放进 public 时浏览器可能缓存过 404）
@@ -733,8 +772,22 @@ export default defineComponent({
       if (String(row.title || '').trim() === WAIT_SHIPPING_TITLE) {
         loadInventoryMatch(row.item_id)
       }
-      // 自动启动浏览器抓取真实数据
-      onDetailRefresh()
+      // 优先读本地缓存（不开浏览器）；用户点「刷新抓取」才打开浏览器更新
+      loadDetailCache()
+    }
+
+    /** 读取交易详情本地缓存（不开浏览器）。无缓存时保持本地预填字段。 */
+    async function loadDetailCache() {
+      if (!currentRow.value?.id) return
+      try {
+        const d = await todosApi.transactionDetailCache(currentRow.value.id)
+        if (d && typeof d === 'object') {
+          const merged = { ...d }
+          // null 字段不覆盖本地预填（buyer_name 等）
+          if (merged.buyer_name == null) delete merged.buyer_name
+          Object.assign(detail, merged)
+        }
+      } catch { /* 无缓存：静默，保留本地预填 */ }
     }
 
     async function onDetailRefresh() {
@@ -811,8 +864,10 @@ export default defineComponent({
         ElMessage.warning(t('todos.pickFacility'))
         return
       }
-      // ゆうパケットポスト系（auto_finish_no_facility）は完了後そのまま二维码扫描ページへ
+      // ゆうパケットポスト系（auto_finish_no_facility）は完了後そのまま二维码扫描ページへ（用摄像头）。
+      // それ以外（需选发货地的方法）は完了後、返回交易ページ发行 发送用 QR/条形码（无需摄像头）。
       const wantScanQr = !!opt.auto_finish_no_facility
+      const wantGenerateCode = needsFacility
       shippingConfirmLoading.value = true
       try {
         const result = await txOverlay.run({
@@ -824,16 +879,21 @@ export default defineComponent({
               class_text: classText,
               facility: needsFacility ? shippingFacility.value : null,
               scan_qr: wantScanQr,
+              generate_code: wantGenerateCode,
               progress_job_id: jobId,
             }),
         })
         ElMessage.success(t('todos.shippingDone', { classText }))
         shippingDialogVisible.value = false
-        // 后端已自动打开 /qr_code_scanner → 开镜像弹窗轮询视频帧
         if (wantScanQr && result?.qr_scanner_open) {
+          // 后端已自动打开 /qr_code_scanner → 开镜像弹窗轮询视频帧
           startQrScanMirror(currentRow.value.id)
+        } else if (wantGenerateCode) {
+          // 发行后已保存发货二维码：直接显示，并刷新本地缓存（不再开浏览器）
+          if (result?.qr_image_url) detail.qr_image_url = result.qr_image_url
+          loadDetailCache()
         } else {
-          onDetailRefresh()
+          loadDetailCache()
         }
       } catch (e) {
         if (!e?.response) ElMessage.error(e?.message || t('todos.submitFailed'))
@@ -1008,6 +1068,28 @@ export default defineComponent({
 
     function onShipConfirmCancel() {
       shipConfirmVisible.value = false
+    }
+
+    // ─── 已发行二维码后修改发货方式：点「商品サイズや発送方法を修正する」+ 二次确认「変更する」→ 清除二维码 ───
+    async function onReviseShippingAfterQr() {
+      if (!currentRow.value?.id) return
+      try {
+        const result = await txOverlay.run({
+          title: t('todos.clickingChangeMethod'),
+          consoleTag: '[修正发货]',
+          pollFn: (jobId) => todosApi.getSyncProgress(jobId),
+          actionFn: (jobId) =>
+            todosApi.reviseShippingAfterQr(currentRow.value.id, { progress_job_id: jobId }),
+        })
+        if (result?.success !== false) {
+          // 清除二维码，恢复原本发货方式选择（UI 自动切回选尺寸/改方式布局）
+          detail.qr_image_url = ''
+          loadDetailCache()
+          ElMessage.success(t('todos.reviseQrDone'))
+        }
+      } catch (e) {
+        if (!e?.response) ElMessage.error(e?.message || t('todos.clickFailed'))
+      }
     }
 
     // ─── 修改发货方式（点「発送方法を変更する」→ /shipping_method → 下拉选择 → 「変更する」）───
@@ -1301,6 +1383,9 @@ export default defineComponent({
       shippingFacility,
       shippingOptions,
       shippingNeedsFacility,
+      shippingFacilities,
+      onPickShipping,
+      facilityImageUrl,
       shippingImageUrl,
       onShippingImgError,
       listParams,
@@ -1334,6 +1419,7 @@ export default defineComponent({
       onShipConfirmSubmit,
       onShipConfirmCancel,
       onClickShippingChangeMethod,
+      onReviseShippingAfterQr,
       changeMethodVisible,
       changeMethodOptions,
       changeMethodPicked,

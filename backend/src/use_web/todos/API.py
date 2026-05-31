@@ -21,9 +21,11 @@ from .units.todos_sync import (
     close_detail_browser,
     confirm_shipping_selection_endpoint,
     fetch_todo_transaction_detail,
+    get_cached_todo_transaction_detail,
     finalize_post_shipping_endpoint,
     post_shipping_info_endpoint,
     qr_scanner_frame_endpoint,
+    revise_shipping_after_qr_endpoint,
     send_message_reaction_endpoint,
     send_transaction_message_endpoint,
     start_shipping_class_endpoint,
@@ -68,6 +70,7 @@ router.add_api_route("/inventory-match", _inventory_match_endpoint, methods=["GE
 router.add_api_route("/sync", sync_todos, methods=["POST"])
 router.add_api_route("/sync-progress/{job_id}", todos_sync_progress, methods=["GET"])
 router.add_api_route("/{todo_id}/transaction-detail", fetch_todo_transaction_detail, methods=["POST"])
+router.add_api_route("/{todo_id}/transaction-detail-cache", get_cached_todo_transaction_detail, methods=["GET"])
 router.add_api_route("/{todo_id}/send-message", send_transaction_message_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/send-reaction", send_message_reaction_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/submit-review", submit_transaction_review_endpoint, methods=["POST"])
@@ -75,6 +78,7 @@ router.add_api_route("/{todo_id}/shipping/start", start_shipping_class_endpoint,
 router.add_api_route("/{todo_id}/shipping/confirm", confirm_shipping_selection_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/shipping/change-method", change_shipping_method_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/shipping/confirm-change-method", confirm_change_shipping_method_endpoint, methods=["POST"])
+router.add_api_route("/{todo_id}/shipping/revise-after-qr", revise_shipping_after_qr_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/qr-scanner-frame", qr_scanner_frame_endpoint, methods=["GET"])
 router.add_api_route("/{todo_id}/camera-frame", camera_frame_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/post-shipping-info", post_shipping_info_endpoint, methods=["GET"])

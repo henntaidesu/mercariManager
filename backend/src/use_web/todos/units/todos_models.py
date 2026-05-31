@@ -17,10 +17,13 @@ class SendTransactionMessageRequest(PydanticModel):
 
 class ConfirmShippingSelectionRequest(PydanticModel):
     class_text: str = Field(..., min_length=1, max_length=200)
-    # 仅对需要选择 facility 的 size 必填：'post_office' | 'lawson' | None
+    # 仅对需要选择 facility 的 size 必填，与煤炉 radio value 一致：
+    # 'POST_OFFICE' | 'LAWSON' | 'SEVEN_ELEVEN' | 'FAMILY_MART' | 'YAMATO_OFFICE' | 'PUDO' | None
     facility: Optional[str] = None
     # ゆうパケットポスト/mini：完了後そのまま「2次元コードを読み取る」を押して QR スキャナを開く
     scan_qr: bool = False
+    # 需选发货地的方法（ゆうパケットポスト系以外）：完了後、返回交易ページ发行 发送用 QR/条形码（无需摄像头）
+    generate_code: bool = False
     progress_job_id: Optional[str] = None
 
 

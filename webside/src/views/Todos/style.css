@@ -593,7 +593,6 @@
   padding: 12px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
-  background: var(--el-fill-color);
 }
 .ship-facility-title {
   font-weight: 600;
@@ -603,4 +602,58 @@
 .ship-facility-radio {
   display: flex;
   gap: 12px;
+}
+.ship-facility-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.ship-facility-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ship-facility-card:hover {
+  border-color: var(--el-color-primary-light-5);
+}
+.ship-facility-card-active {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset;
+}
+.ship-facility-img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+.ship-facility-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 发货 section 标题行：标题左、修改发货方式按钮右上角 */
+.detail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* 发货二维码（发行后保存到本地，到店出示） */
+.detail-qr-wrap {
+  margin-top: 12px;
+}
+.detail-qr-img {
+  width: 200px;
+  height: 200px;
+  margin-top: 6px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+  background: #fff;
 }

@@ -291,26 +291,50 @@
           </section>
 
           <section v-if="!isReviewedSeller" class="detail-section">
-            <div class="detail-section-title">{{ t('todos.section.shipping') }}</div>
-            <div class="detail-shipping-status">
-              <span class="detail-label">{{ t('todos.currentStatus') }}</span>
-              <span class="detail-value">{{ detail.current_shipping_status || dash }}</span>
-            </div>
-            <div class="detail-shipping-actions">
+            <!-- 已发行二维码时：修改发货方式按钮放到标题右上角 -->
+            <div class="detail-section-head">
+              <div class="detail-section-title">{{ t('todos.section.shipping') }}</div>
               <el-button
-                size="default"
-                @click="onClickShippingSizeLocation"
-              >
-                {{ t('todos.pickSizeAndLocation') }}
-              </el-button>
-              <el-button
-                size="default"
-                :disabled="!detail.has_change_method_btn"
-                @click="onClickShippingChangeMethod"
+                v-if="detail.qr_image_url"
+                size="small"
+                @click="onReviseShippingAfterQr"
               >
                 {{ t('todos.changeShippingMethod') }}
               </el-button>
             </div>
+            <!-- 已发行二维码：发货模块只展示二维码 -->
+            <template v-if="detail.qr_image_url">
+              <div class="detail-qr-wrap">
+                <el-image
+                  :src="mercariImageUrl(detail.qr_image_url)"
+                  :preview-src-list="[mercariImageUrl(detail.qr_image_url)]"
+                  :preview-teleported="true"
+                  fit="contain"
+                  class="detail-qr-img"
+                />
+              </div>
+            </template>
+            <!-- 未发行：当前状态 + 选择尺寸 + 修改发货方式 -->
+            <template v-else>
+              <div class="detail-shipping-status">
+                <span class="detail-label">{{ t('todos.currentStatus') }}</span>
+                <span class="detail-value">{{ detail.current_shipping_status || dash }}</span>
+              </div>
+              <div class="detail-shipping-actions">
+                <el-button
+                  size="default"
+                  @click="onClickShippingSizeLocation"
+                >
+                  {{ t('todos.pickSizeAndLocation') }}
+                </el-button>
+                <el-button
+                  size="default"
+                  @click="onClickShippingChangeMethod"
+                >
+                  {{ t('todos.changeShippingMethod') }}
+                </el-button>
+              </div>
+            </template>
           </section>
         </div>
 
@@ -442,16 +466,12 @@
       :close-on-click-modal="false"
       destroy-on-close
     >
-      <div class="shipping-dialog-hint">
-        {{ t('todos.currentShippingMethod') }}<strong>{{ detail.shipping_method_name || t('todos.unidentified') }}</strong>
-        {{ t('todos.shippingPickHint') }}
-      </div>
       <el-radio-group v-if="shippingOptions.length" v-model="shippingPickedIdx" class="ship-radio-group">
         <div
           v-for="(opt, idx) in shippingOptions"
           :key="`${opt.name}-${idx}`"
           :class="['ship-card', shippingPickedIdx === idx ? 'ship-card-active' : '']"
-          @click="shippingPickedIdx = idx"
+          @click="onPickShipping(idx)"
         >
           <el-radio :value="idx" class="ship-card-radio">
             <span class="ship-card-radio-label">{{ opt.name }}</span>
@@ -477,7 +497,6 @@
                 :key="`cv-${ci}`"
                 class="ship-card-caveat"
               >{{ c }}</div>
-              <div v-if="opt.auto_finish_no_facility" class="ship-card-note">{{ t('todos.noFacilityNeeded') }}</div>
             </div>
           </div>
         </div>
@@ -485,8 +504,26 @@
       <div v-else class="detail-empty">{{ t('todos.noSizeList') }}</div>
 
       <div v-if="shippingNeedsFacility" class="ship-facility-section">
-        <div class="ship-facility-title">{{ t('todos.pickupLocation') }}</div>
-        <el-radio-group v-model="shippingFacility" class="ship-facility-radio">
+        <div class="ship-facility-title">{{ t('todos.shippingFacilityTitle') }}</div>
+        <!-- 新式：按尺寸下发的发货地卡片（带图标），点击选中 -->
+        <div v-if="shippingFacilities.length" class="ship-facility-cards">
+          <div
+            v-for="fac in shippingFacilities"
+            :key="fac.code"
+            :class="['ship-facility-card', shippingFacility === fac.code ? 'ship-facility-card-active' : '']"
+            @click="shippingFacility = fac.code"
+          >
+            <img
+              class="ship-facility-img"
+              :src="facilityImageUrl(fac.img)"
+              :alt="fac.label"
+              @error="onShippingImgError"
+            />
+            <span class="ship-facility-label">{{ fac.label }}</span>
+          </div>
+        </div>
+        <!-- 旧式回落：ゆうゆうメルカリ便 邮局/罗森 -->
+        <el-radio-group v-else v-model="shippingFacility" class="ship-facility-radio">
           <el-radio value="post_office" border>{{ t('todos.postOffice') }}</el-radio>
           <el-radio value="lawson" border>{{ t('todos.lawson') }}</el-radio>
         </el-radio-group>

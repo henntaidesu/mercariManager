@@ -16,13 +16,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from ...db_manage.database import DatabaseManager
 from ...db_manage.models.todo_item import TodoItemModel
+from ...use_web.image_storage import save_image_bytes
 from ...ssl_mitm_proxy.capture_config import (
     clear_shipping_info_response_file,
     clear_transaction_messages_response_file,
@@ -306,6 +309,16 @@ async def fetch_transaction_detail(
             start_url=url,
             since_ms=since_ms,
         )
+        # 同步发货二维码：若该商品已发行（含在 App/其他平台已完成发货的情况），
+        # 交易页会带二维码图片 → 抓取保存到本地（页面已加载，短超时探测）。
+        synced_qr_url: Optional[str] = None
+        try:
+            qr_page = await mgr.active_tab_page(main_key)
+            synced_qr_url = await _save_qr_code_image(
+                qr_page, item_id=item_id, todo_id=int(todo_id), timeout=3000
+            )
+        except Exception as exc:
+            log.debug("[txdetail] 同步发货二维码失败 todo_id=%s: %s", todo_id, exc)
 
     if shipping is None and messages is None:
         log.warning("[txdetail] 两个 API 均未截获 todo_id=%s", todo_id)
@@ -317,9 +330,8 @@ async def fetch_transaction_detail(
     report("parse_response", "正在解析截获的取引详情…")
     shipping_part = _parse_shipping_info(shipping, local_sender_id)
     messages_part = _parse_messages(messages, local_sender_id)
-    report("done", "交易详情已就绪")
 
-    return {
+    result = {
         "todo_id": int(todo_id),
         "account_id": aid,
         "item_id": item_id,
@@ -331,6 +343,22 @@ async def fetch_transaction_detail(
         **shipping_part,
         **messages_part,
     }
+    # 发货二维码：优先本次刚同步到的；否则沿用此前已保存的。并整体缓存进 DB（下次打开免开浏览器）
+    if synced_qr_url:
+        result["qr_image_url"] = synced_qr_url
+    else:
+        try:
+            prev = DatabaseManager().execute_query(
+                "SELECT [qr_image_path] FROM [todo_items] WHERE [id]=?", (int(todo_id),)
+            )
+            if prev and prev[0] and prev[0][0]:
+                result["qr_image_url"] = prev[0][0]
+        except Exception:
+            pass
+    _persist_transaction_detail(int(todo_id), result)
+
+    report("done", "交易详情已就绪")
+    return result
 
 
 # 取引消息回复 textarea 的 placeholder 在不同代办类型下不一样：
@@ -464,7 +492,15 @@ _CHANGE_METHOD_SUBMIT_TEXT = "変更する"
 _SELECT_NEXT_BUTTON_TEXT = "選択して次へ"
 _SELECT_FINISH_BUTTON_TEXT = "選択して完了する"
 # ゆうパケットポスト / ゆうパケットポストmini 完了後、交易ページに出る「2次元コードを読み取る」
+# （这是“调用摄像头扫描”的入口，仅 ゆうパケットポスト系 使用）
 _SCAN_QR_BUTTON_TEXT = "2次元コードを読み取る"
+# 除 ゆうパケットポスト系 之外（需选发货地的方法）：完了後、交易ページで发行 发送用 QR/条形码/二维码
+# （无需摄像头，卖家拿生成的码到店扫描）。文言随发货地/方法不同，列出候选逐个尝试。
+_GENERATE_SHIP_CODE_TEXTS = (
+    "発送用2次元コードを発行",
+    "発送用QRコードを発行",
+    "発送用バーコードを発行",
+)
 # /qr_code_scanner 上の撮影開始ボタン（カメラ無効時は disabled）
 _SCAN_START_BUTTON_TEXT = "QRコードをスキャンする"
 # 読み取り成功後の交易ページ上の発送確定 UI
@@ -559,36 +595,46 @@ async def start_select_shipping_class(
     if not todo:
         raise ValueError(f"待办事项 id={todo_id} 不存在")
     aid = int(todo.account_id)
+    item_id = (todo.item_id or "").strip()
+    if not item_id:
+        raise ValueError("该待办无关联 item_id，无法打开交易页")
+    url = f"https://jp.mercari.com/transaction/{item_id}"
 
-    mgr = get_web_drive_manager()
-    auto_key = mercari_account_key(aid)
-    report("attach_browser", "正在连接已打开的浏览器…")
-    try:
+    # 点「处理」不再自动开浏览器，因此本操作需自行确保浏览器已打开并停在交易页。
+    # mitm_automation_browser 已开则复用并 reload 到交易页，未开则启动；退出不关闭。
+    is_wait_shipping = _is_wait_shipping_todo(todo)
+    headless_override = False if is_wait_shipping else None
+    minimized_override = False if is_wait_shipping else None
+    report("open_browser", f"正在打开交易页（{item_id}）…")
+    async with mitm_automation_browser(
+        aid,
+        start_url=url,
+        headless=headless_override,
+        minimized=minimized_override,
+    ) as (mgr, auto_key):
         page = await mgr.active_tab_page(auto_key)
-    except Exception as exc:
-        raise RuntimeError("浏览器未打开或已关闭，请先点「处理」打开交易页") from exc
 
-    report("locate_button", "正在定位「商品サイズと発送場所を選択する」按钮…")
-    btn = page.get_by_role("button", name=_SIZE_SELECT_BUTTON_TEXT)
-    try:
-        await btn.first.wait_for(state="visible", timeout=4000)
-    except Exception:
-        btn = page.locator(f'button:has-text("{_SIZE_SELECT_BUTTON_TEXT}")')
+        report("locate_button", "正在定位「商品サイズと発送場所を選択する」按钮…")
+        btn = page.get_by_role("button", name=_SIZE_SELECT_BUTTON_TEXT)
         try:
-            await btn.first.wait_for(state="visible", timeout=2000)
-        except Exception as exc:
-            raise RuntimeError(
-                f"未找到「{_SIZE_SELECT_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
-            ) from exc
-    report("click_button", "正在点击按钮，等待跳转到 /shipping_class…")
-    await btn.first.click()
-    log.info("[shipping] 已点击「%s」 account_id=%s", _SIZE_SELECT_BUTTON_TEXT, aid)
+            await btn.first.wait_for(state="visible", timeout=8000)
+        except Exception:
+            btn = page.locator(f'button:has-text("{_SIZE_SELECT_BUTTON_TEXT}")')
+            try:
+                await btn.first.wait_for(state="visible", timeout=4000)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"未找到「{_SIZE_SELECT_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
+                ) from exc
+        report("click_button", "正在点击按钮，等待跳转到 /shipping_class…")
+        await btn.first.click()
+        log.info("[shipping] 已点击「%s」 account_id=%s", _SIZE_SELECT_BUTTON_TEXT, aid)
 
-    # 等浏览器跳到 /shipping_class（用户后续在我们 dialog 内选 size）
-    try:
-        await page.wait_for_url("**/shipping_class*", timeout=8000)
-    except Exception:
-        log.warning("[shipping] 未观察到 /shipping_class 导航（可能已经在该页）")
+        # 等浏览器跳到 /shipping_class（用户后续在我们 dialog 内选 size）
+        try:
+            await page.wait_for_url("**/shipping_class*", timeout=8000)
+        except Exception:
+            log.warning("[shipping] 未观察到 /shipping_class 导航（可能已经在该页）")
 
     report("done", "已进入「商品サイズと発送場所」选择页")
     return {
@@ -598,9 +644,20 @@ async def start_select_shipping_class(
     }
 
 
+# 旧式（ゆうゆうメルカリ便 郵便局/ローソン）：XPath 卡片点击，保持向后兼容
 _FACILITY_XPATHS = {
     "post_office": '//*[@id="main"]/div/form/div[1]/div/div[1]/div/div[1]',
     "lawson": '//*[@id="main"]/div/form/div[1]/div/div[1]/div/div[2]',
+}
+
+# 新式：/shipping_facilities 页 radio 卡片用 input[value] 选择（语言无关、最稳）
+# 前端按尺寸下发对应 facility code（与煤炉 radio 的 value 属性一致）：
+#   SEVEN_ELEVEN / FAMILY_MART / YAMATO_OFFICE / PUDO / POST_OFFICE / LAWSON / ...
+_FACILITY_ARIA_LABELS = {
+    "SEVEN_ELEVEN": "セブン-イレブン",
+    "FAMILY_MART": "ファミリーマート",
+    "YAMATO_OFFICE": "ヤマト運輸 営業所",
+    "PUDO": "宅配便ロッカーPUDO",
 }
 
 
@@ -734,12 +791,195 @@ async def push_remote_camera_frame(
     }
 
 
+# 交易ページ上の発送用QR画像（発行後に表示される）
+_QR_CODE_IMG_SELECTOR = 'img[data-testid="qr-code"]'
+
+
+def _persist_transaction_detail(todo_id: int, data: Dict[str, Any]) -> None:
+    """把抓取到的交易详情整体缓存进 todo_items.detail_json（避免每次开浏览器重抓）。"""
+    try:
+        payload = json.dumps(data, ensure_ascii=False)
+        DatabaseManager().execute_update(
+            "UPDATE [todo_items] SET [detail_json]=?, [detail_synced_at]=? WHERE [id]=?",
+            (payload, int(time.time() * 1000), int(todo_id)),
+        )
+    except Exception as exc:
+        log.warning("[txdetail] 缓存交易详情失败 todo_id=%s: %s", todo_id, exc)
+
+
+def _persist_qr_image_path(todo_id: int, path: str) -> None:
+    """保存二维码本地路径到 todo_items.qr_image_path，并同步写入已缓存的 detail_json。"""
+    db = DatabaseManager()
+    try:
+        db.execute_update(
+            "UPDATE [todo_items] SET [qr_image_path]=? WHERE [id]=?", (path, int(todo_id))
+        )
+        rows = db.execute_query(
+            "SELECT [detail_json] FROM [todo_items] WHERE [id]=?", (int(todo_id),)
+        )
+        if rows and rows[0] and rows[0][0]:
+            d = json.loads(rows[0][0])
+            if isinstance(d, dict):
+                d["qr_image_url"] = path
+                db.execute_update(
+                    "UPDATE [todo_items] SET [detail_json]=? WHERE [id]=?",
+                    (json.dumps(d, ensure_ascii=False), int(todo_id)),
+                )
+    except Exception as exc:
+        log.warning("[shipping] 保存二维码路径失败 todo_id=%s: %s", todo_id, exc)
+
+
+def _clear_qr_image(todo_id: int) -> None:
+    """清除已保存的发货二维码：删除本地文件 + 清空 qr_image_path + 从 detail_json 摘掉。"""
+    db = DatabaseManager()
+    try:
+        rows = db.execute_query(
+            "SELECT [qr_image_path], [detail_json] FROM [todo_items] WHERE [id]=?",
+            (int(todo_id),),
+        )
+        old_path = rows[0][0] if rows and rows[0] else None
+        detail_json = rows[0][1] if rows and rows[0] else None
+        db.execute_update(
+            "UPDATE [todo_items] SET [qr_image_path]=NULL WHERE [id]=?", (int(todo_id),)
+        )
+        if detail_json:
+            try:
+                d = json.loads(detail_json)
+                if isinstance(d, dict) and d.pop("qr_image_url", None) is not None:
+                    db.execute_update(
+                        "UPDATE [todo_items] SET [detail_json]=? WHERE [id]=?",
+                        (json.dumps(d, ensure_ascii=False), int(todo_id)),
+                    )
+            except Exception:
+                pass
+        if old_path:
+            try:
+                from ...use_web.image_storage import delete_image_file
+
+                delete_image_file(old_path)
+            except Exception:
+                pass
+    except Exception as exc:
+        log.warning("[shipping] 清除二维码失败 todo_id=%s: %s", todo_id, exc)
+
+
+def get_cached_transaction_detail(todo_id: int) -> Dict[str, Any]:
+    """读取 todo_items.detail_json 缓存（无浏览器）。无缓存返回 {}（仅含基础字段）。"""
+    try:
+        rows = DatabaseManager().execute_query(
+            "SELECT [detail_json], [detail_synced_at], [qr_image_path], [item_id], [item_name], [sender_id] "
+            "FROM [todo_items] WHERE [id]=?",
+            (int(todo_id),),
+        )
+    except Exception as exc:
+        log.warning("[txdetail] 读取交易详情缓存失败 todo_id=%s: %s", todo_id, exc)
+        return {}
+    if not rows:
+        return {}
+    detail_json, synced_at, qr_path, item_id, item_name, sender_id = rows[0]
+    data: Dict[str, Any] = {}
+    if detail_json:
+        try:
+            parsed = json.loads(detail_json)
+            if isinstance(parsed, dict):
+                data = parsed
+        except Exception:
+            data = {}
+    data.setdefault("item_id", item_id or "")
+    data.setdefault("item_name", item_name or "")
+    data.setdefault("sender_id", sender_id or "")
+    data["detail_synced_at"] = synced_at
+    if qr_path and not data.get("qr_image_url"):
+        data["qr_image_url"] = qr_path
+    return data
+
+
+async def _save_qr_code_image(
+    page: Any, *, item_id: str, todo_id: int, timeout: int = 8000
+) -> Optional[str]:
+    """把交易页上的发货二维码图片（img[data-testid="qr-code"]）下载到本地，返回 /imges 路径。
+
+    ``timeout``：等待二维码出现的毫秒数。发行后流程用默认 8s；刷新抓取/同步场景
+    传较短值（页面已加载，有就立刻拿到，没有则快速返回 None）。
+    """
+    try:
+        img = page.locator(_QR_CODE_IMG_SELECTOR)
+        await img.first.wait_for(state="visible", timeout=timeout)
+        src = await img.first.get_attribute("src")
+    except Exception:
+        log.debug("[shipping] 交易页无发货二维码 (item_id=%s)", item_id)
+        return None
+    if not src:
+        return None
+    try:
+        resp = await page.request.get(src)
+        body = await resp.body()
+    except Exception as exc:
+        log.warning("[shipping] 下载二维码图片失败 src=%s: %s", src, exc)
+        return None
+    low = src.lower()
+    ext = "jpg" if (".jpg" in low or ".jpeg" in low) else "png"
+    try:
+        path = save_image_bytes(body, ext=ext, prefix=f"qr_{item_id}")
+    except Exception as exc:
+        log.warning("[shipping] 保存二维码图片失败: %s", exc)
+        return None
+    _persist_qr_image_path(int(todo_id), path)
+    log.info("[shipping] 已保存发货二维码 todo_id=%s path=%s", todo_id, path)
+    return path
+
+
+async def _click_generate_ship_code(
+    page: Any,
+    *,
+    item_id: str,
+    todo_id: int,
+    report,
+) -> Optional[str]:
+    """完了後、交易ページに戻り「発送用2次元コード/QRコード/バーコードを発行」を押す。
+
+    需选发货地的方法（ゆうパケットポスト系以外）走此分支：无需摄像头，
+    生成发送用码供卖家到店出示。点击发行后页面刷新出二维码 → 下载保存到本地，
+    返回 /imges 路径；找不到二维码则返回 None。
+    """
+    try:
+        await page.wait_for_url("**/transaction/*", timeout=10000)
+    except Exception:
+        log.warning("[shipping] 完了後に交易ページへ戻る遷移を観測できず (URL: %s)", page.url)
+    await asyncio.sleep(0.6)
+
+    report("generate_ship_code", "正在生成发送用二维码…")
+    clicked = False
+    for text in _GENERATE_SHIP_CODE_TEXTS:
+        btn = page.get_by_role("button", name=text)
+        try:
+            if await btn.count() == 0:
+                btn = page.locator(f'button:has-text("{text}")')
+            if await btn.count() > 0 and await btn.first.is_visible():
+                await btn.first.click()
+                log.info("[shipping] 已点击「%s」 item_id=%s", text, item_id)
+                clicked = True
+                break
+        except Exception as exc:
+            log.debug("[shipping] 生成ボタン「%s」押下スキップ: %s", text, exc)
+    if clicked:
+        # 点击发行后页面刷新出二维码，稍等渲染
+        await asyncio.sleep(1.0)
+    else:
+        log.info("[shipping] 未找到「発送用…を発行」按钮，可能已发行，直接尝试抓取二维码")
+
+    # 保存发货二维码（已发行/刚发行都尝试）
+    report("save_qr_image", "正在保存发货二维码…")
+    return await _save_qr_code_image(page, item_id=item_id, todo_id=int(todo_id))
+
+
 async def confirm_shipping_selection(
     todo_id: int,
     class_text: str,
     facility: Optional[str] = None,
     *,
     scan_qr: bool = False,
+    generate_code: bool = False,
     progress_job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """在 /shipping_class 页选 size → 次へ → 在 /shipping_facilities 页按需点 facility → 完了する。
@@ -757,9 +997,7 @@ async def confirm_shipping_selection(
     class_text = (class_text or "").strip()
     if not class_text:
         raise ValueError("class_text 不能为空")
-    facility = (facility or "").strip().lower() or None
-    if facility is not None and facility not in _FACILITY_XPATHS:
-        raise ValueError(f"facility 取值非法：{facility}")
+    facility = (facility or "").strip() or None
 
     mgr = get_web_drive_manager()
     auto_key = mercari_account_key(aid)
@@ -801,17 +1039,45 @@ async def confirm_shipping_selection(
         log.warning("[shipping] 未观察到 /shipping_facilities 导航 (当前 URL: %s)", page.url)
 
     # ── Step 4: 按需点 facility 卡片 ──
+    # /shipping_facilities 页 radio 的 value 属性是稳定且语言无关的（POST_OFFICE / LAWSON /
+    # SEVEN_ELEVEN / FAMILY_MART / YAMATO_OFFICE / PUDO ...）。优先按 value 选中，
+    # 再回落到 aria-label（role=radio），最后回落旧式 XPath（兼容历史 post_office/lawson）。
     if facility is not None:
         report("select_facility", f"正在选择发货地（{facility}）…")
-        xpath_expr = _FACILITY_XPATHS[facility]
-        fac_loc = page.locator(f"xpath={xpath_expr}")
+        code = facility.strip()
+        picked = False
+        # 优先：按 radio 的 value 属性选中（force 兼容 styled-components 隐藏 input）
+        fac_input = page.locator(f'input[type="radio"][value="{code}"]')
         try:
-            await fac_loc.first.wait_for(state="visible", timeout=8000)
+            await fac_input.first.wait_for(state="attached", timeout=8000)
+            await fac_input.first.check(force=True)
+            picked = True
         except Exception as exc:
+            log.debug("[shipping] value 选中发货地失败 facility=%s: %s", code, exc)
+        # 回落 1：按 aria-label（role=radio）点击卡片
+        if not picked:
+            label = _FACILITY_ARIA_LABELS.get(code, code)
+            try:
+                fac_role = page.get_by_role("radio", name=label)
+                await fac_role.first.click(force=True)
+                picked = True
+            except Exception as exc:
+                log.debug("[shipping] aria-label 选中发货地失败 facility=%s: %s", code, exc)
+        # 回落 2：旧式 XPath（向后兼容历史 post_office/lawson 小写 code）
+        if not picked:
+            xpath_expr = _FACILITY_XPATHS.get(code.lower())
+            if xpath_expr:
+                try:
+                    fac_loc = page.locator(f"xpath={xpath_expr}")
+                    await fac_loc.first.wait_for(state="visible", timeout=4000)
+                    await fac_loc.first.click()
+                    picked = True
+                except Exception as exc:
+                    log.debug("[shipping] XPath 选中发货地失败 facility=%s: %s", code, exc)
+        if not picked:
             raise RuntimeError(
-                f"未找到发货地卡片（facility={facility}，XPath={xpath_expr}，当前 URL: {page.url}）"
-            ) from exc
-        await fac_loc.first.click()
+                f"未找到发货地选项（facility={facility}，当前 URL: {page.url}）"
+            )
         log.info("[shipping] 已点击发货地 facility=%s", facility)
         await asyncio.sleep(0.2)
     else:
@@ -833,13 +1099,22 @@ async def confirm_shipping_selection(
     await finish_btn.first.click()
     log.info("[shipping] 已点击「%s」 account_id=%s", _SELECT_FINISH_BUTTON_TEXT, aid)
 
-    # ── Step 6: ゆうパケットポスト系は完了後そのまま QR スキャナへ ──
+    # ── Step 6: 完了後の分岐 ──
+    #   scan_qr=True（ゆうパケットポスト系）：摄像头扫描 → /qr_code_scanner
+    #   generate_code=True（需选发货地的方法）：返回交易ページ发行 发送用 QR/条形码（无需摄像头）
     qr_scanner_open = False
+    ship_code_generated = False
+    qr_image_url: Optional[str] = None
+    item_id = (todo.item_id or "").strip()
     if scan_qr:
-        item_id = (todo.item_id or "").strip()
         qr_scanner_open = await _click_scan_qr_and_open_scanner(
             page, item_id=item_id, report=report,
         )
+    elif generate_code:
+        qr_image_url = await _click_generate_ship_code(
+            page, item_id=item_id, todo_id=int(todo_id), report=report,
+        )
+        ship_code_generated = qr_image_url is not None
 
     report("done", "已完成发货尺寸与发货地选择")
     return {
@@ -849,6 +1124,8 @@ async def confirm_shipping_selection(
         "facility": facility,
         "success": True,
         "qr_scanner_open": qr_scanner_open,
+        "ship_code_generated": ship_code_generated,
+        "qr_image_url": qr_image_url,
     }
 
 
@@ -1425,6 +1702,40 @@ async def send_message_reaction_by_index(
     }
 
 
+async def _click_change_method_entry(page: Any, *, timeout_ms: int = 8000) -> bool:
+    """点击交易页的「発送方法を変更する」入口。
+
+    この要素は ``<a data-location="...change_shipping_method_button">`` という
+    リンク（role=link）であり ``<button>`` ではない。data-location を最優先に、
+    link/button/テキストへ順に回落しつつ、可視要素のみをクリックする。
+    """
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        candidates = [
+            page.locator('[data-location*="change_shipping_method_button"]'),
+            page.get_by_role("link", name=_CHANGE_METHOD_BUTTON_TEXT),
+            page.get_by_role("button", name=_CHANGE_METHOD_BUTTON_TEXT),
+            page.locator(f'a:has-text("{_CHANGE_METHOD_BUTTON_TEXT}")'),
+            page.locator(f'button:has-text("{_CHANGE_METHOD_BUTTON_TEXT}")'),
+        ]
+        for loc in candidates:
+            try:
+                n = await loc.count()
+            except Exception:
+                n = 0
+            for i in range(n):
+                el = loc.nth(i)
+                try:
+                    if await el.is_visible():
+                        await el.scroll_into_view_if_needed(timeout=1500)
+                        await el.click()
+                        return True
+                except Exception:
+                    continue
+        await asyncio.sleep(0.3)
+    return False
+
+
 async def click_change_shipping_method(
     todo_id: int,
     *,
@@ -1437,44 +1748,153 @@ async def click_change_shipping_method(
     if not todo:
         raise ValueError(f"待办事项 id={todo_id} 不存在")
     aid = int(todo.account_id)
+    item_id = (todo.item_id or "").strip()
+    if not item_id:
+        raise ValueError("该待办无关联 item_id，无法打开交易页")
+    url = f"https://jp.mercari.com/transaction/{item_id}"
 
-    mgr = get_web_drive_manager()
-    auto_key = mercari_account_key(aid)
-    report("attach_browser", "正在连接已打开的浏览器…")
-    try:
+    # 点「处理」不再自动开浏览器，因此本操作需自行确保浏览器已打开并停在交易页。
+    is_wait_shipping = _is_wait_shipping_todo(todo)
+    headless_override = False if is_wait_shipping else None
+    minimized_override = False if is_wait_shipping else None
+    report("open_browser", f"正在打开交易页（{item_id}）…")
+    async with mitm_automation_browser(
+        aid,
+        start_url=url,
+        headless=headless_override,
+        minimized=minimized_override,
+    ) as (mgr, auto_key):
         page = await mgr.active_tab_page(auto_key)
-    except Exception as exc:
-        raise RuntimeError("浏览器未打开或已关闭，请先点「处理」打开交易页") from exc
 
-    report("locate_button", "正在定位「発送方法を変更する」按钮…")
-    btn = page.get_by_role("button", name=_CHANGE_METHOD_BUTTON_TEXT)
-    try:
-        await btn.first.wait_for(state="visible", timeout=4000)
-    except Exception:
-        btn = page.locator(f'button:has-text("{_CHANGE_METHOD_BUTTON_TEXT}")')
-        try:
-            await btn.first.wait_for(state="visible", timeout=2000)
-        except Exception as exc:
+        report("locate_button", "正在定位「発送方法を変更する」…")
+        # 注意：交易页的「発送方法を変更する」是 <a> 链接（role=link），不是 <button>。
+        # 因此 get_by_role("button") / button:has-text 都匹配不到。优先用稳定的 data-location，
+        # 再回落到 link/button/任意可点元素的文本匹配，并做可视+轮询。
+        if not await _click_change_method_entry(page):
             raise RuntimeError(
-                f"未找到「{_CHANGE_METHOD_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
-            ) from exc
-    report("click_button", "正在点击「発送方法を変更する」…")
-    await btn.first.click()
-    log.info("[shipping] 已点击「%s」 account_id=%s", _CHANGE_METHOD_BUTTON_TEXT, aid)
+                f"未找到「{_CHANGE_METHOD_BUTTON_TEXT}」入口（当前 URL: {page.url}）"
+            )
+        report("click_button", "正在点击「発送方法を変更する」…")
+        log.info("[shipping] 已点击「%s」 account_id=%s", _CHANGE_METHOD_BUTTON_TEXT, aid)
 
-    # 等待跳转到 /shipping_method 并抓取可选配送方式（radio）
-    try:
-        await page.wait_for_url("**/shipping_method*", timeout=8000)
-    except Exception:
-        log.warning("[shipping] /shipping_method への遷移を観測できず (URL: %s)", page.url)
-    await asyncio.sleep(0.4)
-    options = await _scrape_shipping_method_options(page)
+        # 等待跳转到 /shipping_method 并抓取可选配送方式（radio）
+        try:
+            await page.wait_for_url("**/shipping_method*", timeout=8000)
+        except Exception:
+            log.warning("[shipping] /shipping_method への遷移を観測できず (URL: %s)", page.url)
+        await asyncio.sleep(0.4)
+        options = await _scrape_shipping_method_options(page)
     report("done", "已跳转修改发送方式页")
     return {
         "todo_id": int(todo_id),
         "account_id": aid,
         "clicked": True,
         "options": options,
+    }
+
+
+# 已发行二维码后修改发货方式：交易页上的「商品サイズや発送方法を修正する」按钮
+_REVISE_SLIP_BUTTON_TEXT = "商品サイズや発送方法を修正する"
+_REVISE_SLIP_BUTTON_LOCATION = "transaction:publish:change_shipping_button"
+
+
+async def _click_dialog_change_confirm(page: Any) -> bool:
+    """点二次确认弹窗的行动按钮：优先 data-testid，回落 dialog 内「変更する/修正する」文本。"""
+    try:
+        b = page.locator('[data-testid="dialog-action-button"]')
+        await b.first.wait_for(state="visible", timeout=5000)
+        await b.first.click()
+        return True
+    except Exception:
+        pass
+    for text in (_CHANGE_METHOD_SUBMIT_TEXT, "修正する"):
+        try:
+            b = page.locator(f'[role="dialog"] button:has-text("{text}")')
+            if await b.count() > 0 and await b.first.is_visible():
+                await b.first.click()
+                return True
+        except Exception:
+            pass
+    return False
+
+
+async def revise_shipping_after_qr(
+    todo_id: int,
+    *,
+    progress_job_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """已发行二维码后修改发货方式：点「商品サイズや発送方法を修正する」→ 二次确认「変更する」
+    → 清除已保存的二维码，恢复到可重新选择尺寸/发货方式的状态。"""
+    report = make_sync_reporter(progress_job_id)
+    report("resolve_todo", "正在准备…")
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise ValueError(f"待办事项 id={todo_id} 不存在")
+    aid = int(todo.account_id)
+    item_id = (todo.item_id or "").strip()
+    if not item_id:
+        raise ValueError("该待办无关联 item_id，无法打开交易页")
+    url = f"https://jp.mercari.com/transaction/{item_id}"
+
+    is_wait_shipping = _is_wait_shipping_todo(todo)
+    headless_override = False if is_wait_shipping else None
+    minimized_override = False if is_wait_shipping else None
+    report("open_browser", f"正在打开交易页（{item_id}）…")
+    async with mitm_automation_browser(
+        aid,
+        start_url=url,
+        headless=headless_override,
+        minimized=minimized_override,
+    ) as (mgr, auto_key):
+        page = await mgr.active_tab_page(auto_key)
+
+        report("locate_revise", "正在定位「商品サイズや発送方法を修正する」…")
+        clicked = False
+        loc = page.locator(f'[data-location="{_REVISE_SLIP_BUTTON_LOCATION}"] button')
+        try:
+            await loc.first.wait_for(state="visible", timeout=8000)
+            await loc.first.click()
+            clicked = True
+        except Exception:
+            btn = page.get_by_role("button", name=_REVISE_SLIP_BUTTON_TEXT)
+            try:
+                await btn.first.wait_for(state="visible", timeout=4000)
+                await btn.first.click()
+                clicked = True
+            except Exception:
+                btn2 = page.locator(f'button:has-text("{_REVISE_SLIP_BUTTON_TEXT}")')
+                try:
+                    if await btn2.count() > 0 and await btn2.first.is_visible():
+                        await btn2.first.click()
+                        clicked = True
+                except Exception:
+                    pass
+        if not clicked:
+            raise RuntimeError(
+                f"未找到「{_REVISE_SLIP_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
+            )
+        log.info("[shipping] 已点击「%s」 account_id=%s", _REVISE_SLIP_BUTTON_TEXT, aid)
+
+        # 二次确认弹窗 → 点「変更する」
+        report("confirm_revise", "正在确认「変更する」…")
+        await asyncio.sleep(0.4)
+        if not await _click_dialog_change_confirm(page):
+            log.warning("[shipping] 二次确认「変更する」未出现或已自动提交 (URL: %s)", page.url)
+        # 等回到交易页（修正后回到可重新选择尺寸/方式的状态）
+        try:
+            await page.wait_for_url("**/transaction/*", timeout=8000)
+        except Exception:
+            pass
+        await asyncio.sleep(0.6)
+
+    # 清除已保存的二维码（DB + 本地文件 + detail_json）
+    _clear_qr_image(int(todo_id))
+    report("done", "已修正发货方式并清除二维码")
+    return {
+        "todo_id": int(todo_id),
+        "account_id": aid,
+        "clicked": True,
+        "qr_image_url": None,
     }
 
 
@@ -1583,6 +2003,26 @@ async def confirm_change_shipping_method(
             clicked = True
         except Exception as exc:
             raise RuntimeError(f"未找到「{_CHANGE_METHOD_SUBMIT_TEXT}」按钮") from exc
+
+    # 二次确认弹窗：点击第一次「変更する」后会弹出确认 dialog，里面还有一个「変更する」
+    # （data-testid="dialog-action-button"），需要再点一次才会真正提交。
+    report("confirm_submit", "正在确认「変更する」…")
+    try:
+        confirm_btn = page.locator('[data-testid="dialog-action-button"]')
+        await confirm_btn.first.wait_for(state="visible", timeout=4000)
+        await confirm_btn.first.click()
+        log.info("[shipping] 已点击二次确认「%s」 account_id=%s", _CHANGE_METHOD_SUBMIT_TEXT, aid)
+    except Exception:
+        # 回落：在 dialog/footer 区域里按文本找第二个「変更する」
+        try:
+            dlg_submit = page.locator(
+                f'[role="dialog"] button:has-text("{_CHANGE_METHOD_SUBMIT_TEXT}")'
+            )
+            if await dlg_submit.count() > 0 and await dlg_submit.first.is_visible():
+                await dlg_submit.first.click()
+                log.info("[shipping] 已点击二次确认（回落） account_id=%s", aid)
+        except Exception as exc:
+            log.debug("[change-method] 二次确认未出现或已自动提交: %s", exc)
 
     # 等待回到 transaction 详情页（离开 /shipping_method）
     try:

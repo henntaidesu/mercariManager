@@ -19,6 +19,8 @@ from ....use_mercari.get_to_du_list.transaction_detail import (
     confirm_shipping_selection,
     fetch_transaction_detail,
     finalize_post_shipping,
+    get_cached_transaction_detail,
+    revise_shipping_after_qr,
     push_remote_camera_frame,
     read_post_shipping_confirm_info,
     send_message_reaction_by_index,
@@ -99,6 +101,14 @@ def _validate_job_id(raw: Optional[str]) -> Optional[str]:
     return jid
 
 
+async def get_cached_todo_transaction_detail(todo_id: int) -> Dict[str, Any]:
+    """读取交易详情缓存（无浏览器）。点开「处理」面板时优先用本地缓存，避免每次都开浏览器。"""
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise HTTPException(status_code=404, detail="待办事项不存在")
+    return get_cached_transaction_detail(int(todo_id))
+
+
 async def fetch_todo_transaction_detail(
     todo_id: int,
     req: Optional[TransactionActionRequest] = None,
@@ -157,6 +167,33 @@ async def send_transaction_message_endpoint(
             clear_sync_progress(jid)
 
 
+async def revise_shipping_after_qr_endpoint(
+    todo_id: int,
+    req: Optional[TransactionActionRequest] = None,
+) -> Dict[str, Any]:
+    """已发行二维码后修改发货方式：点「商品サイズや発送方法を修正する」+ 二次确认「変更する」，清除二维码。"""
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise HTTPException(status_code=404, detail="待办事项不存在")
+    aid = int(getattr(todo, "account_id", 0) or 0)
+    if not aid:
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
+    jid = _validate_job_id(req.progress_job_id if req else None)
+    try:
+        return await run_mercari_serial_async(
+            queue_key_for_mercari_account(aid),
+            lambda: revise_shipping_after_qr(int(todo_id), progress_job_id=jid),
+            suppress_idle_close=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        if jid:
+            clear_sync_progress(jid)
+
+
 async def start_shipping_class_endpoint(
     todo_id: int,
     req: Optional[TransactionActionRequest] = None,
@@ -200,7 +237,9 @@ async def confirm_shipping_selection_endpoint(
             queue_key_for_mercari_account(aid),
             lambda: confirm_shipping_selection(
                 int(todo_id), req.class_text, req.facility,
-                scan_qr=bool(req.scan_qr), progress_job_id=jid,
+                scan_qr=bool(req.scan_qr),
+                generate_code=bool(req.generate_code),
+                progress_job_id=jid,
             ),
             suppress_idle_close=True,
         )

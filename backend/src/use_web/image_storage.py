@@ -80,6 +80,21 @@ async def save_upload_image(
     return f"/imges/{filename}"
 
 
+def save_image_bytes(content: bytes, ext: str = "png", prefix: str = "img") -> str:
+    """保存原始图片字节到 backend/imges，返回可访问路径 /imges/xxx.ext。"""
+    ensure_image_dir()
+    e = (ext or "png").lower().lstrip(".")
+    if e == "jpeg":
+        e = "jpg"
+    if e not in {"jpg", "png", "webp", "gif"}:
+        e = "png"
+    filename = f"{prefix}_{uuid.uuid4().hex}.{e}"
+    abs_path = os.path.join(get_image_root(), filename)
+    with open(abs_path, "wb") as f:
+        f.write(content)
+    return f"/imges/{filename}"
+
+
 def delete_image_file(path_or_url: Optional[str]) -> None:
     if not path_or_url or not isinstance(path_or_url, str):
         return

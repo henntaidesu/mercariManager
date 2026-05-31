@@ -15,6 +15,9 @@ export const todosApi = {
   /** 处理按钮：打开浏览器到 transaction 页并抓取 DOM 字段 */
   fetchTransactionDetail: (todoId, body = {}, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/transaction-detail`, body || {}, { timeout: 0, ...axiosConfig }),
+  /** 交易详情缓存：读本地 DB 缓存（不开浏览器），打开「处理」面板时优先用 */
+  transactionDetailCache: (todoId, axiosConfig = {}) =>
+    http.get(`/use_web/todos/${encodeURIComponent(todoId)}/transaction-detail-cache`, { timeout: 20000, ...axiosConfig }),
   /** 关闭交易详情 dialog 时关掉对应账号的 __auto 浏览器（fire-and-forget） */
   closeDetailBrowser: (accountId, axiosConfig = {}) =>
     http.post(`/use_web/todos/close-detail-browser/${encodeURIComponent(accountId)}`, {}, { timeout: 0, ...axiosConfig }),
@@ -50,5 +53,8 @@ export const todosApi = {
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/shipping/change-method`, body || {}, { timeout: 60000, ...axiosConfig }),
   /** 在 /shipping_method 页选中指定配送方式并点「変更する」 */
   confirmChangeShippingMethod: (todoId, body = {}, axiosConfig = {}) =>
-    http.post(`/use_web/todos/${encodeURIComponent(todoId)}/shipping/confirm-change-method`, body || {}, { timeout: 60000, ...axiosConfig })
+    http.post(`/use_web/todos/${encodeURIComponent(todoId)}/shipping/confirm-change-method`, body || {}, { timeout: 60000, ...axiosConfig }),
+  /** 已发行二维码后修改发货方式：点「商品サイズや発送方法を修正する」+ 二次确认，清除二维码 */
+  reviseShippingAfterQr: (todoId, body = {}, axiosConfig = {}) =>
+    http.post(`/use_web/todos/${encodeURIComponent(todoId)}/shipping/revise-after-qr`, body || {}, { timeout: 60000, ...axiosConfig })
 }

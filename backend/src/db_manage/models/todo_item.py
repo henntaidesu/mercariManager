@@ -115,6 +115,25 @@ class TodoItemModel(BaseModel):
                 "not_null": False,
                 "default": None,
             },
+            # ── 交易详情缓存（避免每次打开都开浏览器从煤炉抓取）──
+            # detail_json: fetch_transaction_detail 的完整结果（JSON 字符串）
+            "detail_json": {
+                "type": "TEXT",
+                "not_null": False,
+                "default": None,
+            },
+            # detail_synced_at: 上次抓取交易详情的毫秒时间戳
+            "detail_synced_at": {
+                "type": "INTEGER",
+                "not_null": False,
+                "default": None,
+            },
+            # qr_image_path: 发行后保存到本地的发货二维码图片可访问路径（/imges/xxx.png）
+            "qr_image_path": {
+                "type": "TEXT",
+                "not_null": False,
+                "default": None,
+            },
         }
 
     @classmethod
