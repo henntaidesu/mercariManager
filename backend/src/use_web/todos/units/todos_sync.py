@@ -17,6 +17,8 @@ from ....use_mercari.get_to_du_list.transaction_detail import (
     click_change_shipping_method,
     confirm_shipping_selection,
     fetch_transaction_detail,
+    finalize_post_shipping,
+    read_post_shipping_confirm_info,
     send_message_reaction_by_index,
     send_transaction_message,
     start_select_shipping_class,
@@ -306,6 +308,53 @@ async def close_detail_browser(account_id: int) -> Dict[str, Any]:
     main_key = mercari_account_key(aid)
     result = await mgr.close_session(main_key, force=True)
     return {"account_id": aid, **(result if isinstance(result, dict) else {})}
+
+
+async def post_shipping_info_endpoint(todo_id: int) -> Dict[str, Any]:
+    """QR 读取成功后，从交易页读取「発送確認符号 / 追跡番号」供前端二次确认展示。"""
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise HTTPException(status_code=404, detail="待办事项不存在")
+    aid = int(getattr(todo, "account_id", 0) or 0)
+    if not aid:
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
+    try:
+        return await run_mercari_serial_async(
+            queue_key_for_mercari_account(aid),
+            lambda: read_post_shipping_confirm_info(int(todo_id)),
+            suppress_idle_close=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+async def finalize_post_shipping_endpoint(
+    todo_id: int,
+    req: Optional[TransactionActionRequest] = None,
+) -> Dict[str, Any]:
+    """用户二次确认后：勾选发送用シール → 发送通知 → 「発送しました」。"""
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise HTTPException(status_code=404, detail="待办事项不存在")
+    aid = int(getattr(todo, "account_id", 0) or 0)
+    if not aid:
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
+    jid = _validate_job_id(req.progress_job_id if req else None)
+    try:
+        return await run_mercari_serial_async(
+            queue_key_for_mercari_account(aid),
+            lambda: finalize_post_shipping(int(todo_id), progress_job_id=jid),
+            suppress_idle_close=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        if jid:
+            clear_sync_progress(jid)
 
 
 async def qr_scanner_frame_endpoint(todo_id: int) -> Dict[str, Any]:

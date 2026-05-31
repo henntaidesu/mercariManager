@@ -487,6 +487,37 @@
   color: var(--el-color-success);
   font-size: 11px;
 }
+/* 发货二次确认弹窗 */
+.ship-confirm-ok {
+  color: var(--el-color-success);
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.ship-confirm-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 14px;
+}
+.ship-confirm-label {
+  color: var(--el-text-color-secondary);
+  width: 150px;
+  flex-shrink: 0;
+}
+.ship-confirm-value {
+  font-family: var(--el-font-family-monospace, monospace);
+  font-weight: 600;
+  font-size: 15px;
+}
+.ship-confirm-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+}
+
 /* QR 扫描镜像弹窗 */
 .qr-scan-hint {
   font-size: 12px;

@@ -36,6 +36,12 @@ export const todosApi = {
   /** QR 扫描页镜像：抓取有头浏览器当前标签页一帧（base64 JPEG）+ 完成状态 */
   qrScannerFrame: (todoId, axiosConfig = {}) =>
     http.get(`/use_web/todos/${encodeURIComponent(todoId)}/qr-scanner-frame`, { timeout: 20000, ...axiosConfig }),
+  /** QR 读取成功后读取「発送確認符号 / 追跡番号」供二次确认 */
+  postShippingInfo: (todoId, axiosConfig = {}) =>
+    http.get(`/use_web/todos/${encodeURIComponent(todoId)}/post-shipping-info`, { timeout: 30000, ...axiosConfig }),
+  /** 用户二次确认后：勾选シール → 发送通知 → 「発送しました」 */
+  finalizePostShipping: (todoId, body = {}, axiosConfig = {}) =>
+    http.post(`/use_web/todos/${encodeURIComponent(todoId)}/finalize-post-shipping`, body || {}, { timeout: 60000, ...axiosConfig }),
   /** 点「発送方法を変更する」（仅导航，后续由用户在浏览器内手动） */
   changeShippingMethod: (todoId, body = {}, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/shipping/change-method`, body || {}, { timeout: 60000, ...axiosConfig })

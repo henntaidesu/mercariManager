@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -461,6 +462,11 @@ _SELECT_NEXT_BUTTON_TEXT = "選択して次へ"
 _SELECT_FINISH_BUTTON_TEXT = "選択して完了する"
 # ゆうパケットポスト / ゆうパケットポストmini 完了後、交易ページに出る「2次元コードを読み取る」
 _SCAN_QR_BUTTON_TEXT = "2次元コードを読み取る"
+# 読み取り成功後の交易ページ上の発送確定 UI
+_SCAN_OK_TEXT = "読み取りが正しく完了しました"
+_STICKER_CHECKBOX_TEXT = "梱包した商品に発送用シールを貼りました"
+_NOTIFY_SHIP_BUTTON_TEXT = "商品を発送したので、発送通知をする"
+_SHIPPED_CONFIRM_BUTTON_TEXT = "発送しました"
 
 
 async def start_select_shipping_class(
@@ -742,6 +748,129 @@ async def capture_qr_scanner_frame(todo_id: int) -> Dict[str, Any]:
         "done": done,
         "url": url,
     }
+
+
+async def read_post_shipping_confirm_info(todo_id: int) -> Dict[str, Any]:
+    """QR 読み取り成功後、交易ページに表示される確認情報を読み取って返す。
+
+    返り値:
+      - ``ok``: 「読み取りが正しく完了しました」が表示されているか
+      - ``confirm_code``: ポスト発送確認符号（例: BE08TF）
+      - ``tracking_no``: 追跡番号（例: 647528803213）
+    """
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise ValueError(f"待办事项 id={todo_id} 不存在")
+    aid = int(todo.account_id)
+    mgr = get_web_drive_manager()
+    auto_key = mercari_account_key(aid)
+    try:
+        page = await mgr.active_tab_page(auto_key)
+    except Exception as exc:
+        raise RuntimeError("浏览器未打开或已关闭") from exc
+
+    # SPA 再描画待ち（スキャン直後に取ると未反映の場合がある）
+    text = ""
+    for _ in range(12):
+        try:
+            text = await page.inner_text("body")
+        except Exception:
+            text = ""
+        if _SCAN_OK_TEXT in text or "発送確認符号" in text or "追跡番号" in text:
+            break
+        await asyncio.sleep(0.4)
+
+    ok = _SCAN_OK_TEXT in text
+    confirm_code = None
+    m = re.search(r"発送確認符号[\s:：]*([A-Za-z0-9]+)", text)
+    if m:
+        confirm_code = m.group(1)
+    tracking_no = None
+    m = re.search(r"追跡番号[\s:：]*([0-9\-]+)", text)
+    if m:
+        tracking_no = m.group(1)
+
+    log.info(
+        "[postship] 読み取り情報 ok=%s code=%s tracking=%s todo=%s",
+        ok, confirm_code, tracking_no, todo_id,
+    )
+    return {
+        "todo_id": int(todo_id),
+        "account_id": aid,
+        "ok": ok,
+        "confirm_code": confirm_code,
+        "tracking_no": tracking_no,
+    }
+
+
+async def finalize_post_shipping(
+    todo_id: int,
+    *,
+    progress_job_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """ユーザーの二次確認後：シール貼付チェック → 発送通知 → 「発送しました」を順にクリック。"""
+    report = make_sync_reporter(progress_job_id)
+    report("resolve_todo", "正在准备发货确认…")
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise ValueError(f"待办事项 id={todo_id} 不存在")
+    aid = int(todo.account_id)
+    mgr = get_web_drive_manager()
+    auto_key = mercari_account_key(aid)
+    report("attach_browser", "正在连接已打开的浏览器…")
+    try:
+        page = await mgr.active_tab_page(auto_key)
+    except Exception as exc:
+        raise RuntimeError("浏览器未打开或已关闭") from exc
+
+    # ── Step 1: シール貼付チェックボックス（ラベル文言クリックで checked） ──
+    report("check_sticker", "正在勾选「発送用シールを貼りました」…")
+    cb = page.get_by_text(_STICKER_CHECKBOX_TEXT, exact=False).first
+    try:
+        await cb.wait_for(state="visible", timeout=8000)
+        await cb.click()
+        log.info("[postship] チェック「%s」", _STICKER_CHECKBOX_TEXT)
+    except Exception as exc:
+        raise RuntimeError(
+            f"未找到「{_STICKER_CHECKBOX_TEXT}」（当前 URL: {page.url}）"
+        ) from exc
+    await asyncio.sleep(0.2)
+
+    # ── Step 2: 「商品を発送したので、発送通知をする」 ──
+    report("click_notify", "正在点击「発送通知をする」…")
+    notify = page.get_by_role("button", name=_NOTIFY_SHIP_BUTTON_TEXT)
+    try:
+        await notify.first.wait_for(state="visible", timeout=6000)
+    except Exception:
+        notify = page.locator(f'button:has-text("{_NOTIFY_SHIP_BUTTON_TEXT}")')
+        try:
+            await notify.first.wait_for(state="visible", timeout=4000)
+        except Exception as exc:
+            raise RuntimeError(
+                f"未找到「{_NOTIFY_SHIP_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
+            ) from exc
+    await notify.first.click()
+    log.info("[postship] 点击「%s」", _NOTIFY_SHIP_BUTTON_TEXT)
+    await asyncio.sleep(0.4)
+
+    # ── Step 3: 確認ダイアログ「発送しました」 ──
+    report("click_shipped", "正在点击「発送しました」…")
+    confirm = page.get_by_role("button", name=_SHIPPED_CONFIRM_BUTTON_TEXT)
+    try:
+        await confirm.first.wait_for(state="visible", timeout=6000)
+    except Exception:
+        confirm = page.locator(f'button:has-text("{_SHIPPED_CONFIRM_BUTTON_TEXT}")')
+        try:
+            await confirm.first.wait_for(state="visible", timeout=4000)
+        except Exception as exc:
+            raise RuntimeError(
+                f"未找到「{_SHIPPED_CONFIRM_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
+            ) from exc
+    await confirm.first.click()
+    log.info("[postship] 点击「%s」 完成发货通知", _SHIPPED_CONFIRM_BUTTON_TEXT)
+
+    report("done", "已完成发货通知")
+    return {"todo_id": int(todo_id), "account_id": aid, "success": True}
 
 
 async def submit_transaction_review(

@@ -744,13 +744,9 @@ export default defineComponent({
         if (res?.done) {
           qrScanDone.value = true
           stopQrScanMirror()
-          ElMessage.success(t('todos.qrScanDone'))
-          // 扫描成功，煤炉已跳回交易页 → 关弹窗并刷新详情/列表
-          setTimeout(() => {
-            qrScanVisible.value = false
-            detailDialogVisible.value = false
-            load()
-          }, 1200)
+          // 扫描成功 → 自动关闭扫码弹窗 → 读取确认信息并弹二次确认框
+          qrScanVisible.value = false
+          openShipConfirmDialog()
         }
       } catch (e) {
         console.error('[QR镜像]', e?.message || e)
@@ -771,6 +767,57 @@ export default defineComponent({
     function onQrScanDialogClose() {
       stopQrScanMirror()
       qrScanVisible.value = false
+    }
+
+    // ─── 发货二次确认（読み取り成功後の発送確認符号 / 追跡番号 → 用户确认 → 発送通知） ───
+    const shipConfirmVisible = ref(false)
+    const shipConfirmLoading = ref(false)
+    const shipConfirmInfo = reactive({ ok: false, confirm_code: '', tracking_no: '' })
+
+    async function openShipConfirmDialog() {
+      const id = currentRow.value?.id
+      if (!id) return
+      shipConfirmInfo.ok = false
+      shipConfirmInfo.confirm_code = ''
+      shipConfirmInfo.tracking_no = ''
+      shipConfirmVisible.value = true
+      shipConfirmLoading.value = true
+      try {
+        const res = await todosApi.postShippingInfo(id)
+        shipConfirmInfo.ok = !!res?.ok
+        shipConfirmInfo.confirm_code = res?.confirm_code || ''
+        shipConfirmInfo.tracking_no = res?.tracking_no || ''
+      } catch (e) {
+        if (!e?.response) ElMessage.error(e?.message || t('todos.fetchFailed'))
+      } finally {
+        shipConfirmLoading.value = false
+      }
+    }
+
+    async function onShipConfirmSubmit() {
+      const id = currentRow.value?.id
+      if (!id) return
+      shipConfirmLoading.value = true
+      try {
+        await txOverlay.run({
+          title: t('todos.finalizingShipping'),
+          consoleTag: '[发货通知]',
+          pollFn: (jobId) => todosApi.getSyncProgress(jobId),
+          actionFn: (jobId) => todosApi.finalizePostShipping(id, { progress_job_id: jobId }),
+        })
+        ElMessage.success(t('todos.shipNotified'))
+        shipConfirmVisible.value = false
+        detailDialogVisible.value = false
+        load()
+      } catch (e) {
+        if (!e?.response) ElMessage.error(e?.message || t('todos.submitFailed'))
+      } finally {
+        shipConfirmLoading.value = false
+      }
+    }
+
+    function onShipConfirmCancel() {
+      shipConfirmVisible.value = false
     }
 
     async function onClickShippingChangeMethod() {
@@ -1038,6 +1085,11 @@ export default defineComponent({
       startQrScanMirror,
       stopQrScanMirror,
       onQrScanDialogClose,
+      shipConfirmVisible,
+      shipConfirmLoading,
+      shipConfirmInfo,
+      onShipConfirmSubmit,
+      onShipConfirmCancel,
       onClickShippingChangeMethod,
       onDetailSubmit,
       onResetReplyDefault,

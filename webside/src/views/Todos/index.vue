@@ -481,6 +481,34 @@
       </template>
     </el-dialog>
 
+    <!-- 发货二次确认：展示读取到的发送確認符号 / 追跡番号，用户确认后发送通知 -->
+    <el-dialog
+      v-model="shipConfirmVisible"
+      :title="t('todos.shipConfirmTitle')"
+      width="460px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div v-loading="shipConfirmLoading">
+        <div v-if="shipConfirmInfo.ok" class="ship-confirm-ok">{{ t('todos.scanReadOk') }}</div>
+        <div class="ship-confirm-row">
+          <span class="ship-confirm-label">{{ t('todos.postConfirmCode') }}</span>
+          <span class="ship-confirm-value">{{ shipConfirmInfo.confirm_code || dash }}</span>
+        </div>
+        <div class="ship-confirm-row">
+          <span class="ship-confirm-label">{{ t('todos.trackingNo') }}</span>
+          <span class="ship-confirm-value">{{ shipConfirmInfo.tracking_no || dash }}</span>
+        </div>
+        <div class="ship-confirm-hint">{{ t('todos.shipConfirmHint') }}</div>
+      </div>
+      <template #footer>
+        <el-button @click="onShipConfirmCancel">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="shipConfirmLoading" @click="onShipConfirmSubmit">
+          {{ t('todos.shipConfirmSubmit') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
     <teleport to="body">
       <div
         v-show="syncOverlayVisible"
