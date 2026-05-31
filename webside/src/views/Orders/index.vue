@@ -405,7 +405,7 @@
       destroy-on-close
       class="order-edit-dialog"
     >
-      <el-form :model="form" :rules="rules" ref="formRef" label-width="140px" class="order-edit-form">
+      <el-form :model="form" :rules="rules" ref="formRef" label-width="140px" class="order-edit-form" disabled>
         <el-form-item v-if="form.id != null" :label="t('orders.dbId')">
           <el-input :model-value="String(form.id)" disabled />
         </el-form-item>

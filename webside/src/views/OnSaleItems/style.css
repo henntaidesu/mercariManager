@@ -98,6 +98,39 @@
 .detail-inv-table {
   width: 100%;
 }
+
+.detail-img-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.detail-img-group__label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 6px;
+}
+
+.detail-img-group__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-linked-img {
+  width: 76px;
+  height: 76px;
+  border-radius: 6px;
+  border: 1px solid var(--el-border-color-lighter);
+  overflow: hidden;
+  cursor: zoom-in;
+  background: var(--el-fill-color-light);
+}
+
+.on-sale-revise-form {
+  padding-right: 8px;
+}
 .detail-listing-body-wrap :deep(.el-textarea__inner) {
   font-family: inherit;
   line-height: 1.55;

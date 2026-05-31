@@ -12,6 +12,7 @@ from ....use_mercari.on_sale_items_sync import _is_active_on_sale
 from ....use_mercari.get_order.description_mgmt_ids import (
     parse_management_ids_from_description,
 )
+from ...inventory.units.inventory_helpers import _inventory_paths_from_parsed_row
 
 
 _MERCARI_ID_SEP_RE = re.compile(r"[\n,，、\s]+")
@@ -94,7 +95,11 @@ def _attach_inventory_by_item_id(items: list) -> None:
             i.[on_sale_quantity],
             TRIM(IFNULL(i.[barcode], '')),
             {_wh_w},
-            IFNULL(w.[location], '')
+            IFNULL(w.[location], ''),
+            i.[image],
+            i.[image_front],
+            i.[image_back],
+            i.[images_json]
         FROM [inventory] i
         LEFT JOIN [warehouses] w ON w.[id] = i.[warehouse_id]
         WHERE TRIM(IFNULL(i.[mercari_item_id], '')) != ''
@@ -102,11 +107,11 @@ def _attach_inventory_by_item_id(items: list) -> None:
     rows = db.execute_query(sql)
     by_mid: Dict[str, list] = {}
     wanted = set(raw)
-    for mids_raw, iid, iname, qty, osq, barcode, wname, wloc in rows:
+    for mids_raw, iid, iname, qty, osq, barcode, wname, wloc, img, img_front, img_back, images_json in rows:
         mids = _split_mercari_item_ids(mids_raw)
         if not mids:
             continue
-        payload = (iid, iname, qty, osq, barcode, wname, wloc)
+        payload = (iid, iname, qty, osq, barcode, wname, wloc, img, img_front, img_back, images_json)
         for k in mids:
             if k in wanted:
                 by_mid.setdefault(k, []).append(payload)
@@ -128,7 +133,7 @@ def _attach_inventory_by_item_id(items: list) -> None:
             barcode_parts = []
             inventory_name_parts = []
             inventory_lines = []
-            for iid, iname, qty, osq, barcode, wname, wloc in hits:
+            for iid, iname, qty, osq, barcode, wname, wloc, img, img_front, img_back, images_json in hits:
                 loc_name = str(wname or "").strip() or str(wloc or "").strip() or "-"
                 loc_parts.append(
                     f"#{int(iid)} {loc_name} x{int(osq) if osq is not None else 0}"
@@ -140,6 +145,14 @@ def _attach_inventory_by_item_id(items: list) -> None:
                 n = str(iname or "").strip()
                 if n:
                     inventory_name_parts.append(n)
+                line_images = _inventory_paths_from_parsed_row(
+                    {
+                        "image": img,
+                        "image_front": img_front,
+                        "image_back": img_back,
+                        "images_json": images_json,
+                    }
+                )
                 inventory_lines.append(
                     {
                         "management_id": str(int(iid)),
@@ -147,6 +160,7 @@ def _attach_inventory_by_item_id(items: list) -> None:
                         "location": loc_name,
                         "on_sale_quantity": _to_int(osq, 0),
                         "inventory_name": n or None,
+                        "images": line_images,
                     }
                 )
             row["inventory_match_count"] = len(hits)

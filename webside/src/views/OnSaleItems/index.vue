@@ -284,6 +284,35 @@
             </el-descriptions-item>
           </el-descriptions>
 
+          <div class="detail-section-title">{{ t('onSaleItems.linkedProductImages') }}</div>
+          <div v-if="detailLinkedImageGroups.length" class="detail-img-groups">
+            <div v-for="grp in detailLinkedImageGroups" :key="grp.management_id" class="detail-img-group">
+              <div class="detail-img-group__label">
+                {{ t('onSaleItems.mgmtIdLabel') }}: {{ grp.management_id }}
+                <span v-if="grp.inventory_name" class="cell-muted">（{{ grp.inventory_name }}）</span>
+              </div>
+              <div class="detail-img-group__list">
+                <el-image
+                  v-for="(img, idx) in grp.images"
+                  :key="idx"
+                  class="detail-linked-img"
+                  :src="img.thumb"
+                  :preview-src-list="grp.previewList"
+                  :initial-index="idx"
+                  fit="cover"
+                  preview-teleported
+                  hide-on-click-modal
+                  :z-index="4000"
+                  referrerpolicy="no-referrer"
+                  lazy
+                >
+                  <template #error><span class="thumb-fallback">-</span></template>
+                </el-image>
+              </div>
+            </div>
+          </div>
+          <el-empty v-else :description="t('onSaleItems.noLinkedImages')" :image-size="48" />
+
           <div class="detail-section-title">{{ t('onSaleItems.linkedInventoryDetail') }}</div>
           <el-table
             v-if="detailInventoryLines.length"
@@ -307,6 +336,13 @@
         <el-button @click="detailViewVisible = false">{{ t('common.close') }}</el-button>
         <el-button
           v-if="detailViewBase"
+          type="primary"
+          @click="openReviseDialog"
+        >
+          {{ t('onSaleItems.editListing') }}
+        </el-button>
+        <el-button
+          v-if="detailViewBase"
           type="danger"
           plain
           :loading="deleteItemLoading"
@@ -322,6 +358,46 @@
           @click="detailViewRefreshFromMercari"
         >
           {{ t('onSaleItems.refetchFromMercari') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="reviseDialogVisible"
+      :title="t('onSaleItems.reviseDialogTitle')"
+      width="600px"
+      append-to-body
+      destroy-on-close
+      class="on-sale-revise-dialog"
+    >
+      <el-form label-width="110px" class="on-sale-revise-form">
+        <el-form-item :label="t('onSaleItems.titleColumn')">
+          <el-input v-model="reviseForm.name" maxlength="80" show-word-limit clearable />
+        </el-form-item>
+        <el-form-item :label="t('onSaleItems.priceJpy')">
+          <el-input-number
+            v-model="reviseForm.price"
+            :min="0"
+            :precision="0"
+            :controls="false"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item :label="t('onSaleItems.listingDescriptionEdit')">
+          <el-input
+            v-model="reviseForm.listing_description"
+            type="textarea"
+            :autosize="{ minRows: 6, maxRows: 18 }"
+            maxlength="4000"
+            show-word-limit
+          />
+        </el-form-item>
+        <!-- 出品方式：稍后接入 -->
+      </el-form>
+      <template #footer>
+        <el-button @click="reviseDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="reviseSaving" @click="submitReviseDetail">
+          {{ t('common.save') }}
         </el-button>
       </template>
     </el-dialog>

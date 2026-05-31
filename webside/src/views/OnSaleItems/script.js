@@ -348,6 +348,57 @@ export default defineComponent({
       detailViewOnSaleItems.value = []
     }
 
+    /** 本地 /imges/ 路径转缩略图接口 URL；非本地图片原样返回（与库存页一致） */
+    function thumbUrl(src, size = 200) {
+      if (!src || !src.startsWith('/imges/')) return src || ''
+      return `/mercariV2/src/use_web/inventory/image-thumb?path=${encodeURIComponent(src)}&size=${size}`
+    }
+
+    /**
+     * 详情弹窗：按管理 ID（= 库存 id）聚合关联商品图片，去重后每组展示其全部图片。
+     * 图片路径来自后端 inventory_lines[].images（库存表 images_json / image_front 等）。
+     */
+    const detailLinkedImageGroups = computed(() => {
+      const seen = new Set()
+      const groups = []
+      for (const ln of detailInventoryLines.value) {
+        const mid = String(ln?.management_id || '').trim()
+        if (!mid || seen.has(mid)) continue
+        const imgs = Array.isArray(ln?.images)
+          ? ln.images.map((s) => String(s || '').trim()).filter(Boolean)
+          : []
+        if (!imgs.length) continue
+        seen.add(mid)
+        groups.push({
+          management_id: mid,
+          inventory_name: String(ln?.inventory_name || '').trim(),
+          images: imgs.map((p) => ({ thumb: thumbUrl(p, 160), big: thumbUrl(p, 900) })),
+          previewList: imgs.map((p) => thumbUrl(p, 900)),
+        })
+      }
+      return groups
+    })
+
+    /** 修改在售商品弹窗（标题 / 价格 / 商品说明；出品方式稍后接入，保存方法由后续提供） */
+    const reviseDialogVisible = ref(false)
+    const reviseSaving = ref(false)
+    const reviseForm = reactive({ name: '', price: 0, listing_description: '' })
+
+    function openReviseDialog() {
+      const base = detailViewBase.value
+      if (!base) return
+      reviseForm.name = String(base.name || '')
+      reviseForm.price = Number(base.price || 0)
+      reviseForm.listing_description = String(detailListingBodyText.value || '')
+      reviseDialogVisible.value = true
+    }
+
+    async function submitReviseDetail() {
+      // TODO: 接入修改方法（标题 / 价格 / 商品说明 / 出品方式）。
+      // 可用数据：detailViewBase.value?.item_id 与 reviseForm.{ name, price, listing_description }
+      ElMessage.info(t('onSaleItems.reviseTodoMsg'))
+    }
+
     function resolveAccountKeyForRow(row) {
       const sid = String(row?.seller_id || '').trim()
       if (!sid) return null
@@ -788,6 +839,13 @@ export default defineComponent({
       fetchItemDetail,
       runSync,
       loadSellerAccounts,
+      thumbUrl,
+      detailLinkedImageGroups,
+      reviseDialogVisible,
+      reviseSaving,
+      reviseForm,
+      openReviseDialog,
+      submitReviseDetail,
     }
   },
 })
