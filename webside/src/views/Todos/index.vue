@@ -264,6 +264,83 @@
               </el-button>
             </div>
             <div class="detail-empty-hint">{{ t('todos.shippingButtonsHint') }}</div>
+
+            <!-- 待发货：包材选择 + 关联订单出库（发货成功后同步到 /#/orders） -->
+            <div v-if="isWaitShipping" class="detail-ship-commit">
+              <div class="detail-ship-commit-title">{{ t('todos.packagingAndOutbound') }}</div>
+
+              <div class="detail-ship-pack">
+                <div class="detail-label">{{ t('orders.packagingName') }}</div>
+                <el-select
+                  v-model="shipPackaging.item_name"
+                  filterable
+                  clearable
+                  size="small"
+                  style="width: 100%"
+                  :placeholder="t('orders.packagingItemPlaceholder')"
+                  @change="onShipPackagingChange"
+                >
+                  <el-option :label="t('orders.noPackaging')" :value="PACKAGING_ITEM_NONE" />
+                  <el-option
+                    v-for="item in packagingItemsOptions"
+                    :key="item.item_name"
+                    :label="`${item.item_name}（${t('orders.stockLabel')}:${Number(item.quantity || 0)}）`"
+                    :value="item.item_name"
+                  />
+                </el-select>
+                <div v-if="isShipPackagingConcrete" class="detail-ship-pack-row">
+                  <el-input-number
+                    v-model="shipPackaging.quantity"
+                    :min="1"
+                    :precision="0"
+                    :controls="false"
+                    size="small"
+                  />
+                  <el-input-number
+                    v-model="shipPackaging.unit_price"
+                    :min="1"
+                    :precision="0"
+                    :controls="false"
+                    size="small"
+                    :placeholder="t('orders.unitPrice')"
+                  />
+                  <span class="detail-ship-pack-amount">
+                    {{ t('common.amount') }}: {{ Math.round(expenseAmount(shipPackaging)) }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="detail-ship-outbound" v-loading="shipOutbound.loading">
+                <div class="detail-label">{{ t('todos.outboundLines') }}</div>
+                <el-table
+                  v-if="shipOutbound.lines.length"
+                  :data="shipOutbound.lines"
+                  size="small"
+                  border
+                >
+                  <el-table-column
+                    :label="t('orders.inventoryName')"
+                    prop="inventory_name"
+                    min-width="120"
+                    show-overflow-tooltip
+                  />
+                  <el-table-column :label="t('common.quantity')" prop="quantity" width="64" align="center" />
+                  <el-table-column :label="t('common.status')" width="86" align="center">
+                    <template #default="{ row: line }">
+                      <el-tag
+                        :type="Number(line?.is_stocked_out || 0) === 1 ? 'success' : 'info'"
+                        size="small"
+                      >
+                        {{ Number(line?.is_stocked_out || 0) === 1 ? t('orders.stockedOut') : t('orders.pendingStockOut') }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <div v-else class="detail-empty">{{ t('todos.noOutboundLines') }}</div>
+              </div>
+
+              <div class="detail-empty-hint">{{ t('todos.shipCommitHint') }}</div>
+            </div>
           </section>
         </div>
 

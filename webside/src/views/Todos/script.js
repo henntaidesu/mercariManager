@@ -2,7 +2,7 @@ import { defineComponent, computed, onBeforeUnmount, onMounted, reactive, ref } 
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Loading } from '@element-plus/icons-vue'
-import { todosApi, mercariAccountApi } from '@/api'
+import { todosApi, mercariAccountApi, costRecordApi, costExpenseApi, orderApi } from '@/api'
 import { useMercariAccountStore } from '@/stores/mercariAccount.js'
 import { useSyncOverlay } from '@/composables/useSyncOverlay'
 import SyncOverlay from '@/components/SyncOverlay.vue'
@@ -194,6 +194,124 @@ export default defineComponent({
       return `/mercariV2/src/use_web/inventory/image-thumb?path=${encodeURIComponent(s)}&size=${size}`
     }
 
+    // ===== 待发货：包材选择 + 关联订单出库（发货成功后同步到 /#/orders） =====
+    const PACKAGING_ITEM_NONE = '__PACKAGING_NONE__'
+    const packagingItemsOptions = ref([])
+    // 用户在交易详情里选定的包材（暂存，发货成功后才真正写入订单）
+    const shipPackaging = reactive({ item_name: '', quantity: 1, unit_price: null })
+    // 关联订单的出库明细（发货成功后逐条出库）
+    const shipOutbound = reactive({ loading: false, lines: [] })
+
+    function expenseAmount(form) {
+      return Math.max(0, Number(form?.quantity || 0)) * Math.max(0, Number(form?.unit_price || 0))
+    }
+    const isShipPackagingConcrete = computed(() => {
+      const n = String(shipPackaging.item_name || '').trim()
+      return Boolean(n && n !== PACKAGING_ITEM_NONE)
+    })
+    function selectedPackagingMeta(itemName) {
+      return (packagingItemsOptions.value || []).find((it) => it.item_name === itemName) || null
+    }
+    function onShipPackagingChange(itemName) {
+      if (itemName === PACKAGING_ITEM_NONE) {
+        shipPackaging.quantity = 1
+        shipPackaging.unit_price = 0
+        return
+      }
+      const meta = selectedPackagingMeta(itemName)
+      if (!meta) return
+      shipPackaging.unit_price = Number(meta.amount || 0)
+      if (!shipPackaging.quantity || shipPackaging.quantity < 1) shipPackaging.quantity = 1
+    }
+    async function loadPackagingItemOptions() {
+      try {
+        const res = await costRecordApi.listPackagingItems()
+        packagingItemsOptions.value = Array.isArray(res?.items) ? res.items : []
+      } catch (e) {
+        console.error('[包材选项]', e?.message || e)
+        packagingItemsOptions.value = []
+      }
+    }
+    function resetShipCommit() {
+      shipPackaging.item_name = ''
+      shipPackaging.quantity = 1
+      shipPackaging.unit_price = null
+      shipOutbound.loading = false
+      shipOutbound.lines = []
+    }
+    function shipLineCanStockOut(line) {
+      if (Number(line?.is_stocked_out || 0) === 1) return false
+      if (line?.inventory_id == null) return false
+      return Math.max(1, Number(line?.quantity || 1)) > 0
+    }
+    const shipPendingOutboundCount = computed(
+      () => (shipOutbound.lines || []).filter((l) => shipLineCanStockOut(l)).length,
+    )
+    async function loadShipOutboundLines(orderNos) {
+      const list = Array.isArray(orderNos) ? orderNos : [orderNos]
+      const nos = [...new Set(list.map((x) => String(x || '').trim()).filter(Boolean))]
+      if (!nos.length) {
+        shipOutbound.lines = []
+        return
+      }
+      shipOutbound.loading = true
+      try {
+        const all = []
+        for (const ono of nos) {
+          const res = await orderApi.outboundLines({ order_no: ono })
+          const rows = Array.isArray(res?.items) ? res.items : []
+          for (const r of rows) all.push({ ...r, __order_no: ono })
+        }
+        shipOutbound.lines = all
+      } catch (e) {
+        console.error('[出库明细]', e?.message || e)
+        shipOutbound.lines = []
+      } finally {
+        shipOutbound.loading = false
+      }
+    }
+
+    /** 发货成功后：把所选包材写入关联订单，并把关联订单的待出库明细逐条出库 */
+    async function commitShipPackagingAndOutbound() {
+      const nos = [...new Set((invMatch.order_nos || []).map((x) => String(x || '').trim()).filter(Boolean))]
+      const itemId = String(currentRow.value?.item_id || '').trim()
+      if (!nos.length && itemId) nos.push(itemId)
+      if (!nos.length) return
+      // 1) 同步包材到订单（与 /#/orders 二级列表一致）
+      const itemName = String(shipPackaging.item_name || '').trim()
+      try {
+        if (itemName === PACKAGING_ITEM_NONE) {
+          for (const ono of nos) await orderApi.waivePackaging({ order_no: ono })
+        } else if (itemName) {
+          const qty = Math.max(1, Number(shipPackaging.quantity || 1))
+          const unitPrice = Math.max(1, Number(shipPackaging.unit_price || 0))
+          if (unitPrice > 0) {
+            for (const ono of nos) {
+              await costExpenseApi.create({ order_no: ono, item_name: itemName, quantity: qty, unit_price: unitPrice })
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[包材同步]', e?.message || e)
+        ElMessage.warning(t('todos.packagingSyncFailed'))
+      }
+      // 2) 出库：关联订单下所有待出库明细
+      let okCount = 0
+      let failCount = 0
+      for (const line of shipOutbound.lines || []) {
+        if (!shipLineCanStockOut(line)) continue
+        try {
+          await orderApi.stockOutOutboundLine(Number(line.id), {})
+          okCount += 1
+        } catch (e) {
+          failCount += 1
+          console.error('[出库]', line?.id, e?.message || e)
+        }
+      }
+      if (okCount) ElMessage.success(t('todos.outboundDone', { count: okCount }))
+      if (failCount) ElMessage.warning(t('todos.outboundPartialFail', { count: failCount }))
+    }
+
     // 当前待办是否「発送をしてください」（待发货）
     const isWaitShipping = computed(
       () => String(currentRow.value?.title || '').trim() === WAIT_SHIPPING_TITLE,
@@ -220,11 +338,15 @@ export default defineComponent({
       const iid = String(itemId || '').trim()
       if (!iid) return
       resetInvMatch()
+      resetShipCommit()
       invMatch.loading = true
       try {
         const res = await todosApi.matchInventory(iid)
         invMatch.inventory = Array.isArray(res?.inventory) ? res.inventory : []
         invMatch.order_nos = Array.isArray(res?.order_nos) ? res.order_nos : []
+        // 预载包材选项 + 关联订单出库明细，供发货成功后同步到 /#/orders
+        loadPackagingItemOptions()
+        loadShipOutboundLines(invMatch.order_nos.length ? invMatch.order_nos : [iid])
       } catch (e) {
         // 反查失败不打断处理流程，仅记录
         console.error('[库存反查]', e?.message || e)
@@ -808,6 +930,8 @@ export default defineComponent({
         // 仅当后端检测到「購入者の受取をお待ちください」才算发送成功
         if (result?.shipped_ok) {
           ElMessage.success(t('todos.shipNotified'))
+          // 发货成功 → 把所选包材同步到关联订单，并把关联物品出库
+          await commitShipPackagingAndOutbound()
         } else {
           ElMessage.warning(t('todos.shipNotifyUnconfirmed'))
         }
@@ -1054,6 +1178,13 @@ export default defineComponent({
       hasLocalInventoryImages,
       showMercariPhoto,
       inventoryProductType,
+      PACKAGING_ITEM_NONE,
+      packagingItemsOptions,
+      shipPackaging,
+      shipOutbound,
+      isShipPackagingConcrete,
+      onShipPackagingChange,
+      expenseAmount,
       replyLoading,
       reviewLoading,
       reactionLoading,
