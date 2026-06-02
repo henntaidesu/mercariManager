@@ -27,6 +27,7 @@ from .use_mercari.get_notifications.notification_sync import sync_notifications_
 from .use_mercari.get_to_du_list.todolist_sync import sync_todos_from_mercari
 from .use_mercari.on_sale_items_sync import sync_on_sale_items_from_mercari
 from .use_mercari.sync_data import sync_new_data
+from .use_mercari.sync_lock import LABEL_AUTO, end as sync_lock_end, try_begin as sync_lock_try_begin
 from .web_drive.core.account_serial_queue import queue_key_for_mercari_account, run_mercari_serial_async
 
 log = logging.getLogger(__name__)
@@ -255,19 +256,29 @@ async def run_mercari_auto_fetch_tick() -> None:
                 continue
             if not _any_auto_task_enabled(item):
                 continue
-            log.info("[mercari_auto_fetch] 开始账号 id=%s seller_id=%s", aid, sid)
-            results = await _run_auto_fetch_for_account(int(aid), item)
-            _mark_last_at(int(aid))
-            msg, level = _summarize_auto_fetch(results)
-            SystemLogModel.add(
-                category="auto_fetch",
-                level=level,
-                account_id=int(aid),
-                account_name=getattr(item, "account_name", None),
-                message=msg,
-                detail=results,
-            )
-            log.info("[mercari_auto_fetch] 完成账号 id=%s", aid)
+            # 全局同步锁：若有用户发起的同步（全量/各页）正在进行，本轮跳过该账号，下个 tick 再试
+            lock_token = sync_lock_try_begin("auto", LABEL_AUTO)
+            if lock_token is None:
+                log.info(
+                    "[mercari_auto_fetch] 账号 id=%s 跳过本轮：有用户发起的同步正在进行", aid
+                )
+                continue
+            try:
+                log.info("[mercari_auto_fetch] 开始账号 id=%s seller_id=%s", aid, sid)
+                results = await _run_auto_fetch_for_account(int(aid), item)
+                _mark_last_at(int(aid))
+                msg, level = _summarize_auto_fetch(results)
+                SystemLogModel.add(
+                    category="auto_fetch",
+                    level=level,
+                    account_id=int(aid),
+                    account_name=getattr(item, "account_name", None),
+                    message=msg,
+                    detail=results,
+                )
+                log.info("[mercari_auto_fetch] 完成账号 id=%s", aid)
+            finally:
+                sync_lock_end(lock_token)
         except _AutoFetchTaskError as exc:
             label = _AUTO_FETCH_TASK_LABELS.get(exc.task_key, exc.task_key)
             log.exception(

@@ -16,5 +16,8 @@ export const mercariApi = {
     http.post('/use_mercari/batch-refresh-info', data, { timeout: 0, ...axiosConfig }),
   /** 与 syncNewData / batchRefreshInfo 的 progress_job_id 配合，轮询当前同步步骤 */
   getSyncProgress: (jobId, axiosConfig = {}) =>
-    http.get(`/use_mercari/sync-progress/${encodeURIComponent(jobId)}`, axiosConfig)
+    http.get(`/use_mercari/sync-progress/${encodeURIComponent(jobId)}`, axiosConfig),
+  /** 全局同步锁状态：是否有同步（自动/全量）在进行，供各页禁用同步按钮 */
+  getSyncLock: (axiosConfig = {}) =>
+    http.get('/use_mercari/sync-lock', axiosConfig)
 }

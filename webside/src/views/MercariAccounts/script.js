@@ -5,12 +5,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { mercariAccountApi, mercariApi, webDriveApi } from '@/api/index.js'
 import { useSyncOverlay } from '@/composables/useSyncOverlay'
 import SyncOverlay from '@/components/SyncOverlay.vue'
+import { useSyncLockStore } from '@/stores/syncLock.js'
 
 export default defineComponent({
   components: { SyncOverlay },
   setup() {
     const { t } = useI18n()
     const syncOverlay = useSyncOverlay()
+    const syncLockStore = useSyncLockStore()
 
     const MERCARI_HOME = 'https://jp.mercari.com/'
 
@@ -384,6 +386,10 @@ export default defineComponent({
         ElMessage.warning(t('mercariAccounts.syncDataDisabledHint'))
         return
       }
+      if (syncLockStore.locked) {
+        ElMessage.warning(syncLockStore.label || t('mercariAccounts.syncBusyHint'))
+        return
+      }
       syncDataRow.value = row
       syncDataChecked.value = defaultSyncTasks()
       syncDataDialogVisible.value = true
@@ -432,6 +438,7 @@ export default defineComponent({
         const next = new Set(syncDataIds.value)
         next.delete(row.id)
         syncDataIds.value = next
+        syncLockStore.refresh()
       }
     }
 
@@ -501,10 +508,12 @@ export default defineComponent({
 
     onMounted(() => {
       load()
+      syncLockStore.subscribe()
     })
 
     onBeforeUnmount(() => {
       syncOverlay.dispose()
+      syncLockStore.unsubscribe()
     })
 
     return {
@@ -513,6 +522,7 @@ export default defineComponent({
       nextTick,
       syncOverlay,
       SyncOverlay,
+      syncLockStore,
       useI18n,
       Plus,
       ElMessage,

@@ -6,11 +6,13 @@ import { onSaleItemApi, mercariAccountApi, webDriveApi } from '@/api/index.js'
 import { parseMgmtIdsFromDescription, isCipherMgmtLine } from '@/utils/mgmtIdCipher.js'
 import { mercariImageUrlList } from '@/utils/mercariImage.js'
 import { useMercariAccountStore } from '@/stores/mercariAccount.js'
+import { useSyncLockStore } from '@/stores/syncLock.js'
 
 export default defineComponent({
   setup() {
     const { t } = useI18n()
     const mercariAccountStore = useMercariAccountStore()
+    const syncLockStore = useSyncLockStore()
 
     /** 煤炉商品 item.status → i18n label（key 对应 onSaleItems/i18n.js 的 statusXxx 字段） */
     const onSaleStatusMap = {
@@ -850,6 +852,7 @@ export default defineComponent({
 
     onMounted(() => {
       mercariAccountStore.ensureLoaded()
+      syncLockStore.subscribe()
       loadSellerAccounts()
       load()
     })
@@ -859,6 +862,7 @@ export default defineComponent({
         clearInterval(syncProgressTimer)
         syncProgressTimer = null
       }
+      syncLockStore.unsubscribe()
     })
 
     return {
@@ -881,6 +885,7 @@ export default defineComponent({
       useMercariAccountStore,
       t,
       mercariAccountStore,
+      syncLockStore,
       onSaleStatusMap,
       onSaleStatusLabel,
       onSaleStatusTagType,

@@ -38,14 +38,21 @@
                 :loading="browserLoadingKeys.has(browserKeyFor(row.id))"
                 @click="openBrowserForSavedAccount(row)"
               >{{ t('mercariAccounts.openBrowser') }}</el-button>
-              <el-button
-                size="small"
-                type="success"
-                :loading="syncDataIds.has(row.id)"
-                :disabled="row.status !== 'active'"
-                :title="row.status !== 'active' ? t('mercariAccounts.syncDataDisabledHint') : ''"
-                @click="openSyncDataDialog(row)"
-              >{{ t('mercariAccounts.syncData') }}</el-button>
+              <el-tooltip
+                :disabled="row.status === 'active' && !syncLockStore.locked"
+                :content="row.status !== 'active' ? t('mercariAccounts.syncDataDisabledHint') : syncLockStore.label"
+                placement="top"
+              >
+                <span>
+                  <el-button
+                    size="small"
+                    type="success"
+                    :loading="syncDataIds.has(row.id) || syncLockStore.locked"
+                    :disabled="row.status !== 'active' || syncLockStore.locked"
+                    @click="openSyncDataDialog(row)"
+                  >{{ t('mercariAccounts.syncData') }}</el-button>
+                </span>
+              </el-tooltip>
               <el-button size="small" @click="openEdit(row)">{{ t('common.edit') }}</el-button>
             </div>
           </el-card>

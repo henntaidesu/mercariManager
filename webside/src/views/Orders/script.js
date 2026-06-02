@@ -11,6 +11,7 @@ import {
   authApi,
 } from '@/api/index.js'
 import { useMercariAccountStore } from '@/stores/mercariAccount.js'
+import { useSyncLockStore } from '@/stores/syncLock.js'
 import {
   useInventoryListApiFilters,
   warehouseCascaderProps,
@@ -28,6 +29,7 @@ export default defineComponent({
   setup() {
     const { t } = useI18n()
     const mercariAccountStore = useMercariAccountStore()
+    const syncLockStore = useSyncLockStore()
 
     const orderTableRef = ref(null)
     /** 当前已展开的主表行（用于筛选变更时折叠，避免展开区与缓存不一致） */
@@ -1576,6 +1578,7 @@ export default defineComponent({
       updateViewportState()
       window.addEventListener('resize', updateViewportState)
       mercariAccountStore.ensureLoaded()
+      syncLockStore.subscribe()
       try {
         const users = await authApi.listUsers()
         ownerUsers.value = Array.isArray(users) ? users : []
@@ -1593,6 +1596,7 @@ export default defineComponent({
         clearInterval(syncProgressTimer)
         syncProgressTimer = null
       }
+      syncLockStore.unsubscribe()
     })
 
     return {
@@ -1628,6 +1632,7 @@ export default defineComponent({
       mercariImageUrlList,
       t,
       mercariAccountStore,
+      syncLockStore,
       orderTableRef,
       lastExpandedRows,
       ownerUsers,

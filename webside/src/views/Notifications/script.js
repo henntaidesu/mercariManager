@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Loading } from '@element-plus/icons-vue'
 import { notificationsApi } from '@/api'
 import { useMercariAccountStore } from '@/stores/mercariAccount.js'
+import { useSyncLockStore } from '@/stores/syncLock.js'
 import BundlePurchaseDialog from '@/components/BundlePurchaseDialog.vue'
 import ItemCommentDialog from '@/components/ItemCommentDialog.vue'
 import DesiredPriceDialog from '@/components/DesiredPriceDialog.vue'
@@ -18,6 +19,7 @@ export default defineComponent({
   setup() {
     const { t } = useI18n()
     const mercariAccountStore = useMercariAccountStore()
+    const syncLockStore = useSyncLockStore()
 
     const KIND_LABEL_KEYS = {
       Like: 'notifications.kindLike',
@@ -419,6 +421,7 @@ export default defineComponent({
 
     onMounted(() => {
       mercariAccountStore.ensureLoaded()
+      syncLockStore.subscribe()
       loadKindOptions()
       load()
     })
@@ -428,6 +431,7 @@ export default defineComponent({
         clearInterval(syncProgressTimer)
         syncProgressTimer = null
       }
+      syncLockStore.unsubscribe()
     })
 
     return {
@@ -447,6 +451,7 @@ export default defineComponent({
       DesiredPriceDialog,
       t,
       mercariAccountStore,
+      syncLockStore,
       KIND_LABEL_KEYS,
       KIND_TAG_TYPES,
       KIND_ACTION,

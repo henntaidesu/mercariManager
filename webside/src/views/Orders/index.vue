@@ -46,8 +46,16 @@
           </el-select>
         </el-col>
         <el-col :xs="24" :md="8" class="search-actions">
-          <el-button type="success" :icon="RefreshRight" :loading="syncLoading && syncMode === 'newData'" @click="runSync('newData')">{{ t('orders.updateList') }}</el-button>
-          <el-button type="primary" :icon="Refresh" :loading="syncLoading && syncMode === 'statusRefresh'" @click="runSync('statusRefresh')">{{ t('orders.updateStatus') }}</el-button>
+          <el-tooltip :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+            <span>
+              <el-button type="success" :icon="RefreshRight" :loading="(syncLoading && syncMode === 'newData') || syncLockStore.locked" :disabled="syncLoading || syncLockStore.locked" @click="runSync('newData')">{{ t('orders.updateList') }}</el-button>
+            </span>
+          </el-tooltip>
+          <el-tooltip :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+            <span>
+              <el-button type="primary" :icon="Refresh" :loading="(syncLoading && syncMode === 'statusRefresh') || syncLockStore.locked" :disabled="syncLoading || syncLockStore.locked" @click="runSync('statusRefresh')">{{ t('orders.updateStatus') }}</el-button>
+            </span>
+          </el-tooltip>
         </el-col>
       </el-row>
     </el-card>

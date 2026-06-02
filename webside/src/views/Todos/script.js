@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Loading } from '@element-plus/icons-vue'
 import { todosApi, costRecordApi, costExpenseApi, orderApi } from '@/api'
 import { useMercariAccountStore } from '@/stores/mercariAccount.js'
+import { useSyncLockStore } from '@/stores/syncLock.js'
 import { useSyncOverlay } from '@/composables/useSyncOverlay'
 import SyncOverlay from '@/components/SyncOverlay.vue'
 import { mercariImageUrl } from '@/utils/mercariImage.js'
@@ -20,6 +21,7 @@ export default defineComponent({
     const txOverlay = useSyncOverlay()
 
     const mercariAccountStore = useMercariAccountStore()
+    const syncLockStore = useSyncLockStore()
 
     const KIND_LABEL_KEYS = {
       WaitShippingCard: 'todos.kind.waitShipping',
@@ -1293,6 +1295,7 @@ export default defineComponent({
 
     onMounted(() => {
       mercariAccountStore.ensureLoaded()
+      syncLockStore.subscribe()
       loadKindOptions()
       load()
     })
@@ -1302,6 +1305,7 @@ export default defineComponent({
         clearInterval(syncProgressTimer)
         syncProgressTimer = null
       }
+      syncLockStore.unsubscribe()
       stopQrScanMirror()
       txOverlay.dispose()
     })
@@ -1325,6 +1329,7 @@ export default defineComponent({
       t,
       txOverlay,
       mercariAccountStore,
+      syncLockStore,
       KIND_LABEL_KEYS,
       DEFAULT_REPLY,
       DEFAULT_REVIEW,

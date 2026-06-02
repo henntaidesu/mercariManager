@@ -29,9 +29,13 @@
           </el-checkbox>
         </el-col>
         <el-col :xs="24" :md="8" class="search-actions">
-          <el-button type="primary" :icon="Download" :loading="syncLoading" :disabled="bulkReviewLoading" @click="runSync">
-            {{ t('todos.syncFromMercari') }}
-          </el-button>
+          <el-tooltip :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+            <span>
+              <el-button type="primary" :icon="Download" :loading="syncLoading || syncLockStore.locked" :disabled="bulkReviewLoading || syncLockStore.locked" @click="runSync">
+                {{ t('todos.syncFromMercari') }}
+              </el-button>
+            </span>
+          </el-tooltip>
           <el-button type="success" :loading="bulkReviewLoading" :disabled="syncLoading" @click="runBulkReview">
             {{ t('todos.bulkReview') }}
           </el-button>

@@ -21,6 +21,11 @@ from ....use_mercari.on_sale_sync_progress import (
     get_on_sale_sync_progress,
 )
 from ....use_mercari.sync_progress import clear_sync_progress
+from ....use_mercari.sync_lock import (
+    LABEL_FULL,
+    begin_or_conflict as sync_lock_begin,
+    end as sync_lock_end,
+)
 from ....use_mercari.sync_data import (
     resolve_account_id_by_seller_id,
     resolve_enabled_account_ids,
@@ -64,6 +69,7 @@ async def sync_on_sale(data: SyncOnSaleRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    lock_token = sync_lock_begin("page", LABEL_FULL)
     accounts: List[Dict[str, Any]] = []
     api_item_count = inserted = updated = marked_deleted = 0
     fail_count = 0
@@ -97,6 +103,7 @@ async def sync_on_sale(data: SyncOnSaleRequest):
                         "[on_sale] 关闭 account_id=%s 浏览器失败: %s", aid, close_exc
                     )
     finally:
+        sync_lock_end(lock_token)
         if jid:
             clear_on_sale_sync_progress(jid)
 

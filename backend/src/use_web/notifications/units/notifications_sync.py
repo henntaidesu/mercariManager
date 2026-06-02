@@ -15,6 +15,11 @@ from ....use_mercari.sync_progress import (
     clear_sync_progress,
     get_sync_progress,
 )
+from ....use_mercari.sync_lock import (
+    LABEL_FULL,
+    begin_or_conflict as sync_lock_begin,
+    end as sync_lock_end,
+)
 from ....web_drive.core.account_serial_queue import (
     queue_key_for_mercari_account,
     run_mercari_serial_async,
@@ -46,6 +51,7 @@ async def sync_notifications(req: SyncNotificationsRequest) -> Dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    lock_token = sync_lock_begin("page", LABEL_FULL)
     accounts: list[Dict[str, Any]] = []
     inserted = updated = total = 0
     fail_count = 0
@@ -82,6 +88,7 @@ async def sync_notifications(req: SyncNotificationsRequest) -> Dict[str, Any]:
                         "[notification] 关闭 account_id=%s 浏览器失败: %s", aid, close_exc
                     )
     finally:
+        sync_lock_end(lock_token)
         if jid:
             clear_sync_progress(jid)
 

@@ -33,6 +33,12 @@ from .sync_progress import (
     clear_sync_progress,
     get_sync_progress,
 )
+from .sync_lock import (
+    LABEL_FULL,
+    begin_or_conflict as sync_lock_begin,
+    end as sync_lock_end,
+    status as sync_lock_status,
+)
 
 router = APIRouter(prefix="/use_mercari", tags=["use-mercari"])
 
@@ -64,6 +70,7 @@ async def api_sync_new_data(data: SyncOrdersRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    lock_token = sync_lock_begin("page", LABEL_FULL)
     accounts: List[Dict[str, Any]] = []
     api_item_count = pending_new = inserted = info_enriched = 0
     fail_count = 0
@@ -94,6 +101,7 @@ async def api_sync_new_data(data: SyncOrdersRequest):
                         "[orders] 关闭 account_id=%s 浏览器失败: %s", aid, close_exc
                     )
     finally:
+        sync_lock_end(lock_token)
         if jid:
             clear_sync_progress(jid)
 
@@ -120,6 +128,7 @@ async def api_batch_refresh_info(data: SyncOrdersRequest):
     jid = (data.progress_job_id or "").strip() or None
     if jid and not _SYNC_JOB_ID_RE.fullmatch(jid):
         raise HTTPException(status_code=400, detail="invalid progress_job_id")
+    lock_token = sync_lock_begin("page", LABEL_FULL)
     try:
         if data.account_id is not None:
             qk = queue_key_for_mercari_account(int(data.account_id))
@@ -145,10 +154,17 @@ async def api_batch_refresh_info(data: SyncOrdersRequest):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"批量刷新失败: {exc}") from exc
     finally:
+        sync_lock_end(lock_token)
         if jid:
             clear_sync_progress(jid)
 
     return {"success": True, "data": result}
+
+
+@router.get("/sync-lock")
+def api_sync_lock_status():
+    """全局同步锁状态：是否有同步在进行及其类型，供前端轮询禁用同步按钮。"""
+    return {"success": True, "data": sync_lock_status()}
 
 
 @router.get("/sync-progress/{job_id}")

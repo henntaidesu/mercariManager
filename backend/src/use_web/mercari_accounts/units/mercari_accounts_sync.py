@@ -30,6 +30,11 @@ from ....use_mercari.get_notifications.notification_sync import (
 from ....use_mercari.on_sale_items_sync import sync_on_sale_items_from_mercari
 from ....use_mercari.sync_data import batch_refresh_orders_info, sync_new_data
 from ....use_mercari.sync_progress import clear_sync_progress, set_sync_progress_page
+from ....use_mercari.sync_lock import (
+    LABEL_FULL,
+    begin_or_conflict as sync_lock_begin,
+    end as sync_lock_end,
+)
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +85,9 @@ async def sync_account_all_data(aid: int, req: SyncAccountDataRequest) -> Dict[s
     ]
     steps = [s for s in all_steps if s[0] in selected]
 
+    # 获取全局同步锁：与自动同步、各页「从煤炉同步」互斥；占用中则抛 409
+    lock_token = sync_lock_begin("account", LABEL_FULL)
+
     qk = queue_key_for_mercari_account(account_id)
     results: Dict[str, Any] = {}
     errors: Dict[str, str] = {}
@@ -109,6 +117,7 @@ async def sync_account_all_data(aid: int, req: SyncAccountDataRequest) -> Dict[s
             log.warning(
                 "[account-sync] 关闭 account_id=%s 浏览器失败: %s", account_id, close_exc
             )
+        sync_lock_end(lock_token)
         if jid:
             # 在售同步用的进度存储与通用 sync_progress 是同一份，clear 一次即可。
             clear_sync_progress(jid)
