@@ -276,6 +276,10 @@ export default defineComponent({
     const shipPendingOutboundCount = computed(
       () => (shipOutbound.lines || []).filter((l) => shipLineCanStockOut(l)).length,
     )
+    // 是否已选择包材（含显式选「不选择包材」）。待发货时未选则不允许选择商品尺寸。
+    const hasPackagingSelected = computed(() =>
+      (shipPackagingRows.value || []).some((r) => String(r?.item_name || '').trim()),
+    )
     async function loadShipOutboundLines(orderNos) {
       const list = Array.isArray(orderNos) ? orderNos : [orderNos]
       const nos = [...new Set(list.map((x) => String(x || '').trim()).filter(Boolean))]
@@ -450,6 +454,11 @@ export default defineComponent({
       const kind = (currentRow.value?.kind || '').trim()
       const title = (currentRow.value?.title || '').trim()
       return kind === 'ReviewedSeller' && title === '評価をしてください'
+    })
+
+    // 「待回复」(IncomingMessage)：处理面板只展示消息流与回复，不显示发货相关操作
+    const isWaitReply = computed(() => {
+      return (currentRow.value?.kind || '').trim() === 'IncomingMessage'
     })
 
     // 仅在「待回复」(IncomingMessage) 类型下，允许给买家消息加 emoji 反应
@@ -1374,6 +1383,7 @@ export default defineComponent({
       packagingItemsOptions,
       shipPackagingRows,
       shipOutbound,
+      hasPackagingSelected,
       onShipPackagingChange,
       replyLoading,
       reviewLoading,
@@ -1383,6 +1393,7 @@ export default defineComponent({
       reactionOptions,
       emojiFor,
       isReviewedSeller,
+      isWaitReply,
       canReactToMessages,
       shippingDialogVisible,
       shippingConfirmLoading,

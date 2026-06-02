@@ -216,7 +216,7 @@
                   v-model="row.item_name"
                   filterable
                   clearable
-                  size="small"
+                  size="large"
                   class="detail-ship-pack-select"
                   :placeholder="t('orders.packagingItemPlaceholder')"
                   @change="onShipPackagingChange"
@@ -265,7 +265,7 @@
             </div>
           </section>
 
-          <section v-if="!isReviewedSeller" class="detail-section">
+          <section v-if="!isReviewedSeller && !isWaitReply" class="detail-section">
             <!-- 已发行二维码时：修改发货方式按钮放到标题右上角 -->
             <div class="detail-section-head">
               <div class="detail-section-title">{{ t('todos.section.shipping') }}</div>
@@ -296,12 +296,21 @@
                 <span class="detail-value">{{ detail.current_shipping_status || dash }}</span>
               </div>
               <div class="detail-shipping-actions">
-                <el-button
-                  size="default"
-                  @click="onClickShippingSizeLocation"
+                <el-tooltip
+                  :disabled="!isWaitShipping || hasPackagingSelected"
+                  :content="t('todos.pickPackagingFirst')"
+                  placement="top"
                 >
-                  {{ t('todos.pickSizeAndLocation') }}
-                </el-button>
+                  <span>
+                    <el-button
+                      size="default"
+                      :disabled="isWaitShipping && !hasPackagingSelected"
+                      @click="onClickShippingSizeLocation"
+                    >
+                      {{ t('todos.pickSizeAndLocation') }}
+                    </el-button>
+                  </span>
+                </el-tooltip>
                 <el-button
                   size="default"
                   @click="onClickShippingChangeMethod"

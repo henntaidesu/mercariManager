@@ -57,6 +57,9 @@ _WAIT_SHIPPING_KINDS = frozenset(
 )
 _WAIT_SHIPPING_TITLE = "発送をしてください"
 
+# 「待回复」待办：买家来信，处理面板展示消息流并回复。无需有头浏览器。
+_WAIT_REPLY_KINDS = frozenset({"IncomingMessage"})
+
 
 def _is_wait_shipping_todo(todo: Any) -> bool:
     kind = (getattr(todo, "kind", "") or "").strip()
@@ -917,8 +920,8 @@ def get_cached_transaction_detail(todo_id: int) -> Dict[str, Any]:
     return data
 
 
-def list_uncached_wait_shipping_todo_ids(account_id: int) -> List[int]:
-    """返回某账号下「待发货」且尚无交易详情缓存的待办 id（供「从煤炉同步」后批量补抓详情）。
+def list_uncached_detail_todo_ids(account_id: int) -> List[int]:
+    """返回某账号下「待发货」或「待回复」且尚无交易详情缓存的待办 id（供「从煤炉同步」后批量补抓详情）。
 
     判定「无缓存」：``detail_synced_at IS NULL``（fetch_transaction_detail 成功后才会写入）。
     仅含未软删 + 有 item_id 的待办（无 item_id 无法打开交易页）。
@@ -933,14 +936,18 @@ def list_uncached_wait_shipping_todo_ids(account_id: int) -> List[int]:
             (int(account_id),),
         )
     except Exception as exc:
-        log.warning("[txdetail] 查询待发货未缓存待办失败 account_id=%s: %s", account_id, exc)
+        log.warning("[txdetail] 查询未缓存待办失败 account_id=%s: %s", account_id, exc)
         return []
     ids: List[int] = []
     for row in rows or []:
         tid, kind, title = row
         kind = (kind or "").strip()
         title = (title or "").strip()
-        if kind in _WAIT_SHIPPING_KINDS or title == _WAIT_SHIPPING_TITLE:
+        if (
+            kind in _WAIT_SHIPPING_KINDS
+            or kind in _WAIT_REPLY_KINDS
+            or title == _WAIT_SHIPPING_TITLE
+        ):
             ids.append(int(tid))
     return ids
 
