@@ -12,7 +12,13 @@ export const webDriveApi = {
     http.post('/use_web/web-drive/on-sale/delete-item', data, { timeout: 0, ...axiosConfig }),
   /** WebDrive 打开编辑页并提交修改（标题 / 价格 / 商品说明） */
   reviseMercariItem: (data, axiosConfig = {}) =>
-    http.post('/use_web/web-drive/on-sale/revise-item', data, { timeout: 0, ...axiosConfig })
+    http.post('/use_web/web-drive/on-sale/revise-item', data, { timeout: 0, ...axiosConfig }),
+  /** WebDrive 打开编辑页并点击「出品を再開する」恢复出售（仅暂停出售状态适用） */
+  resumeMercariItem: (data, axiosConfig = {}) =>
+    http.post('/use_web/web-drive/on-sale/resume-item', data, { timeout: 0, ...axiosConfig }),
+  /** WebDrive 打开编辑页并点击「出品を一時停止する」暂停出售（仅出售中状态适用） */
+  suspendMercariItem: (data, axiosConfig = {}) =>
+    http.post('/use_web/web-drive/on-sale/suspend-item', data, { timeout: 0, ...axiosConfig })
 }
 
 /**

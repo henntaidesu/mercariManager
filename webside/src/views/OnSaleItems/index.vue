@@ -24,6 +24,20 @@
               :value="s.value"
             />
           </el-select>
+          <el-select
+            v-model="filters.status"
+            :placeholder="t('onSaleItems.statusFilterPlaceholder')"
+            clearable
+            style="min-width: 160px; width: 100%"
+            @change="onFilterChange"
+          >
+            <el-option
+              v-for="s in statusFilterOptions"
+              :key="s.value"
+              :label="s.label"
+              :value="s.value"
+            />
+          </el-select>
         </el-col>
         <el-col :xs="24" :md="10" class="search-actions">
           <el-tooltip :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
@@ -321,7 +335,23 @@
           <div class="detail-footer__right">
             <el-button @click="detailViewVisible = false">{{ t('common.close') }}</el-button>
             <el-button
-              v-if="detailViewBase"
+              v-if="detailViewBase && detailIsStopped"
+              type="success"
+              :loading="resumeItemLoading"
+              @click="resumeMercariItemFromDetail"
+            >
+              {{ t('onSaleItems.resumeItem') }}
+            </el-button>
+            <el-button
+              v-if="detailViewBase && detailIsOnSale"
+              type="warning"
+              :loading="suspendItemLoading"
+              @click="suspendMercariItemFromDetail"
+            >
+              {{ t('onSaleItems.suspendItem') }}
+            </el-button>
+            <el-button
+              v-if="detailViewBase && !detailIsAuction"
               type="primary"
               @click="openReviseDialog"
             >

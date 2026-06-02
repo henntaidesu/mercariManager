@@ -23,15 +23,30 @@
         </div>
       </template>
 
-      <el-form ref="formRef" :model="form" :rules="rules" @keyup.enter="handleLogin">
+      <el-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleLogin">
         <el-form-item prop="username">
-          <el-input v-model="form.username" :placeholder="t('login.usernamePlaceholder')" size="large" clearable />
+          <el-input
+            v-model="form.username"
+            :placeholder="t('login.usernamePlaceholder')"
+            size="large"
+            clearable
+            name="username"
+            autocomplete="username"
+          />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input v-model="form.password" type="password" :placeholder="t('login.passwordPlaceholder')" size="large" show-password />
+          <el-input
+            v-model="form.password"
+            type="password"
+            :placeholder="t('login.passwordPlaceholder')"
+            size="large"
+            show-password
+            name="password"
+            autocomplete="current-password"
+          />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" size="large" :loading="loading" style="width: 100%" @click="handleLogin">
+          <el-button native-type="submit" type="primary" size="large" :loading="loading" style="width: 100%">
             {{ t('login.login') }}
           </el-button>
         </el-form-item>

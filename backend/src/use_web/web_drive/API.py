@@ -15,7 +15,9 @@ from .units.web_drive_handler import (
     listing_post_progress,
     open_session,
     post_to_market,
+    resume_on_sale_item,
     revise_on_sale_item,
+    suspend_on_sale_item,
 )
 
 router = APIRouter()
@@ -28,3 +30,5 @@ router.add_api_route("/listing/post-progress/{job_id}", listing_post_progress, m
 router.add_api_route("/listing/post-to-market", post_to_market, methods=["POST"])
 router.add_api_route("/on-sale/delete-item", delete_on_sale_item, methods=["POST"])
 router.add_api_route("/on-sale/revise-item", revise_on_sale_item, methods=["POST"])
+router.add_api_route("/on-sale/resume-item", resume_on_sale_item, methods=["POST"])
+router.add_api_route("/on-sale/suspend-item", suspend_on_sale_item, methods=["POST"])

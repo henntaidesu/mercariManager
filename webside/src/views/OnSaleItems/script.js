@@ -61,6 +61,8 @@ export default defineComponent({
     const detailViewBase = ref(null)
     const detailViewOnSaleItems = ref([])
     const deleteItemLoading = ref(false)
+    const resumeItemLoading = ref(false)
+    const suspendItemLoading = ref(false)
 
     const detailInventoryLines = computed(() => {
       const items = detailViewOnSaleItems.value
@@ -93,6 +95,24 @@ export default defineComponent({
       return ''
     })
 
+    /** 出售类型为拍卖（存在 auction_info_json）时，详情页不允许编辑（屏蔽「修改」按钮） */
+    const detailIsAuction = computed(() => {
+      const base = detailViewBase.value
+      return Boolean(base && String(base.auction_info_json ?? '').trim())
+    })
+
+    /** 状态为暂停出售（stop）时，详情页展示「恢复出售」按钮（出售中走「修改」） */
+    const detailIsStopped = computed(() => {
+      const base = detailViewBase.value
+      return Boolean(base && String(base.status ?? '').trim() === 'stop')
+    })
+
+    /** 状态为出售中（on_sale）时，详情页展示「暂停出售」按钮 */
+    const detailIsOnSale = computed(() => {
+      const base = detailViewBase.value
+      return Boolean(base && String(base.status ?? '').trim() === 'on_sale')
+    })
+
     const list = ref([])
     /** 展开区：key 为 trim 后的 item_id */
     const expandByItemId = reactive({})
@@ -103,7 +123,14 @@ export default defineComponent({
     const filters = ref({
       keyword: '',
       seller_id: '',
+      status: '',
     })
+
+    /** 状态筛选下拉项：出售中 / 暂停出售（值对应煤炉 item.status） */
+    const statusFilterOptions = computed(() => [
+      { value: 'on_sale', label: t('onSaleItems.statusOnSale') },
+      { value: 'stop', label: t('onSaleItems.statusStop') },
+    ])
 
     const sellerFromAccounts = ref([])
 
@@ -152,6 +179,7 @@ export default defineComponent({
       const p = { page: page.value, page_size: pageSize.value }
       if (filters.value.keyword?.trim()) p.keyword = filters.value.keyword.trim()
       if (filters.value.seller_id?.trim()) p.seller_id = filters.value.seller_id.trim()
+      if (filters.value.status?.trim()) p.status = filters.value.status.trim()
       return p
     }
 
@@ -630,6 +658,180 @@ export default defineComponent({
       }
     }
 
+    async function resumeMercariItemFromDetail() {
+      const base = detailViewBase.value
+      if (!base?.item_id) {
+        ElMessage.warning(t('onSaleItems.missingItemId'))
+        return
+      }
+      const iid = String(base.item_id || '').trim()
+      const resolved = resolveAccountKeyForRow(base)
+      if (!resolved) {
+        ElMessage.warning(t('onSaleItems.noActiveAccountForSeller', { sid: String(base.seller_id || '').trim() || '-' }))
+        return
+      }
+      try {
+        await ElMessageBox.confirm(
+          t('onSaleItems.resumeConfirmMsg', { iid }),
+          t('onSaleItems.resumeItem'),
+          { type: 'info', confirmButtonText: t('onSaleItems.confirmResume'), cancelButtonText: t('common.cancel') }
+        )
+      } catch {
+        return
+      }
+      if (resumeItemLoading.value) return
+
+      const progressJobId =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `job_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+
+      let pollTimer = null
+      let lastConsoleStep = ''
+      async function poll() {
+        try {
+          const pr = await onSaleItemApi.getSyncProgress(progressJobId)
+          const zh = pr?.data?.label_zh
+          if (zh) {
+            syncProgressLabel.value = zh
+            if (zh !== lastConsoleStep) {
+              lastConsoleStep = zh
+              console.log('[恢复出售]', zh)
+            }
+          }
+        } catch {
+          /* 轮询失败忽略 */
+        }
+      }
+
+      syncOverlayTitle.value = t('onSaleItems.resumingMercariItem')
+      syncOverlayFailed.value = false
+      syncProgressLabel.value = t('onSaleItems.connectingServer')
+      syncOverlayVisible.value = true
+      resumeItemLoading.value = true
+      await poll()
+      pollTimer = setInterval(poll, 400)
+
+      let hadError = false
+      try {
+        await webDriveApi.resumeMercariItem({
+          account_key: resolved.accountKey,
+          item_id: iid,
+          use_mitm_proxy: true,
+          progress_job_id: progressJobId,
+        })
+        ElMessage.success(t('onSaleItems.resumeSuccess'))
+        detailViewVisible.value = false
+        await load()
+      } catch (e) {
+        hadError = true
+        syncOverlayTitle.value = t('onSaleItems.resumeFailed')
+        syncOverlayFailed.value = true
+        const msg = e?.response?.data?.detail || e?.message || t('onSaleItems.resumeFailed')
+        syncProgressLabel.value = String(msg)
+        // 绑定库存归零/不足等校验失败：用可关闭的提示明确告知，避免红色遮罩一闪而过
+        ElMessage.error({ message: String(msg), duration: 6000, showClose: true })
+      } finally {
+        if (pollTimer != null) {
+          clearInterval(pollTimer)
+        }
+        if (hadError) {
+          await new Promise((r) => setTimeout(r, 1200))
+        }
+        syncOverlayVisible.value = false
+        syncOverlayTitle.value = t('onSaleItems.syncingFromMercari')
+        syncOverlayFailed.value = false
+        syncProgressLabel.value = ''
+        resumeItemLoading.value = false
+      }
+    }
+
+    async function suspendMercariItemFromDetail() {
+      const base = detailViewBase.value
+      if (!base?.item_id) {
+        ElMessage.warning(t('onSaleItems.missingItemId'))
+        return
+      }
+      const iid = String(base.item_id || '').trim()
+      const resolved = resolveAccountKeyForRow(base)
+      if (!resolved) {
+        ElMessage.warning(t('onSaleItems.noActiveAccountForSeller', { sid: String(base.seller_id || '').trim() || '-' }))
+        return
+      }
+      try {
+        await ElMessageBox.confirm(
+          t('onSaleItems.suspendConfirmMsg', { iid }),
+          t('onSaleItems.suspendItem'),
+          { type: 'warning', confirmButtonText: t('onSaleItems.confirmSuspend'), cancelButtonText: t('common.cancel') }
+        )
+      } catch {
+        return
+      }
+      if (suspendItemLoading.value) return
+
+      const progressJobId =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `job_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+
+      let pollTimer = null
+      let lastConsoleStep = ''
+      async function poll() {
+        try {
+          const pr = await onSaleItemApi.getSyncProgress(progressJobId)
+          const zh = pr?.data?.label_zh
+          if (zh) {
+            syncProgressLabel.value = zh
+            if (zh !== lastConsoleStep) {
+              lastConsoleStep = zh
+              console.log('[暂停出售]', zh)
+            }
+          }
+        } catch {
+          /* 轮询失败忽略 */
+        }
+      }
+
+      syncOverlayTitle.value = t('onSaleItems.suspendingMercariItem')
+      syncOverlayFailed.value = false
+      syncProgressLabel.value = t('onSaleItems.connectingServer')
+      syncOverlayVisible.value = true
+      suspendItemLoading.value = true
+      await poll()
+      pollTimer = setInterval(poll, 400)
+
+      let hadError = false
+      try {
+        await webDriveApi.suspendMercariItem({
+          account_key: resolved.accountKey,
+          item_id: iid,
+          use_mitm_proxy: true,
+          progress_job_id: progressJobId,
+        })
+        ElMessage.success(t('onSaleItems.suspendSuccess'))
+        detailViewVisible.value = false
+        await load()
+      } catch (e) {
+        hadError = true
+        syncOverlayTitle.value = t('onSaleItems.suspendFailed')
+        syncOverlayFailed.value = true
+        const msg = e?.response?.data?.detail || e?.message || t('onSaleItems.suspendFailed')
+        syncProgressLabel.value = String(msg)
+      } finally {
+        if (pollTimer != null) {
+          clearInterval(pollTimer)
+        }
+        if (hadError) {
+          await new Promise((r) => setTimeout(r, 1200))
+        }
+        syncOverlayVisible.value = false
+        syncOverlayTitle.value = t('onSaleItems.syncingFromMercari')
+        syncOverlayFailed.value = false
+        syncProgressLabel.value = ''
+        suspendItemLoading.value = false
+      }
+    }
+
     async function detailViewRefreshFromMercari() {
       const base = detailViewBase.value
       if (!base?.item_id) return
@@ -902,14 +1104,20 @@ export default defineComponent({
       detailViewBase,
       detailViewOnSaleItems,
       deleteItemLoading,
+      resumeItemLoading,
+      suspendItemLoading,
       detailInventoryLines,
       detailListingBodyText,
+      detailIsAuction,
+      detailIsStopped,
+      detailIsOnSale,
       list,
       expandByItemId,
       total,
       page,
       pageSize,
       filters,
+      statusFilterOptions,
       sellerFromAccounts,
       isOnSaleZeroStockAlert,
       onSaleAlertReasons,
@@ -939,6 +1147,8 @@ export default defineComponent({
       onDetailViewClosed,
       resolveAccountKeyForRow,
       deleteMercariItemFromDetail,
+      resumeMercariItemFromDetail,
+      suspendMercariItemFromDetail,
       detailViewRefreshFromMercari,
       fetchItemDetailForItemId,
       fetchItemDetail,
