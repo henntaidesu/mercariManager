@@ -1970,8 +1970,24 @@ async def click_change_shipping_method(
             await page.wait_for_url("**/shipping_method*", timeout=8000)
         except Exception:
             log.warning("[shipping] /shipping_method への遷移を観測できず (URL: %s)", page.url)
-        await asyncio.sleep(0.4)
+        # 等待配送方式 radio 渲染出现（页面完全加载），最多 5s；再固定停顿 3s 确保
+        # SSR 水合/异步渲染完成后再抓取，避免「未获取到可选的配送方式」。
+        report("wait_methods", "正在等待配送方式列表加载…")
+        try:
+            await page.locator(f'input[name="{_CHANGE_METHOD_RADIO_NAME}"]').first.wait_for(
+                state="attached", timeout=5000
+            )
+        except Exception:
+            log.warning(
+                "[shipping] /shipping_method 配送方式 radio 未在预期时间内出现 (URL: %s)",
+                page.url,
+            )
+        await asyncio.sleep(3.0)
         options = await _scrape_shipping_method_options(page)
+        # 首次抓取为空（渲染滞后）则再等待并重试一次
+        if not options:
+            await asyncio.sleep(1.5)
+            options = await _scrape_shipping_method_options(page)
     report("done", "已跳转修改发送方式页")
     return {
         "todo_id": int(todo_id),
