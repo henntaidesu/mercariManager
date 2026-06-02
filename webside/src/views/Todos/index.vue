@@ -266,29 +266,10 @@
           </section>
 
           <section v-if="!isReviewedSeller && !isWaitReply" class="detail-section">
-            <!-- 已发行二维码时：修改发货方式按钮放到标题右上角 -->
+            <!-- 已发行二维码/条形码时：确认发送 + 修改发货方式 并排放到标题右上角 -->
             <div class="detail-section-head">
               <div class="detail-section-title">{{ t('todos.section.shipping') }}</div>
-              <el-button
-                v-if="detail.qr_image_url"
-                size="small"
-                @click="onReviseShippingAfterQr"
-              >
-                {{ t('todos.changeShippingMethod') }}
-              </el-button>
-            </div>
-            <!-- 已发行二维码/条形码：发货模块展示码 + 确认发送按钮 -->
-            <template v-if="detail.qr_image_url">
-              <div class="detail-qr-wrap">
-                <el-image
-                  :src="mercariImageUrl(detail.qr_image_url)"
-                  :preview-src-list="[mercariImageUrl(detail.qr_image_url)]"
-                  :preview-teleported="true"
-                  fit="contain"
-                  class="detail-qr-img"
-                />
-              </div>
-              <div class="detail-shipping-actions">
+              <div v-if="detail.qr_image_url" class="detail-section-head-actions">
                 <el-button
                   type="primary"
                   size="default"
@@ -297,6 +278,40 @@
                 >
                   {{ t('todos.confirmShip') }}
                 </el-button>
+                <el-button
+                  size="default"
+                  @click="onReviseShippingAfterQr"
+                >
+                  {{ t('todos.changeShippingMethod') }}
+                </el-button>
+              </div>
+            </div>
+            <!-- 已发行二维码/条形码：发送场所（图标 + 标题 + 说明）+ 发货码 -->
+            <template v-if="detail.qr_image_url">
+              <div v-if="detail.shipping_facility_name || detail.shipping_facility_image_url" class="detail-facility">
+                <el-image
+                  v-if="detail.shipping_facility_image_url"
+                  :src="detail.shipping_facility_image_url"
+                  fit="contain"
+                  class="detail-facility-icon"
+                />
+                <div class="detail-facility-text">
+                  <div v-if="detail.shipping_facility_name" class="detail-facility-name">
+                    {{ detail.shipping_facility_name }}
+                  </div>
+                  <div v-if="detail.shipping_facility_desc" class="detail-facility-desc">
+                    {{ detail.shipping_facility_desc }}
+                  </div>
+                </div>
+              </div>
+              <div class="detail-qr-wrap">
+                <el-image
+                  :src="mercariImageUrl(detail.qr_image_url)"
+                  :preview-src-list="[mercariImageUrl(detail.qr_image_url)]"
+                  :preview-teleported="true"
+                  fit="contain"
+                  class="detail-qr-img"
+                />
               </div>
             </template>
             <!-- 未发行：当前状态 + 选择尺寸 + 修改发货方式 -->

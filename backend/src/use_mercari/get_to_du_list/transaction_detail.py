@@ -327,6 +327,7 @@ async def fetch_transaction_detail(
         # 交易页若带发货码（含在 App/其他平台已完成发货）→ 抓取保存；
         # 若页面确无发货码（别处取消/重置了发货）→ 后续清除本地已存的，回到选择发送状态。
         synced_qr_url: Optional[str] = None
+        synced_facility: Dict[str, str] = {}
         qr_checked = False
         qr_present = False
         try:
@@ -337,6 +338,8 @@ async def fetch_transaction_detail(
                 synced_qr_url = await _save_qr_code_image(
                     qr_page, item_id=item_id, todo_id=int(todo_id), timeout=1500
                 )
+                # 同步「発送場所」信息（标题/说明/图标），供前端在发货码旁展示
+                synced_facility = await _extract_shipping_facility(qr_page)
         except Exception as exc:
             log.debug("[txdetail] 同步发货二维码失败 todo_id=%s: %s", todo_id, exc)
 
@@ -370,16 +373,35 @@ async def fetch_transaction_detail(
     page_loaded = (shipping is not None) or (messages is not None)
     if synced_qr_url:
         result["qr_image_url"] = synced_qr_url
+        # 发货码存在时，附带本次抓到的发送场所信息（标题/说明/图标）
+        if synced_facility:
+            result.update(synced_facility)
     elif qr_checked and not qr_present and page_loaded:
         _clear_qr_image(int(todo_id))
         result["qr_image_url"] = None
     else:
         try:
             prev = DatabaseManager().execute_query(
-                "SELECT [qr_image_path] FROM [todo_items] WHERE [id]=?", (int(todo_id),)
+                "SELECT [qr_image_path], [detail_json] FROM [todo_items] WHERE [id]=?",
+                (int(todo_id),),
             )
-            if prev and prev[0] and prev[0][0]:
-                result["qr_image_url"] = prev[0][0]
+            if prev and prev[0]:
+                if prev[0][0]:
+                    result["qr_image_url"] = prev[0][0]
+                # 保留此前缓存的发送场所信息（_persist_transaction_detail 会整体覆盖）
+                if prev[0][1]:
+                    try:
+                        pd = json.loads(prev[0][1])
+                        if isinstance(pd, dict):
+                            for k in (
+                                "shipping_facility_name",
+                                "shipping_facility_desc",
+                                "shipping_facility_image_url",
+                            ):
+                                if pd.get(k) and not result.get(k):
+                                    result[k] = pd[k]
+                    except Exception:
+                        pass
         except Exception:
             pass
     _persist_transaction_detail(int(todo_id), result)
@@ -1018,6 +1040,79 @@ async def _save_qr_code_image(
     return path
 
 
+# 交易页发货码上方的「○○から発送」信息：标题（如「ファミリーマートから発送」）、
+# 说明文、以及发送场所图标 URL（煤炉 CDN img[src*="shipping_facility"]，如
+# family-mart.png / seven-eleven.png / yamato.png / pudo.png）。供前端在发货码旁
+# 展示「发送场所 + 图标」。兼容 ファミリーマート/セブン-イレブン/ヤマト営業所/PUDO 等。
+_SHIPPING_FACILITY_JS = """
+() => {
+  const pick = (el) => (el && el.innerText ? el.innerText.trim() : '');
+  const titleEl = document.querySelector('[data-testid="qrcode.title"]');
+  let title = pick(titleEl);
+  let desc = '';
+  if (titleEl) {
+    let n = titleEl.nextElementSibling;
+    while (n) {
+      if (n.tagName === 'P') { desc = pick(n); break; }
+      if (n.querySelector && n.querySelector('img')) break;
+      n = n.nextElementSibling;
+    }
+  }
+  const img = document.querySelector('img[src*="shipping_facility"]');
+  const imageUrl = img ? (img.currentSrc || img.src || '') : '';
+  return { title, desc, imageUrl };
+}
+"""
+
+
+async def _extract_shipping_facility(page: Any) -> Dict[str, str]:
+    """从交易页提取「発送場所」展示信息（标题/说明/图标 URL）。无则返回 {}。"""
+    try:
+        data = await page.evaluate(_SHIPPING_FACILITY_JS)
+    except Exception as exc:
+        log.debug("[shipping] 提取发送场所信息失败: %s", exc)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: Dict[str, str] = {}
+    title = (data.get("title") or "").strip()
+    desc = (data.get("desc") or "").strip()
+    image_url = (data.get("imageUrl") or "").strip()
+    if title:
+        out["shipping_facility_name"] = title
+    if desc:
+        out["shipping_facility_desc"] = desc
+    if image_url:
+        out["shipping_facility_image_url"] = image_url
+    return out
+
+
+def _persist_shipping_facility(todo_id: int, fac: Dict[str, str]) -> None:
+    """把发送场所信息合并进 todo_items.detail_json（不覆盖其它字段）。"""
+    if not fac:
+        return
+    db = DatabaseManager()
+    try:
+        rows = db.execute_query(
+            "SELECT [detail_json] FROM [todo_items] WHERE [id]=?", (int(todo_id),)
+        )
+        d: Dict[str, Any] = {}
+        if rows and rows[0] and rows[0][0]:
+            try:
+                parsed = json.loads(rows[0][0])
+                if isinstance(parsed, dict):
+                    d = parsed
+            except Exception:
+                d = {}
+        d.update(fac)
+        db.execute_update(
+            "UPDATE [todo_items] SET [detail_json]=? WHERE [id]=?",
+            (json.dumps(d, ensure_ascii=False), int(todo_id)),
+        )
+    except Exception as exc:
+        log.warning("[shipping] 缓存发送场所信息失败 todo_id=%s: %s", todo_id, exc)
+
+
 async def _click_generate_ship_code(
     page: Any,
     *,
@@ -1059,7 +1154,11 @@ async def _click_generate_ship_code(
 
     # 保存发货二维码（已发行/刚发行都尝试）
     report("save_qr_image", "正在保存发货二维码…")
-    return await _save_qr_code_image(page, item_id=item_id, todo_id=int(todo_id))
+    path = await _save_qr_code_image(page, item_id=item_id, todo_id=int(todo_id))
+    if path:
+        # 同时抓取「発送場所」信息（标题/说明/图标），合并进缓存供前端展示
+        _persist_shipping_facility(int(todo_id), await _extract_shipping_facility(page))
+    return path
 
 
 async def confirm_shipping_selection(

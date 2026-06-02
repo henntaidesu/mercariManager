@@ -253,6 +253,44 @@ export default defineComponent({
     }
     function onShipPackagingChange() {
       normalizePackagingRows()
+      savePackagingSelection()
+    }
+    // ── 包材选择缓存（按 item_id / todo 持久化到 localStorage，重开详情时恢复） ──
+    const PACKAGING_CACHE_PREFIX = 'todos:packaging:'
+    function packagingCacheKey() {
+      const iid = String(currentRow.value?.item_id || '').trim()
+      const tid = currentRow.value?.id
+      const k = iid || (tid != null ? `id${tid}` : '')
+      return k ? `${PACKAGING_CACHE_PREFIX}${k}` : ''
+    }
+    function savePackagingSelection() {
+      const key = packagingCacheKey()
+      if (!key) return
+      try {
+        const names = (shipPackagingRows.value || [])
+          .map((r) => String(r?.item_name || '').trim())
+          .filter(Boolean)
+        if (names.length) localStorage.setItem(key, JSON.stringify(names))
+        else localStorage.removeItem(key)
+      } catch { /* localStorage 不可用：静默 */ }
+    }
+    function restorePackagingSelection() {
+      const key = packagingCacheKey()
+      if (!key) return
+      try {
+        const raw = localStorage.getItem(key)
+        if (!raw) return
+        const names = JSON.parse(raw)
+        if (Array.isArray(names) && names.length) {
+          shipPackagingRows.value = names.map((n) => ({ item_name: String(n || '') }))
+          normalizePackagingRows()
+        }
+      } catch { /* 解析失败：忽略 */ }
+    }
+    function clearPackagingSelection() {
+      const key = packagingCacheKey()
+      if (!key) return
+      try { localStorage.removeItem(key) } catch { /* ignore */ }
     }
     async function loadPackagingItemOptions() {
       try {
@@ -353,6 +391,8 @@ export default defineComponent({
       }
       if (okCount) ElMessage.success(t('todos.outboundDone', { count: okCount }))
       if (failCount) ElMessage.warning(t('todos.outboundPartialFail', { count: failCount }))
+      // 发货完成 → 清除该商品的包材缓存（避免下次误用旧选择）
+      clearPackagingSelection()
     }
 
     // 当前待办是否「発送をしてください」（待发货）
@@ -382,6 +422,8 @@ export default defineComponent({
       if (!iid) return
       resetInvMatch()
       resetShipCommit()
+      // 恢复用户上次为该商品选择的包材（localStorage 缓存）
+      restorePackagingSelection()
       invMatch.loading = true
       try {
         const res = await todosApi.matchInventory(iid)
@@ -416,6 +458,10 @@ export default defineComponent({
         has_change_method_btn: false,
         // 发行后保存到本地的发货二维码图片（/imges/...）
         qr_image_url: '',
+        // 发送场所信息（发货码上方「○○から発送」标题/说明/设施图标 URL，煤炉 CDN）
+        shipping_facility_name: '',
+        shipping_facility_desc: '',
+        shipping_facility_image_url: '',
         // 上次从煤炉抓取的时间戳（缓存命中时显示）
         detail_synced_at: null,
         messages: [], // [{ from, text, at, is_buyer, user_id }]

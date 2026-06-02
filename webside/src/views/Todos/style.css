@@ -641,6 +641,39 @@
   justify-content: space-between;
   gap: 12px;
 }
+.detail-section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 发送场所（发货码上方：图标 + 「○○から発送」标题 + 说明） */
+.detail-facility {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+}
+.detail-facility-icon {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 4px;
+  background: #fff;
+}
+.detail-facility-text {
+  min-width: 0;
+}
+.detail-facility-name {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.detail-facility-desc {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  white-space: pre-line;
+}
 
 /* 发货二维码（发行后保存到本地，到店出示） */
 .detail-qr-wrap {
