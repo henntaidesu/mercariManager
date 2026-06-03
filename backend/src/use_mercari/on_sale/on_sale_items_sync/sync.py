@@ -124,7 +124,7 @@ def apply_on_sale_list_sync(
 
         rc = reconcile_listing_counts(touched_item_ids)
         stats["inventory_on_sale_inc"] = rc.get("listed_inc", 0)
-        stats["inventory_on_sale_dec"] = rc.get("delisted", 0) + rc.get("sold_released", 0)
+        stats["inventory_on_sale_dec"] = rc.get("listed_dec", 0)
         stats["reconcile"] = rc
 
     stats["marked_deleted"] = marked_deleted

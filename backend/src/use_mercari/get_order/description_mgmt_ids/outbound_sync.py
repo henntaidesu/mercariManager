@@ -71,6 +71,10 @@ def refresh_inventory_pending_outbound_qty(inventory_ids: Optional[List[int]] = 
             "UPDATE [inventory] SET [pending_outbound_qty] = ? WHERE [id] = ?",
             (qty, inv_id),
         )
+    # 待出变动后同步重算「可上架」= 库存 - 在售 - 待出
+    from ...inventory_counters import recompute_listable_quantity
+
+    recompute_listable_quantity(inv_ids if inv_ids else None)
 
 def sync_outbound_lines_for_order(
     order_no: str,

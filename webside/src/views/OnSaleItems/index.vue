@@ -57,7 +57,6 @@
         v-loading="loading"
         stripe
         row-key="item_id"
-        :row-class-name="onSaleRowClassName"
         @expand-change="onTableExpandChange"
       >
         <el-table-column type="expand" width="44">
@@ -138,25 +137,7 @@
         </el-table-column>
         <el-table-column :label="t('onSaleItems.itemId')" prop="item_id" width="150" align="center" header-align="center">
           <template #default="{ row }">
-            <el-tooltip
-              v-if="isOnSaleZeroStockAlert(row)"
-              effect="dark"
-              placement="top"
-              :show-after="100"
-              popper-class="on-sale-alert-tooltip-popper"
-            >
-              <template #content>
-                <div class="on-sale-alert-tooltip-title">{{ t('onSaleItems.alertReasonTitle') }}</div>
-                <ul class="on-sale-alert-tooltip-list">
-                  <li v-for="(reason, i) in onSaleAlertReasons(row)" :key="i">{{ reason }}</li>
-                </ul>
-              </template>
-              <span class="on-sale-alert-id">
-                <el-icon class="on-sale-alert-icon"><WarningFilled /></el-icon>
-                {{ row.item_id }}
-              </span>
-            </el-tooltip>
-            <span v-else>{{ row.item_id }}</span>
+            <span>{{ row.item_id }}</span>
           </template>
         </el-table-column>
         <el-table-column :label="t('onSaleItems.seller')" prop="seller_name" width="120" show-overflow-tooltip align="center" header-align="center">

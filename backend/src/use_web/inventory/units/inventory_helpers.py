@@ -22,6 +22,7 @@ INVENTORY_COLUMNS = [
     "mercari_item_id",
     "on_sale_quantity",
     "pending_outbound_qty",
+    "listable_quantity",
     "auto_listing_enabled",
     "is_delete",
     "is_combined",
@@ -129,6 +130,20 @@ def _query_inventory_with_joins(where_sql: str = "", params: tuple = ()) -> list
     items = [_enrich_inventory_api_dict(_row_to_inventory_detail(r)) for r in rows]
     # 在售数量 on_sale_quantity 已改为事件驱动权威计数（见 use_mercari.inventory_counters），
     # 列表直接返回库存行存储值，不再用 on_sale_items 全量重算覆盖。
+    # 「可上架」= max(0, 库存 - 在售 - 待出)：读取时按权威三栏重算并自愈落库，保证展示与判断口径一致。
+    for d in items:
+        q = int(d.get("quantity") or 0)
+        os_q = int(d.get("on_sale_quantity") or 0)
+        pend = int(d.get("pending_outbound_qty") or 0)
+        listable = max(0, q - os_q - pend)
+        if int(d.get("listable_quantity") or 0) != listable:
+            iid = int(d.get("id") or 0)
+            if iid > 0:
+                db.execute_update(
+                    "UPDATE [inventory] SET [listable_quantity] = ? WHERE [id] = ?",
+                    (listable, iid),
+                )
+        d["listable_quantity"] = listable
     return items
 
 

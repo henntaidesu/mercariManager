@@ -316,6 +316,13 @@
             <span v-else class="cell-muted">{{ Number(row.pending_outbound_qty || 0) }}</span>
           </template>
         </el-table-column>
+        <el-table-column :label="t('inventory.listableColumn')" prop="listable_quantity" width="80" align="center" header-align="center" sortable="custom">
+          <template #default="{ row }">
+            <el-tag :type="listableQuantity(row) > 0 ? 'success' : 'info'" size="small">
+              {{ listableQuantity(row) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column v-if="!listingPickMode" :label="t('common.operate')" :width="isMobile ? 140 : 160" align="center" header-align="center" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
@@ -893,7 +900,7 @@
                   type="warning"
                   @click="submitListingFromEditForm"
                   :loading="listingSubmitting"
-                  :disabled="inventorySaveBlockedByImageUpload || Number(form.quantity ?? 0) <= 0 || syncLockStore.locked"
+                  :disabled="inventorySaveBlockedByImageUpload || listableQuantity(form) <= 0 || syncLockStore.locked"
                 >{{ t('inventory.list') }}</el-button>
               </span>
             </el-tooltip>

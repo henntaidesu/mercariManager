@@ -1595,15 +1595,6 @@ export default defineComponent({
       }
     }
 
-    /** 与在售商品页一致：库存为 0（或以下）但仍有在售数量时标红并整体顶置 */
-    function isInventoryZeroStockOnSaleAlert(row) {
-      if (!row || typeof row !== 'object') return false
-      const qty = Number(row.quantity ?? 0)
-      const onSale = Number(row.on_sale_quantity ?? 0)
-      if (!Number.isFinite(onSale) || onSale <= 0) return false
-      return Number.isFinite(qty) && qty <= 0
-    }
-
     /** 未设置商品归属（与订单出库「归属不匹配」口径一致） */
     function isInventoryNoOwner(row) {
       if (!row || typeof row !== 'object') return false
@@ -1629,17 +1620,15 @@ export default defineComponent({
       return isInventoryNoOwner(row) || isInventorySystemAdminOwner(row)
     }
 
-    /** 需标红顶置：零库存仍在售，或无归属/归属系统管理员 */
+    /** 需标红顶置：无归属/归属系统管理员。
+     *  注：新计数模型下「库存为 0 但有在售」属正常（库存数量已转移到在售上），不再标红。 */
     function isInventoryAlertRow(row) {
-      return isInventoryZeroStockOnSaleAlert(row) || isInventoryOwnerNeedsAlert(row)
+      return isInventoryOwnerNeedsAlert(row)
     }
 
     /** 标红行原因列表（已本地化），供 tooltip 悬停展示 */
     function inventoryAlertReasons(row) {
       const reasons = []
-      if (isInventoryZeroStockOnSaleAlert(row)) {
-        reasons.push(t('inventory.alertReasonZeroStockOnSale'))
-      }
       if (isInventoryNoOwner(row)) {
         reasons.push(t('inventory.alertReasonNoOwner'))
       } else if (isInventorySystemAdminOwner(row)) {
@@ -1722,6 +1711,19 @@ export default defineComponent({
       if (n === 0) return 'danger'
       if (n <= 3) return 'warning'
       return 'success'
+    }
+
+    /** 可上架数量 = max(0, 库存 - 在售 - 待出)。优先用后端字段，缺失时本地兜底计算。 */
+    function listableQuantity(row) {
+      if (!row || typeof row !== 'object') return 0
+      if (row.listable_quantity != null && row.listable_quantity !== '') {
+        const v = Number(row.listable_quantity)
+        if (Number.isFinite(v)) return Math.max(0, v)
+      }
+      const q = Number(row.quantity ?? 0)
+      const onSale = Number(row.on_sale_quantity ?? 0)
+      const pend = Number(row.pending_outbound_qty ?? 0)
+      return Math.max(0, (Number.isFinite(q) ? q : 0) - (Number.isFinite(onSale) ? onSale : 0) - (Number.isFinite(pend) ? pend : 0))
     }
 
     /**
@@ -2737,9 +2739,9 @@ export default defineComponent({
       if (!Number.isFinite(id) || id <= 0) return
       applyPriceEditToForm()
 
-      // ── 与列表「出品」一致的前置校验（库存>0、未标红） ── //
+      // ── 与列表「出品」一致的前置校验（可上架>0、未标红） ── //
       const row = list.value.find((r) => Number(r.id) === id)
-      if (Number(form.value.quantity ?? row?.quantity ?? 0) <= 0) {
+      if (listableQuantity(row || form.value) <= 0) {
         ElMessage.warning(t('inventory.cannotListZeroStock'))
         return
       }
@@ -2830,7 +2832,7 @@ export default defineComponent({
         ElMessage.warning(t('inventory.combinedCannotBeSource'))
         return
       }
-      if (Number(row?.quantity ?? 0) <= 0) {
+      if (listableQuantity(row) <= 0) {
         ElMessage.warning(t('inventory.cannotSelectZeroStock'))
         return
       }
@@ -3818,7 +3820,6 @@ export default defineComponent({
       captureFrame,
       load,
       loadInventoryStats,
-      isInventoryZeroStockOnSaleAlert,
       isInventoryNoOwner,
       isInventorySystemAdminOwner,
       isInventoryOwnerNeedsAlert,
@@ -3827,6 +3828,7 @@ export default defineComponent({
       sortedInventoryList,
       onInventorySortChange,
       quantityTagType,
+      listableQuantity,
       thumbUrl,
       syncFormLegacyImageFieldsFromImages,
       inventoryImageDragFrom,

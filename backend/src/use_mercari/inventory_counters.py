@@ -1,24 +1,23 @@
 # -*- coding: utf-8 -*-
-"""库存三栏计数器（库存 quantity / 在售 on_sale_quantity / 待出 pending_outbound_qty）的事件驱动转移。
+"""库存计数器：在售(on_sale_quantity) 的事件驱动维护，以及可上架(listable_quantity) 的派生重算。
 
-模型（出品 1 件 = 1）：
-  · 上架成功：库存 -1，在售 +1
-  · 暂停出售(on_sale→stop) / 恢复出售(stop→on_sale)：不变
-  · 下架/删除（真正下架，非售出）：在售 -1，库存 +1
-  · 售出（在售 ID 被买）：在售 -1，待出 +1
-  · 出库/发货：待出 -1
+数量模型（出品 1 件 = 1）：
+  · 库存 quantity   = 物理总持有数，仅由入库/出库（扫码、组合）变动；上架/下架/售出都不改它。
+  · 在售 on_sale_quantity = 当前已挂在售（含暂停 stop）的件数，事件驱动维护：
+        - 上架成功 / 详情绑定后仍在售：在售 +1
+        - 暂停出售(on_sale→stop) / 恢复出售(stop→on_sale)：不变
+        - 下架/删除 或 售出（从在售消失）：在售 -1
+  · 待出 pending_outbound_qty = 非终态订单且未出库的明细合计，由订单管线派生维护
+        （见 description_mgmt_ids.refresh_inventory_pending_outbound_qty）。
+  · 可上架 listable_quantity = max(0, 库存 - 在售 - 待出)，落库的派生值，出品可否以此判断。
 
-「在售 ↔ 库存」的转移统一由本模块在「在售列表同步」(sync.apply_on_sale_list_sync) 与
-「详情绑定」(detail_sync) 两处通过 ``reconcile_listing_counts`` 应用，并以
-``on_sale_items.counted_on_sale`` 标记保证幂等（同步重复运行不会重复增减）。
+「在售」的增减统一由本模块在「在售列表同步」(sync.apply_on_sale_list_sync) 与「详情绑定」
+(detail_sync) 两处通过 ``reconcile_listing_counts`` 应用，并以 ``on_sale_items.counted_on_sale``
+标记保证幂等（同步重复运行不会重复增减）。下架与售出都只是「从在售消失」→ 在售 -1，库存不变，
+因此无需区分二者（待出由订单派生）。
 
-「待出」仍由订单管线派生维护（见 description_mgmt_ids.refresh_inventory_pending_outbound_qty），
-本模块不直接增减 pending_outbound_qty。
-
-售出 vs 下架 判别：某 listing 从在售消失（is_delete=1 或 status 不在 on_sale/stop）时，
-若其绑定库存存在「未出库的非终态订单行」→ 视为售出（仅释放在售，不回补库存，待出由订单派生）；
-否则视为下架（释放在售并回补库存）。账号同步与订单同步先后顺序可能导致短时漂移，
-可用 scripts/migrate_inventory_counters.py 重新对账修正。
+``listable_quantity`` 在「在售/待出」变动处即时重算；库存列表读取时也会自愈
+（见 inventory_helpers._query_inventory_with_joins）。
 """
 from __future__ import annotations
 
@@ -26,7 +25,6 @@ import logging
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from ..db_manage.database import DatabaseManager
-from ..db_manage.models.order_outbound_line import TERMINAL_ORDER_STATUSES
 from .on_sale.on_sale_items_sync.inventory_qty import (
     _mercari_id_lookup_keys,
     _split_mercari_item_ids,
@@ -43,25 +41,49 @@ def _norm_keys(item_id: str) -> List[str]:
     return _mercari_id_lookup_keys(item_id)
 
 
-def _adjust_inventory(
-    db: DatabaseManager,
-    inv_id: int,
-    *,
-    quantity_delta: int = 0,
-    on_sale_delta: int = 0,
-) -> bool:
-    """对单个库存行应用增量（quantity / on_sale_quantity 均 clamp >= 0）。返回是否实际更新。"""
-    if quantity_delta == 0 and on_sale_delta == 0:
+def _listable_sql_expr() -> str:
+    """可上架 = max(0, 库存 - 在售 - 待出) 的 SQL 表达式（基于同表列）。"""
+    return (
+        "MAX(0, COALESCE([quantity], 0) "
+        "- COALESCE([on_sale_quantity], 0) "
+        "- COALESCE([pending_outbound_qty], 0))"
+    )
+
+
+def recompute_listable_quantity(inv_ids: Optional[Iterable[int]] = None) -> int:
+    """重算并落库 inventory.listable_quantity = max(0, 库存 - 在售 - 待出)。
+
+    inv_ids 为空时重算全表；返回受影响行数。
+    """
+    db = DatabaseManager()
+    expr = _listable_sql_expr()
+    if inv_ids is None:
+        return int(db.execute_update(
+            f"UPDATE [inventory] SET [listable_quantity] = {expr}"
+        ) or 0)
+    ids = sorted({int(i) for i in inv_ids if i is not None})
+    if not ids:
+        return 0
+    ph = ",".join("?" * len(ids))
+    return int(db.execute_update(
+        f"UPDATE [inventory] SET [listable_quantity] = {expr} WHERE [id] IN ({ph})",
+        tuple(ids),
+    ) or 0)
+
+
+def _adjust_on_sale(db: DatabaseManager, inv_id: int, on_sale_delta: int) -> bool:
+    """对单个库存行的在售数量应用增量（clamp >= 0），并同步重算可上架。返回是否实际更新。"""
+    if on_sale_delta == 0:
         return False
     changed = db.execute_update(
         """
         UPDATE [inventory]
-        SET [quantity] = MAX(0, COALESCE([quantity], 0) + ?),
-            [on_sale_quantity] = MAX(0, COALESCE([on_sale_quantity], 0) + ?)
+        SET [on_sale_quantity] = MAX(0, COALESCE([on_sale_quantity], 0) + ?)
         WHERE [id] = ?
         """,
-        (int(quantity_delta), int(on_sale_delta), int(inv_id)),
+        (int(on_sale_delta), int(inv_id)),
     )
+    recompute_listable_quantity([int(inv_id)])
     return bool(changed)
 
 
@@ -98,33 +120,6 @@ def _bound_inventory_map(db: DatabaseManager) -> Dict[str, Set[int]]:
         for mid in _split_mercari_item_ids(mids_raw):
             for key in _norm_keys(mid):
                 out.setdefault(key, set()).add(inv_id)
-    return out
-
-
-def _inventories_with_pending(db: DatabaseManager, inv_ids: Iterable[int]) -> Set[int]:
-    """返回这些库存中「存在未出库的非终态订单行」的库存 id 集合（用于售出 vs 下架判别）。"""
-    ids = sorted({int(i) for i in inv_ids if i is not None})
-    if not ids:
-        return set()
-    inv_ph = ",".join("?" * len(ids))
-    term_ph = ",".join("?" * len(TERMINAL_ORDER_STATUSES))
-    rows = db.execute_query(
-        f"""
-        SELECT DISTINCT l.[inventory_id]
-        FROM [order_outbound_lines] l
-        INNER JOIN [orders] o ON o.[order_no] = l.[order_no]
-        WHERE l.[inventory_id] IN ({inv_ph})
-          AND COALESCE(l.[is_stocked_out], 0) = 0
-          AND o.[status] NOT IN ({term_ph})
-        """,
-        tuple(ids) + tuple(TERMINAL_ORDER_STATUSES),
-    )
-    out: Set[int] = set()
-    for (iid,) in rows or []:
-        try:
-            out.add(int(iid))
-        except (TypeError, ValueError):
-            continue
     return out
 
 
@@ -168,26 +163,23 @@ def _load_listing_states(
 
 
 def reconcile_listing_counts(item_ids: Iterable[str]) -> Dict[str, int]:
-    """对给定煤炉商品 ID 集合，依据 on_sale_items 当前状态与绑定库存，将「在售/库存」计数对齐。
+    """对给定煤炉商品 ID 集合，依据 on_sale_items 当前状态与绑定库存，对齐「在售」计数（库存不变）。
 
-    幂等：凭 on_sale_items.counted_on_sale 标记，仅在「应计入」状态翻转时增减。
-      · counted 0 → 应计入(未软删 + status∈on_sale/stop + 已绑定存在库存)：上架 → 库存-1, 在售+1，标记=1
-      · counted 1 → 不应计入：该 listing 退出
-          - 绑定库存存在未出库的非终态订单行 → 售出：仅 在售-1（待出由订单派生），标记=0
-          - 否则 → 下架：在售-1, 库存+1，标记=0
+    幂等：凭 on_sale_items.counted_on_sale 标记，仅在「应计入」状态翻转时增减在售。
+      · counted 0 → 应计入(未软删 + status∈on_sale/stop + 已绑定存在库存)：上架 → 在售 +1，标记=1
+      · counted 1 → 不应计入(软删/下架/售出从在售消失，或解绑)：在售 -1，标记=0
       · 其余（暂停/恢复、未绑定、状态不变）：不动
 
-    返回统计 {listed_inc, delisted, sold_released}。
+    库存 quantity 不在此变动（仅入库/出库改变）；可上架由 _adjust_on_sale 同步重算。
+    返回统计 {listed_inc, listed_dec}。
     """
     db = DatabaseManager()
     states = _load_listing_states(db, item_ids)
     if not states:
-        return {"listed_inc": 0, "delisted": 0, "sold_released": 0}
+        return {"listed_inc": 0, "listed_dec": 0}
 
     bound_map = _bound_inventory_map(db)
 
-    # 先收集所有「需要判别售出」的候选库存，批量查 pending，避免逐条查询
-    candidate_invs: Set[int] = set()
     # 去重：按 item_id 唯一处理（多键指向同一 state）
     unique_states: Dict[str, Dict[str, object]] = {}
     for state in states.values():
@@ -195,14 +187,7 @@ def reconcile_listing_counts(item_ids: Iterable[str]) -> Dict[str, int]:
         if iid:
             unique_states[iid] = state
 
-    for iid, state in unique_states.items():
-        counted = int(state.get("counted") or 0)
-        if counted == 1:
-            for key in _norm_keys(iid):
-                candidate_invs |= bound_map.get(key, set())
-    pending_invs = _inventories_with_pending(db, candidate_invs)
-
-    stats = {"listed_inc": 0, "delisted": 0, "sold_released": 0}
+    stats = {"listed_inc": 0, "listed_dec": 0}
 
     for iid, state in unique_states.items():
         status = state.get("status")
@@ -220,23 +205,19 @@ def reconcile_listing_counts(item_ids: Iterable[str]) -> Dict[str, int]:
         )
 
         if should_count and counted == 0:
-            # 上架：每个绑定库存 库存-1, 在售+1
+            # 上架：每个绑定库存 在售 +1（库存不变）
             for inv_id in bound:
-                _adjust_inventory(db, inv_id, quantity_delta=-1, on_sale_delta=+1)
+                _adjust_on_sale(db, inv_id, +1)
             _set_counted_flag(db, iid, 1)
             stats["listed_inc"] += len(bound)
         elif not should_count and counted == 1:
-            # 退出在售：逐个绑定库存释放在售；售出不回补库存，下架回补库存
+            # 退出在售（下架/售出/解绑）：每个绑定库存 在售 -1（库存不变；待出由订单派生）
             for inv_id in bound:
-                if inv_id in pending_invs:
-                    _adjust_inventory(db, inv_id, on_sale_delta=-1)
-                    stats["sold_released"] += 1
-                else:
-                    _adjust_inventory(db, inv_id, quantity_delta=+1, on_sale_delta=-1)
-                    stats["delisted"] += 1
+                _adjust_on_sale(db, inv_id, -1)
+                stats["listed_dec"] += 1
             _set_counted_flag(db, iid, 0)
         # 其余情形：暂停/恢复（counted 保持 1）、未绑定（counted 保持 0）等，不动
 
-    if stats["listed_inc"] or stats["delisted"] or stats["sold_released"]:
+    if stats["listed_inc"] or stats["listed_dec"]:
         log.info("[inventory_counters] reconcile %s -> %s", list(unique_states.keys()), stats)
     return stats

@@ -89,6 +89,13 @@ def _adjust_combined_source_stock(cur, items: list[dict], combo_delta: int) -> N
             f"UPDATE [inventory] SET quantity = COALESCE(quantity, 0) {op} ? WHERE id = ?",
             (change, source_id),
         )
+        # 来源库存数量变化后，同步重算其「可上架」= 库存 - 在售 - 待出
+        cur.execute(
+            "UPDATE [inventory] SET [listable_quantity] = "
+            "MAX(0, COALESCE([quantity],0) - COALESCE([on_sale_quantity],0) - COALESCE([pending_outbound_qty],0)) "
+            "WHERE id = ?",
+            (source_id,),
+        )
 
 
 def create_combined_inventory(data: CombinedInventoryCreate, _claims: dict = Depends(require_auth)):

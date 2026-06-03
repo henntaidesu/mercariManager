@@ -34,6 +34,12 @@ def stock_in_inventory(pid: int, data: StockInRequest):
             )
             if cur.rowcount <= 0:
                 raise HTTPException(status_code=500, detail="库存更新失败")
+            cur.execute(
+                "UPDATE [inventory] SET [listable_quantity] = "
+                "MAX(0, COALESCE([quantity],0) - COALESCE([on_sale_quantity],0) - COALESCE([pending_outbound_qty],0)) "
+                "WHERE id = ?",
+                (pid,),
+            )
             if data.warehouse_id:
                 cur.execute(
                     """
@@ -85,6 +91,12 @@ def stock_out_inventory(pid: int, data: StockInRequest):
             )
             if cur.rowcount <= 0:
                 raise HTTPException(status_code=500, detail="库存更新失败")
+            cur.execute(
+                "UPDATE [inventory] SET [listable_quantity] = "
+                "MAX(0, COALESCE([quantity],0) - COALESCE([on_sale_quantity],0) - COALESCE([pending_outbound_qty],0)) "
+                "WHERE id = ?",
+                (pid,),
+            )
             if data.warehouse_id:
                 cur.execute(
                     """

@@ -1,22 +1,19 @@
 # -*- coding: utf-8 -*-
-"""一次性对账脚本：将现有数据库的「库存 / 在售 / 待出」三栏，重建为事件驱动计数模型的初值。
+"""对账脚本：依据当前数据，重建「在售 / 待出 / 可上架」与 on_sale_items.counted_on_sale 标记。
 
-新模型（出品 1 件 = 1，详见 src/use_mercari/inventory_counters.py）：
-    总持有 = 库存(quantity) + 在售(on_sale_quantity) + 待出(pending_outbound_qty)
-本脚本把「当前 inventory.quantity 视为总持有」，据此重新分配：
-    · 在售 on_sale_quantity = 该库存绑定的、且仍挂在售(on_sale/stop 且未软删)的煤炉商品件数
-    · 待出 pending_outbound_qty = 非终态订单且未出库的出库明细合计（沿用订单派生口径）
-    · 库存 quantity = max(0, 原 quantity - 在售 - 待出)
+数量模型（出品 1 件 = 1，详见 src/use_mercari/inventory_counters.py）：
+    库存 quantity = 物理总持有（本脚本不改它）
+    在售 on_sale_quantity = 该库存绑定的、且仍挂在售(on_sale/stop 且未软删)的煤炉商品件数
+    待出 pending_outbound_qty = 非终态订单且未出库的出库明细合计（订单派生口径）
+    可上架 listable_quantity = max(0, 库存 - 在售 - 待出)
 并把 on_sale_items.counted_on_sale 置为：绑定到存在库存、未软删、status∈(on_sale,stop) 的为 1，其余为 0。
+
+适用：全新库 / quantity 已是「物理总数」的库。本脚本可重复运行（幂等：直接覆盖为重算值，不累加）。
+若 quantity 仍是旧「在售↔库存转移模型」下被扣减过的余量，请先运行 fix_inventory_total_quantity.py 还原。
 
 用法（在 backend 目录下执行）：
     python scripts/migrate_inventory_counters.py            # 演练（dry-run）：仅打印将如何变化，不写库
     python scripts/migrate_inventory_counters.py --apply    # 实际写入数据库
-
-注意：
-    · 这是一次性迁移。--apply 会把 quantity 重写为「原 quantity 减去在售/待出」，重复 --apply
-      会再次扣减（不幂等），请仅执行一次；如需再次对账，先确认 quantity 已是「可售库存」语义。
-    · 建议先备份 mercariDB.db。
 """
 from __future__ import annotations
 
@@ -37,6 +34,7 @@ if _BACKEND_ROOT not in sys.path:
     sys.path.insert(0, _BACKEND_ROOT)
 
 from src.db_manage.database import DatabaseManager  # noqa: E402
+from src.db_manage.models.inventory import InventoryModel  # noqa: E402
 from src.db_manage.models.on_sale_item import OnSaleItemModel  # noqa: E402
 from src.db_manage.models.order_outbound_line import (  # noqa: E402
     TERMINAL_ORDER_STATUSES,
@@ -49,8 +47,9 @@ from src.use_mercari.on_sale.on_sale_items_sync.inventory_qty import (  # noqa: 
 
 
 def _ensure_schema() -> None:
-    """确保 on_sale_items.counted_on_sale 列存在（按模型定义自动补列）。"""
+    """确保 on_sale_items.counted_on_sale 与 inventory.listable_quantity 列存在（按模型自动补列）。"""
     OnSaleItemModel.ensure_table_exists()
+    InventoryModel.ensure_table_exists()
 
 
 def _load_inventories(db: DatabaseManager) -> List[Dict]:
@@ -163,11 +162,11 @@ def run(apply: bool) -> None:
         pend = int(pending_map.get(inv["id"], 0))
         new_on_sale = listed_count
         new_pending = pend
-        new_quantity = max(0, inv["quantity"] - new_on_sale - new_pending)
+        # 新模型：quantity 为物理总持有，不在此变动；可上架 = max(0, 库存 - 在售 - 待出)
+        new_listable = max(0, inv["quantity"] - new_on_sale - new_pending)
 
         changed = (
-            new_quantity != inv["quantity"]
-            or new_on_sale != inv["on_sale_quantity"]
+            new_on_sale != inv["on_sale_quantity"]
             or new_pending != inv["pending_outbound_qty"]
         )
         if changed:
@@ -175,13 +174,13 @@ def run(apply: bool) -> None:
             name = (inv["name"] or "")[:20]
             print(f"{inv['id']:>6}  {name:<20} {inv['quantity']:>6} "
                   f"{inv['on_sale_quantity']:>5} {inv['pending_outbound_qty']:>5}  ->  "
-                  f"{new_quantity:>6} {new_on_sale:>5} {new_pending:>5}")
+                  f"{inv['quantity']:>6} {new_on_sale:>5} {new_pending:>5} (可上架 {new_listable})")
         plan.append(
             {
                 "id": inv["id"],
-                "quantity": new_quantity,
                 "on_sale_quantity": new_on_sale,
                 "pending_outbound_qty": new_pending,
+                "listable_quantity": new_listable,
             }
         )
 
@@ -217,10 +216,10 @@ def run(apply: bool) -> None:
         db.execute_update(
             """
             UPDATE [inventory]
-            SET [quantity] = ?, [on_sale_quantity] = ?, [pending_outbound_qty] = ?
+            SET [on_sale_quantity] = ?, [pending_outbound_qty] = ?, [listable_quantity] = ?
             WHERE [id] = ?
             """,
-            (p["quantity"], p["on_sale_quantity"], p["pending_outbound_qty"], p["id"]),
+            (p["on_sale_quantity"], p["pending_outbound_qty"], p["listable_quantity"], p["id"]),
         )
     for iid, want in flag_to_set.items():
         db.execute_update(

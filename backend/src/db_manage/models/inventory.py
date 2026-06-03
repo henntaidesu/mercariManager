@@ -90,6 +90,13 @@ class InventoryModel(BaseModel):
                 'not_null': True,
                 'default': 0,
             },
+            # 可上架数量 = 库存(总持有) - 在售 - 待出（派生值，落库以便筛选/判断；上架可否以此判定）
+            # 由 inventory_counters.recompute_listable_quantity 维护，并在库存列表读取时自愈。
+            'listable_quantity': {
+                'type': 'INTEGER',
+                'not_null': True,
+                'default': 0,
+            },
             'is_combined': {
                 'type': 'INTEGER',
                 'not_null': True,
