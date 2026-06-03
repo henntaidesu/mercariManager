@@ -887,13 +887,16 @@
               :loading="submitting"
               :disabled="inventorySaveBlockedByImageUpload"
             >{{ t('common.save') }}</el-button>
-            <el-button
-              v-if="form.id"
-              type="warning"
-              @click="submitListingFromEditForm"
-              :loading="listingSubmitting"
-              :disabled="inventorySaveBlockedByImageUpload || Number(form.quantity ?? 0) <= 0"
-            >{{ t('inventory.list') }}</el-button>
+            <el-tooltip v-if="form.id" :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+              <span>
+                <el-button
+                  type="warning"
+                  @click="submitListingFromEditForm"
+                  :loading="listingSubmitting"
+                  :disabled="inventorySaveBlockedByImageUpload || Number(form.quantity ?? 0) <= 0 || syncLockStore.locked"
+                >{{ t('inventory.list') }}</el-button>
+              </span>
+            </el-tooltip>
           </div>
         </div>
       </template>

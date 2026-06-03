@@ -206,14 +206,19 @@
         </el-table-column>
         <el-table-column :label="t('common.operate')" width="130" fixed="right" align="center" header-align="center">
           <template #default="{ row }">
-            <el-button
-              :type="hasDetailViewable(row) ? 'success' : 'warning'"
-              plain
-              :loading="detailLoadingIds.has(String(row.item_id || '').trim())"
-              @click="onDetailActionClick(row)"
-            >
-              {{ hasDetailViewable(row) ? t('onSaleItems.viewDetail') : t('onSaleItems.fetchDetail') }}
-            </el-button>
+            <el-tooltip :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+              <span>
+                <el-button
+                  :type="hasDetailViewable(row) ? 'success' : 'warning'"
+                  plain
+                  :loading="detailLoadingIds.has(String(row.item_id || '').trim())"
+                  :disabled="syncLockStore.locked"
+                  @click="onDetailActionClick(row)"
+                >
+                  {{ hasDetailViewable(row) ? t('onSaleItems.viewDetail') : t('onSaleItems.fetchDetail') }}
+                </el-button>
+              </span>
+            </el-tooltip>
           </template>
         </el-table-column>
       </el-table>
@@ -325,50 +330,70 @@
       <template #footer>
         <div class="detail-footer">
           <div class="detail-footer__left">
-            <el-button
-              v-if="detailViewBase"
-              type="primary"
-              plain
-              :loading="detailLoadingIds.has(String(detailViewBase.item_id || '').trim())"
-              @click="detailViewRefreshFromMercari"
-            >
-              {{ t('onSaleItems.refetchFromMercari') }}
-            </el-button>
+            <el-tooltip v-if="detailViewBase" :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+              <span>
+                <el-button
+                  type="primary"
+                  plain
+                  :loading="detailLoadingIds.has(String(detailViewBase.item_id || '').trim())"
+                  :disabled="syncLockStore.locked"
+                  @click="detailViewRefreshFromMercari"
+                >
+                  {{ t('onSaleItems.refetchFromMercari') }}
+                </el-button>
+              </span>
+            </el-tooltip>
           </div>
           <div class="detail-footer__right">
             <el-button @click="detailViewVisible = false">{{ t('common.close') }}</el-button>
-            <el-button
-              v-if="detailViewBase && detailIsStopped"
-              type="success"
-              :loading="resumeItemLoading"
-              @click="resumeMercariItemFromDetail"
-            >
-              {{ t('onSaleItems.resumeItem') }}
-            </el-button>
-            <el-button
-              v-if="detailViewBase && detailIsOnSale"
-              type="warning"
-              :loading="suspendItemLoading"
-              @click="suspendMercariItemFromDetail"
-            >
-              {{ t('onSaleItems.suspendItem') }}
-            </el-button>
-            <el-button
-              v-if="detailViewBase && !detailIsAuction"
-              type="primary"
-              @click="openReviseDialog"
-            >
-              {{ t('onSaleItems.editListing') }}
-            </el-button>
-            <el-button
-              v-if="detailViewBase"
-              type="danger"
-              plain
-              :loading="deleteItemLoading"
-              @click="deleteMercariItemFromDetail"
-            >
-              {{ t('onSaleItems.deleteItem') }}
-            </el-button>
+            <el-tooltip v-if="detailViewBase && detailIsStopped" :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+              <span>
+                <el-button
+                  type="success"
+                  :loading="resumeItemLoading"
+                  :disabled="syncLockStore.locked"
+                  @click="resumeMercariItemFromDetail"
+                >
+                  {{ t('onSaleItems.resumeItem') }}
+                </el-button>
+              </span>
+            </el-tooltip>
+            <el-tooltip v-if="detailViewBase && detailIsOnSale" :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+              <span>
+                <el-button
+                  type="warning"
+                  :loading="suspendItemLoading"
+                  :disabled="syncLockStore.locked"
+                  @click="suspendMercariItemFromDetail"
+                >
+                  {{ t('onSaleItems.suspendItem') }}
+                </el-button>
+              </span>
+            </el-tooltip>
+            <el-tooltip v-if="detailViewBase && !detailIsAuction" :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+              <span>
+                <el-button
+                  type="primary"
+                  :disabled="syncLockStore.locked"
+                  @click="openReviseDialog"
+                >
+                  {{ t('onSaleItems.editListing') }}
+                </el-button>
+              </span>
+            </el-tooltip>
+            <el-tooltip v-if="detailViewBase" :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
+              <span>
+                <el-button
+                  type="danger"
+                  plain
+                  :loading="deleteItemLoading"
+                  :disabled="syncLockStore.locked"
+                  @click="deleteMercariItemFromDetail"
+                >
+                  {{ t('onSaleItems.deleteItem') }}
+                </el-button>
+              </span>
+            </el-tooltip>
           </div>
         </div>
       </template>

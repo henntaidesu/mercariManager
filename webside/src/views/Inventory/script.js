@@ -18,6 +18,7 @@ import {
 } from '@/api/index.js'
 import { encodeMgmtId, encodeMgmtIds, stripTrailingMgmtBlock } from '@/utils/mgmtIdCipher.js'
 import { warehouseShelfLeafLabel } from '@/utils/warehouseLabel.js'
+import { useSyncLockStore } from '@/stores/syncLock.js'
 import {
   MERCARI_AREAS,
   JP_REGION_OPTIONS,
@@ -32,6 +33,7 @@ export default defineComponent({
   },
   setup() {
     const { t } = useI18n()
+    const syncLockStore = useSyncLockStore()
 
     const list = ref([])
     const inventoryTableRef = ref(null)
@@ -3528,6 +3530,7 @@ export default defineComponent({
     onMounted(async () => {
       updateViewportState()
       window.addEventListener('resize', updateViewportState)
+      syncLockStore.subscribe()
       const [cats, whs, users, mappings] = await Promise.all([
         categoryApi.list(),
         warehouseApi.list(),
@@ -3549,6 +3552,7 @@ export default defineComponent({
       stopScan()
       stopContScan()
       onProductImgCameraClosed()
+      syncLockStore.unsubscribe()
       if (listingPostProgressTimer != null) {
         clearInterval(listingPostProgressTimer)
         listingPostProgressTimer = null
@@ -3566,6 +3570,7 @@ export default defineComponent({
       ElMessage,
       Loading,
       useI18n,
+      syncLockStore,
       inventoryApi,
       categoryApi,
       warehouseApi,

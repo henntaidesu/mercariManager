@@ -243,12 +243,10 @@
             <div v-else-if="!hasInventoryMatch" class="detail-empty-hint">{{ t('todos.updateOrderFirst') }}</div>
             <div v-else class="detail-ship-commit">
               <div class="detail-ship-pack">
-                <div class="detail-label">{{ t('orders.packagingName') }}</div>
                 <el-select
                   v-for="(row, idx) in shipPackagingRows"
                   :key="idx"
                   v-model="row.item_name"
-                  filterable
                   clearable
                   size="large"
                   class="detail-ship-pack-select"
@@ -316,48 +314,60 @@
                 />
               </div>
             </template>
-            <!-- 未发行：当前状态 + 选择尺寸 + 修改发货方式 -->
+            <!-- 未发行：发货方式卡片 + お届け先 + 发货/修改 按钮（全部置于表单卡片中）-->
             <template v-else>
-              <div class="detail-shipping-status">
-                <span class="detail-label">{{ t('todos.currentStatus') }}</span>
-                <span class="detail-value">{{ detail.current_shipping_status || (detail.recipient_address ? t('todos.shippingUndecided') : dash) }}</span>
-              </div>
-              <!-- お届け先（配送方法「未定」/ 非匿名时煤炉页面才有的买家收货地址） -->
-              <div v-if="detail.recipient_address" class="detail-recipient">
-                <span class="detail-label">{{ t('todos.deliveryAddress') }}</span>
-                <pre class="detail-recipient-text">{{ detail.recipient_address }}</pre>
-              </div>
-              <div class="detail-shipping-actions">
-                <el-tooltip
-                  :disabled="!isWaitShipping || (hasInventoryMatch && hasPackagingSelected)"
-                  :content="!hasInventoryMatch ? t('todos.updateOrderFirst') : t('todos.pickPackagingFirst')"
-                  placement="top"
-                >
-                  <span>
-                    <el-button
-                      size="default"
-                      :disabled="isWaitShipping && (!hasInventoryMatch || !hasPackagingSelected)"
-                      @click="onClickShippingSizeLocation"
+              <div class="detail-ship-form">
+                <!-- お届け先（配送方法「未定」/ 非匿名时煤炉页面才有的买家收货地址）：整行显示 -->
+                <div v-if="detail.recipient_address" class="detail-recipient">
+                  <span class="detail-label">{{ t('todos.deliveryAddress') }}</span>
+                  <pre class="detail-recipient-text">{{ detail.recipient_address }}</pre>
+                </div>
+                <!-- 发货方式（左）+ 发货/修改 按钮（居右、同一行）。
+                     方式图标：ゆうゆうメルカリ便→post-box.png；らくらくメルカリ便→yamato.png -->
+                <div class="detail-method-row">
+                  <div v-if="shippingMethodCardImg || detail.shipping_method_name" class="detail-method-head">
+                    <img
+                      v-if="shippingMethodCardImg"
+                      class="detail-method-img"
+                      :src="facilityImageUrl(shippingMethodCardImg)"
+                      :alt="detail.shipping_method_name || ''"
+                      @error="onShippingImgError"
+                    />
+                    <span class="detail-method-name">{{ detail.shipping_method_name }}</span>
+                  </div>
+                  <div class="detail-shipping-actions">
+                    <el-tooltip
+                      :disabled="!isWaitShipping || (hasInventoryMatch && hasPackagingSelected)"
+                      :content="!hasInventoryMatch ? t('todos.updateOrderFirst') : t('todos.pickPackagingFirst')"
+                      placement="top"
                     >
-                      {{ t('todos.pickSizeAndLocation') }}
-                    </el-button>
-                  </span>
-                </el-tooltip>
-                <el-tooltip
-                  :disabled="!isWaitShipping || hasInventoryMatch"
-                  :content="t('todos.updateOrderFirst')"
-                  placement="top"
-                >
-                  <span>
-                    <el-button
-                      size="default"
-                      :disabled="isWaitShipping && !hasInventoryMatch"
-                      @click="onClickShippingChangeMethod"
+                      <span>
+                        <el-button
+                          size="default"
+                          :disabled="isWaitShipping && (!hasInventoryMatch || !hasPackagingSelected)"
+                          @click="onClickShippingSizeLocation"
+                        >
+                          {{ t('todos.pickSizeAndLocation') }}
+                        </el-button>
+                      </span>
+                    </el-tooltip>
+                    <el-tooltip
+                      :disabled="!isWaitShipping || hasInventoryMatch"
+                      :content="t('todos.updateOrderFirst')"
+                      placement="top"
                     >
-                      {{ t('todos.changeShippingMethod') }}
-                    </el-button>
-                  </span>
-                </el-tooltip>
+                      <span>
+                        <el-button
+                          size="default"
+                          :disabled="isWaitShipping && !hasInventoryMatch"
+                          @click="onClickShippingChangeMethod"
+                        >
+                          {{ t('todos.changeShippingMethod') }}
+                        </el-button>
+                      </span>
+                    </el-tooltip>
+                  </div>
+                </div>
               </div>
             </template>
           </section>

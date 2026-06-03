@@ -603,6 +603,16 @@ export default defineComponent({
       return `/static/post_hukuro/${encodeURIComponent(s)}.png?v=1`
     }
 
+    // 发货方式卡片图标（public/static/post_hukuro/<img>.png，复用 facilityImageUrl）：
+    //   ゆうゆうメルカリ便 → post-box；らくらくメルカリ便 → yamato；其它 → 无卡片
+    const shippingMethodCardImg = computed(() => {
+      const m = (detail.shipping_method_name || detail.current_shipping_status || '').trim()
+      if (!m) return ''
+      if (m.includes('ゆうゆう')) return 'post-box'
+      if (m.includes('らくらく')) return 'yamato'
+      return ''
+    })
+
     // 图片缺失时隐藏 <img>，避免显示破图占位
     function onShippingImgError(e) {
       const el = e?.target
@@ -1536,6 +1546,7 @@ export default defineComponent({
       onPickShipping,
       facilityImageUrl,
       shippingImageUrl,
+      shippingMethodCardImg,
       onShippingImgError,
       listParams,
       load,

@@ -698,6 +698,50 @@
   color: var(--el-text-color-secondary);
   white-space: pre-line;
 }
+/* 发货表单卡片：内含发货方式图标/名称、お届け先、发货/修改 按钮 */
+.detail-ship-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
+/* 发货方式（左）+ 按钮（右）同一行 */
+.detail-method-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.detail-method-row .detail-shipping-actions {
+  margin-left: auto; /* 按钮居右 */
+}
+/* 发货方式（ゆうゆう→post-box / らくらく→yamato） */
+.detail-method-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.detail-method-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detail-method-img {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #fff;
+}
+.detail-method-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+}
 
 /* 发货二维码（发行后保存到本地，到店出示） */
 .detail-qr-wrap {
