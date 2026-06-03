@@ -115,12 +115,35 @@ async def _extract_shipping_facility(page: Any) -> Dict[str, str]:
 # 「お届け先」見出しは <span> なので拾わない。住所が無い（匿名配送）なら空文字を返す。
 _DELIVERY_ADDRESS_JS = """
 () => {
-  const root = document.querySelector('[data-testid="transaction:delivery-address"]');
-  if (!root) return '';
-  const lines = Array.from(root.querySelectorAll('p'))
-    .map(p => (p.innerText || '').trim())
-    .filter(Boolean);
-  return lines.join('\\n');
+  const collect = (root) => {
+    if (!root) return '';
+    const lines = Array.from(root.querySelectorAll('p'))
+      .map(p => (p.innerText || '').trim())
+      .filter(t => t && t !== 'お届け先');
+    return lines.join('\\n');
+  };
+  // 1) 専用 testid（あれば最優先）
+  let out = collect(document.querySelector('[data-testid="transaction:delivery-address"]'));
+  if (out) return out;
+  // 2) 「お届け先」見出しから値ブロックを辿る（merDisplayRow / titleWrapper 構造）。
+  //    匿名配送(メルカリ便)では非表示なので、見つからなければ空文字を返す。
+  const labels = Array.from(document.querySelectorAll('p, span'));
+  for (const el of labels) {
+    if ((el.innerText || '').trim() !== 'お届け先') continue;
+    const wrap = el.closest('[class*="titleWrapper"]');
+    if (wrap) {
+      const sub = wrap.querySelector('[class*="subtitle"]');
+      const v = collect(sub);
+      if (v) return v;
+    }
+    const row = el.closest('[class*="merDisplayRow"]');
+    const v2 = collect(row);
+    if (v2) return v2;
+    const gp = el.parentElement && el.parentElement.parentElement;
+    const v3 = collect(gp);
+    if (v3) return v3;
+  }
+  return '';
 }
 """
 
@@ -136,15 +159,17 @@ async def _extract_delivery_address(page: Any) -> Optional[str]:
 
 # 発送通知待ち状態（ゆうパケットポスト等のシール読み取り済み／専用箱控え切り取り済みで、
 # あとは「梱包した商品に発送用シールを貼りました」等にチェック→「商品を発送したので、発送通知
-# をする」を押すだけ）。data-testid="acknowledge-checkbox" の有無＋発送通知ボタンの有無で判定し、
-# ポスト発送確認符号・追跡番号も拾う。
+# をする」を押すだけ）。
+# 重要：単に「発送通知をする」ボタンが在るだけでは ready としない——非匿名「未定」発送
+# (買い手にお届け先を表示し、出品者が自分で発送→発送通知する) でも同ボタンが在り、誤検知して
+# しまうため。スキャン/シール発行が実際に完了した強い証拠
+# （発送確認符号 / 追跡番号 / acknowledge-checkbox / 「読み取りが正しく完了しました」）
+# が在る場合のみ ready とする。ポスト発送確認符号・追跡番号も拾う。
 _POST_SHIP_READY_JS = """
 () => {
   const body = document.body ? (document.body.innerText || '') : '';
   const hasCheckbox = !!document.querySelector('[data-testid="acknowledge-checkbox"]');
-  const notifyBtn = Array.from(document.querySelectorAll('button'))
-    .some(b => (b.innerText || '').includes('発送通知をする'));
-  const ready = hasCheckbox || notifyBtn;
+  const scanDone = body.includes('読み取りが正しく完了しました') || body.includes('発送確認符号');
   let code = '';
   let m = body.match(/発送確認符号[\\s:：]*([A-Za-z0-9]+)/);
   if (m) code = m[1];
@@ -152,7 +177,7 @@ _POST_SHIP_READY_JS = """
   m = body.match(/追跡番号[\\s:：]*([0-9\\-]+)/);
   if (m) tracking = m[1];
   // 発送方法（通过什么发送）：优先 slip 区的「サイズ」(例: ゆうパケットポスト / mini)，
-  // 回落到「配送の方法」(例: ゆうゆうメルカリ便)。
+  // 回落到「配送の方法」(例: ゆうゆうメルカリ便)。「未定」は方式ではないので除外。
   let method = '';
   m = body.match(/サイズ[\\s\\r\\n]+([^\\r\\n]+)/);
   if (m) method = m[1].trim();
@@ -160,6 +185,9 @@ _POST_SHIP_READY_JS = """
     m = body.match(/配送の方法[\\s\\r\\n]+([^\\r\\n]+)/);
     if (m) method = m[1].trim();
   }
+  if (method === '未定') method = '';
+  // 実際にスキャン/シール発行が完了した強い証拠が在る場合のみ ready。
+  const ready = hasCheckbox || scanDone || !!code || !!tracking;
   return { ready, code, tracking, method };
 }
 """

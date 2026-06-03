@@ -19,7 +19,7 @@ from src.app_paths import backend_root
 #   True          = 无视环境变量与各处 headless=True 入参，所有自动化浏览器一律有头，方便肉眼 DEBUG
 # 改这一处即可全局生效（启动时通过 set_force_headed_debug 应用）。
 # 注：环境变量 WEB_DRIVE_FORCE_HEADED_DEBUG=1 也可临时开启，便于不改码调试。
-WEB_DRIVE_FORCE_HEADED_DEBUG = False
+WEB_DRIVE_FORCE_HEADED_DEBUG = True
 
 
 def _resolve_force_headed_debug() -> bool:

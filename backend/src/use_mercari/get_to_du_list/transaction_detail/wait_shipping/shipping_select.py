@@ -6,11 +6,8 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 from .....db_manage.models.todo_item import TodoItemModel
-from .....web_drive.core.manager import get_web_drive_manager
 from .....web_drive.core.mitm_session import mitm_automation_browser
-from .....web_drive.core.paths import mercari_account_key
 from ....sync.sync_progress import make_sync_reporter
-from .._common import _is_wait_shipping_todo
 from .._qr_facility import _extract_shipping_facility, _persist_shipping_facility, _save_qr_code_image
 from .qr_scan import _click_scan_qr_and_open_scanner
 
@@ -35,6 +32,30 @@ _GENERATE_SHIP_CODE_TEXTS = (
     "発送用バーコードを発行",
 )
 
+async def _click_size_select_entry(page: Any, *, aid: int, report) -> None:
+    """点交易页「商品サイズと発送場所を選択する」入口 → 等浏览器跳到 /shipping_class。"""
+    report("locate_button", "正在定位「商品サイズと発送場所を選択する」按钮…")
+    btn = page.get_by_role("button", name=_SIZE_SELECT_BUTTON_TEXT)
+    try:
+        await btn.first.wait_for(state="visible", timeout=8000)
+    except Exception:
+        btn = page.locator(f'button:has-text("{_SIZE_SELECT_BUTTON_TEXT}")')
+        try:
+            await btn.first.wait_for(state="visible", timeout=4000)
+        except Exception as exc:
+            raise RuntimeError(
+                f"未找到「{_SIZE_SELECT_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
+            ) from exc
+    report("click_button", "正在点击按钮，等待跳转到 /shipping_class…")
+    await btn.first.click()
+    log.info("[shipping] 已点击「%s」 account_id=%s", _SIZE_SELECT_BUTTON_TEXT, aid)
+    # 等浏览器跳到 /shipping_class
+    try:
+        await page.wait_for_url("**/shipping_class*", timeout=8000)
+    except Exception:
+        log.warning("[shipping] 未观察到 /shipping_class 导航（可能已经在该页）")
+
+
 async def start_select_shipping_class(
     todo_id: int,
     *,
@@ -43,6 +64,8 @@ async def start_select_shipping_class(
     """点 transaction 页的「商品サイズと発送場所を選択する」按钮 → 等浏览器跳到 /shipping_class。
 
     尺寸列表由前端硬编码（按 shipping_method_name 区分），不再依赖 MITM 抓取。
+    注：现行前端「发货」按钮已不调用本函数（点「发货」只弹本地尺寸框、不开浏览器），
+    入口点击改由 ``confirm_shipping_selection`` 在用户确认后一并完成；本函数保留以兼容。
     """
     report = make_sync_reporter(progress_job_id)
     report("resolve_todo", "正在准备…")
@@ -55,41 +78,16 @@ async def start_select_shipping_class(
         raise ValueError("该待办无关联 item_id，无法打开交易页")
     url = f"https://jp.mercari.com/transaction/{item_id}"
 
-    # 点「处理」不再自动开浏览器，因此本操作需自行确保浏览器已打开并停在交易页。
-    # mitm_automation_browser 已开则复用并 reload 到交易页，未开则启动；退出不关闭。
     # /todos 浏览器操作统一无头静默（含待发货）：headless=None 走环境默认（默认无头）。
-    headless_override = None
-    minimized_override = None
     report("open_browser", f"正在打开交易页（{item_id}）…")
     async with mitm_automation_browser(
         aid,
         start_url=url,
-        headless=headless_override,
-        minimized=minimized_override,
+        headless=None,
+        minimized=None,
     ) as (mgr, auto_key):
         page = await mgr.active_tab_page(auto_key)
-
-        report("locate_button", "正在定位「商品サイズと発送場所を選択する」按钮…")
-        btn = page.get_by_role("button", name=_SIZE_SELECT_BUTTON_TEXT)
-        try:
-            await btn.first.wait_for(state="visible", timeout=8000)
-        except Exception:
-            btn = page.locator(f'button:has-text("{_SIZE_SELECT_BUTTON_TEXT}")')
-            try:
-                await btn.first.wait_for(state="visible", timeout=4000)
-            except Exception as exc:
-                raise RuntimeError(
-                    f"未找到「{_SIZE_SELECT_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
-                ) from exc
-        report("click_button", "正在点击按钮，等待跳转到 /shipping_class…")
-        await btn.first.click()
-        log.info("[shipping] 已点击「%s」 account_id=%s", _SIZE_SELECT_BUTTON_TEXT, aid)
-
-        # 等浏览器跳到 /shipping_class（用户后续在我们 dialog 内选 size）
-        try:
-            await page.wait_for_url("**/shipping_class*", timeout=8000)
-        except Exception:
-            log.warning("[shipping] 未观察到 /shipping_class 导航（可能已经在该页）")
+        await _click_size_select_entry(page, aid=aid, report=report)
 
     report("done", "已进入「商品サイズと発送場所」选择页")
     return {
@@ -186,123 +184,134 @@ async def confirm_shipping_selection(
     if not class_text:
         raise ValueError("class_text 不能为空")
     facility = (facility or "").strip() or None
+    item_id = (todo.item_id or "").strip()
+    if not item_id:
+        raise ValueError("该待办无关联 item_id，无法打开交易页")
+    url = f"https://jp.mercari.com/transaction/{item_id}"
 
-    mgr = get_web_drive_manager()
-    auto_key = mercari_account_key(aid)
-    report("attach_browser", "正在连接已打开的浏览器…")
-    try:
-        page = await mgr.active_tab_page(auto_key)
-    except Exception as exc:
-        raise RuntimeError("浏览器未打开或已关闭") from exc
-
-    # ── Step 1: 按精确文本匹配点击 size ──
-    report("select_size", f"正在选择尺寸「{class_text}」…")
-    size_loc = page.get_by_text(class_text, exact=True).first
-    try:
-        await size_loc.wait_for(state="visible", timeout=8000)
-    except Exception as exc:
-        raise RuntimeError(
-            f"未找到尺寸选项「{class_text}」（当前 URL: {page.url}）"
-        ) from exc
-    await size_loc.click()
-    log.info("[shipping] 已选择尺寸「%s」 account_id=%s", class_text, aid)
-    await asyncio.sleep(0.2)
-
-    # ── Step 2: 点「選択して次へ」──
-    report("click_next", "正在点击「選択して次へ」…")
-    next_btn = page.get_by_role("button", name=_SELECT_NEXT_BUTTON_TEXT)
-    try:
-        await next_btn.first.wait_for(state="visible", timeout=4000)
-    except Exception:
-        next_btn = page.locator(f'button:has-text("{_SELECT_NEXT_BUTTON_TEXT}")')
-        await next_btn.first.wait_for(state="visible", timeout=4000)
-    await next_btn.first.click()
-    log.info("[shipping] 已点击「%s」 account_id=%s", _SELECT_NEXT_BUTTON_TEXT, aid)
-
-    # ── Step 3: 等浏览器跳到 /shipping_facilities ──
-    report("wait_facilities", "等待跳转到 /shipping_facilities…")
-    try:
-        await page.wait_for_url("**/shipping_facilities*", timeout=10000)
-    except Exception:
-        log.warning("[shipping] 未观察到 /shipping_facilities 导航 (当前 URL: %s)", page.url)
-
-    # ── Step 4: 按需点 facility 卡片 ──
-    # /shipping_facilities 页 radio 的 value 属性是稳定且语言无关的（POST_OFFICE / LAWSON /
-    # SEVEN_ELEVEN / FAMILY_MART / YAMATO_OFFICE / PUDO ...）。优先按 value 选中，
-    # 再回落到 aria-label（role=radio），最后回落旧式 XPath（兼容历史 post_office/lawson）。
-    if facility is not None:
-        report("select_facility", f"正在选择发货地（{facility}）…")
-        code = facility.strip()
-        picked = False
-        # 优先：按 radio 的 value 属性选中（force 兼容 styled-components 隐藏 input）
-        fac_input = page.locator(f'input[type="radio"][value="{code}"]')
-        try:
-            await fac_input.first.wait_for(state="attached", timeout=8000)
-            await fac_input.first.check(force=True)
-            picked = True
-        except Exception as exc:
-            log.debug("[shipping] value 选中发货地失败 facility=%s: %s", code, exc)
-        # 回落 1：按 aria-label（role=radio）点击卡片
-        if not picked:
-            label = _FACILITY_ARIA_LABELS.get(code, code)
-            try:
-                fac_role = page.get_by_role("radio", name=label)
-                await fac_role.first.click(force=True)
-                picked = True
-            except Exception as exc:
-                log.debug("[shipping] aria-label 选中发货地失败 facility=%s: %s", code, exc)
-        # 回落 2：旧式 XPath（向后兼容历史 post_office/lawson 小写 code）
-        if not picked:
-            xpath_expr = _FACILITY_XPATHS.get(code.lower())
-            if xpath_expr:
-                try:
-                    fac_loc = page.locator(f"xpath={xpath_expr}")
-                    await fac_loc.first.wait_for(state="visible", timeout=4000)
-                    await fac_loc.first.click()
-                    picked = True
-                except Exception as exc:
-                    log.debug("[shipping] XPath 选中发货地失败 facility=%s: %s", code, exc)
-        if not picked:
-            raise RuntimeError(
-                f"未找到发货地选项（facility={facility}，当前 URL: {page.url}）"
-            )
-        log.info("[shipping] 已点击发货地 facility=%s", facility)
-        await asyncio.sleep(0.2)
-    else:
-        log.info("[shipping] 无需选择 facility（auto_finish），直接点完了")
-
-    # ── Step 5: 点「選択して完了する」──
-    report("click_finish", "正在点击「選択して完了する」…")
-    finish_btn = page.get_by_role("button", name=_SELECT_FINISH_BUTTON_TEXT)
-    try:
-        await finish_btn.first.wait_for(state="visible", timeout=6000)
-    except Exception:
-        finish_btn = page.locator(f'button:has-text("{_SELECT_FINISH_BUTTON_TEXT}")')
-        try:
-            await finish_btn.first.wait_for(state="visible", timeout=4000)
-        except Exception as exc:
-            raise RuntimeError(
-                f"未找到「{_SELECT_FINISH_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
-            ) from exc
-    await finish_btn.first.click()
-    log.info("[shipping] 已点击「%s」 account_id=%s", _SELECT_FINISH_BUTTON_TEXT, aid)
-
-    # ── Step 6: 完了後の分岐 ──
-    #   scan_qr=True（ゆうパケットポスト系）：摄像头扫描 → /qr_code_scanner
-    #   generate_code=True（需选发货地的方法）：返回交易ページ发行 发送用 QR/条形码（无需摄像头）
     qr_scanner_open = False
     ship_code_generated = False
     qr_image_url: Optional[str] = None
-    item_id = (todo.item_id or "").strip()
-    if scan_qr:
-        qr_scanner_open = await _click_scan_qr_and_open_scanner(
-            page, item_id=item_id, report=report,
-        )
-    elif generate_code:
-        qr_image_url = await _click_generate_ship_code(
-            page, item_id=item_id, todo_id=int(todo_id), report=report,
-        )
-        ship_code_generated = qr_image_url is not None
+
+    # 用户点「发货」只弹本地尺寸框、不开浏览器；点「确认并发送」后才在这里打开浏览器，
+    # 一并完成「点击商品サイズと発送場所を選択する入口 → 选 size → 次へ → 选发货地 → 完了」。
+    # /todos 浏览器操作统一无头静默：headless=None 走环境默认（默认无头）。
+    report("open_browser", f"正在打开交易页（{item_id}）…")
+    async with mitm_automation_browser(
+        aid,
+        start_url=url,
+        headless=None,
+        minimized=None,
+    ) as (mgr, auto_key):
+        page = await mgr.active_tab_page(auto_key)
+
+        # ── Step 0: 点交易页入口 → 跳 /shipping_class ──
+        await _click_size_select_entry(page, aid=aid, report=report)
+
+        # ── Step 1: 按精确文本匹配点击 size ──
+        report("select_size", f"正在选择尺寸「{class_text}」…")
+        size_loc = page.get_by_text(class_text, exact=True).first
+        try:
+            await size_loc.wait_for(state="visible", timeout=8000)
+        except Exception as exc:
+            raise RuntimeError(
+                f"未找到尺寸选项「{class_text}」（当前 URL: {page.url}）"
+            ) from exc
+        await size_loc.click()
+        log.info("[shipping] 已选择尺寸「%s」 account_id=%s", class_text, aid)
+        await asyncio.sleep(0.2)
+
+        # ── Step 2: 点「選択して次へ」──
+        report("click_next", "正在点击「選択して次へ」…")
+        next_btn = page.get_by_role("button", name=_SELECT_NEXT_BUTTON_TEXT)
+        try:
+            await next_btn.first.wait_for(state="visible", timeout=4000)
+        except Exception:
+            next_btn = page.locator(f'button:has-text("{_SELECT_NEXT_BUTTON_TEXT}")')
+            await next_btn.first.wait_for(state="visible", timeout=4000)
+        await next_btn.first.click()
+        log.info("[shipping] 已点击「%s」 account_id=%s", _SELECT_NEXT_BUTTON_TEXT, aid)
+
+        # ── Step 3: 等浏览器跳到 /shipping_facilities ──
+        report("wait_facilities", "等待跳转到 /shipping_facilities…")
+        try:
+            await page.wait_for_url("**/shipping_facilities*", timeout=10000)
+        except Exception:
+            log.warning("[shipping] 未观察到 /shipping_facilities 导航 (当前 URL: %s)", page.url)
+
+        # ── Step 4: 按需点 facility 卡片 ──
+        # /shipping_facilities 页 radio 的 value 属性是稳定且语言无关的（POST_OFFICE / LAWSON /
+        # SEVEN_ELEVEN / FAMILY_MART / YAMATO_OFFICE / PUDO ...）。优先按 value 选中，
+        # 再回落到 aria-label（role=radio），最后回落旧式 XPath（兼容历史 post_office/lawson）。
+        if facility is not None:
+            report("select_facility", f"正在选择发货地（{facility}）…")
+            code = facility.strip()
+            picked = False
+            # 优先：按 radio 的 value 属性选中（force 兼容 styled-components 隐藏 input）
+            fac_input = page.locator(f'input[type="radio"][value="{code}"]')
+            try:
+                await fac_input.first.wait_for(state="attached", timeout=8000)
+                await fac_input.first.check(force=True)
+                picked = True
+            except Exception as exc:
+                log.debug("[shipping] value 选中发货地失败 facility=%s: %s", code, exc)
+            # 回落 1：按 aria-label（role=radio）点击卡片
+            if not picked:
+                label = _FACILITY_ARIA_LABELS.get(code, code)
+                try:
+                    fac_role = page.get_by_role("radio", name=label)
+                    await fac_role.first.click(force=True)
+                    picked = True
+                except Exception as exc:
+                    log.debug("[shipping] aria-label 选中发货地失败 facility=%s: %s", code, exc)
+            # 回落 2：旧式 XPath（向后兼容历史 post_office/lawson 小写 code）
+            if not picked:
+                xpath_expr = _FACILITY_XPATHS.get(code.lower())
+                if xpath_expr:
+                    try:
+                        fac_loc = page.locator(f"xpath={xpath_expr}")
+                        await fac_loc.first.wait_for(state="visible", timeout=4000)
+                        await fac_loc.first.click()
+                        picked = True
+                    except Exception as exc:
+                        log.debug("[shipping] XPath 选中发货地失败 facility=%s: %s", code, exc)
+            if not picked:
+                raise RuntimeError(
+                    f"未找到发货地选项（facility={facility}，当前 URL: {page.url}）"
+                )
+            log.info("[shipping] 已点击发货地 facility=%s", facility)
+            await asyncio.sleep(0.2)
+        else:
+            log.info("[shipping] 无需选择 facility（auto_finish），直接点完了")
+
+        # ── Step 5: 点「選択して完了する」──
+        report("click_finish", "正在点击「選択して完了する」…")
+        finish_btn = page.get_by_role("button", name=_SELECT_FINISH_BUTTON_TEXT)
+        try:
+            await finish_btn.first.wait_for(state="visible", timeout=6000)
+        except Exception:
+            finish_btn = page.locator(f'button:has-text("{_SELECT_FINISH_BUTTON_TEXT}")')
+            try:
+                await finish_btn.first.wait_for(state="visible", timeout=4000)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"未找到「{_SELECT_FINISH_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
+                ) from exc
+        await finish_btn.first.click()
+        log.info("[shipping] 已点击「%s」 account_id=%s", _SELECT_FINISH_BUTTON_TEXT, aid)
+
+        # ── Step 6: 完了後の分岐 ──
+        #   scan_qr=True（ゆうパケットポスト系）：摄像头扫描 → /qr_code_scanner
+        #   generate_code=True（需选发货地的方法）：返回交易ページ发行 发送用 QR/条形码（无需摄像头）
+        if scan_qr:
+            qr_scanner_open = await _click_scan_qr_and_open_scanner(
+                page, item_id=item_id, report=report,
+            )
+        elif generate_code:
+            qr_image_url = await _click_generate_ship_code(
+                page, item_id=item_id, todo_id=int(todo_id), report=report,
+            )
+            ship_code_generated = qr_image_url is not None
 
     report("done", "已完成发货尺寸与发货地选择")
     return {

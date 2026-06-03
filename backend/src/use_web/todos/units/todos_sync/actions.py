@@ -189,6 +189,7 @@ async def confirm_change_shipping_method_endpoint(
                 int(todo_id),
                 req.method_value or "",
                 method_label=req.method_label or "",
+                method_category=req.method_category or "",
                 progress_job_id=jid,
             ),
             suppress_idle_close=True,

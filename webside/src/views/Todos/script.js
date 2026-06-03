@@ -1,7 +1,7 @@
 import { defineComponent, computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Download, Loading } from '@element-plus/icons-vue'
+import { Download, Loading, Plus, Minus } from '@element-plus/icons-vue'
 import { todosApi, costRecordApi, costExpenseApi, orderApi } from '@/api'
 import { useMercariAccountStore } from '@/stores/mercariAccount.js'
 import { useSyncLockStore } from '@/stores/syncLock.js'
@@ -13,6 +13,8 @@ export default defineComponent({
   components: {
     SyncOverlay,
     Loading,
+    Plus,
+    Minus,
   },
   setup() {
     const { t } = useI18n()
@@ -249,7 +251,8 @@ export default defineComponent({
     function selectedPackagingMeta(itemName) {
       return (packagingItemsOptions.value || []).find((it) => it.item_name === itemName) || null
     }
-    /** 归一化包材行：去掉中间空行、末尾补一个空行；选「不选择包材」时独占一行 */
+    /** 归一化包材行：选「不选择包材」时独占一行；否则保留已选行（不再自动追加空行，
+     *  新增下拉由用户点「+」显式添加），且至少保留一行（可为空）供首次选择。 */
     function normalizePackagingRows() {
       const rows = (shipPackagingRows.value || []).map((r) => ({ item_name: String(r?.item_name || '') }))
       if (rows.some((r) => r.item_name === PACKAGING_ITEM_NONE)) {
@@ -257,10 +260,25 @@ export default defineComponent({
         return
       }
       const filled = rows.filter((r) => r.item_name.trim())
-      shipPackagingRows.value = [...filled, { item_name: '' }]
+      shipPackagingRows.value = filled.length ? filled : [{ item_name: '' }]
     }
     function onShipPackagingChange() {
       normalizePackagingRows()
+      savePackagingSelection()
+    }
+    // 该行是否显示「+」（新增下拉）：仅最后一行且已选了具体包材时显示，点击追加一个空下拉
+    function canAddPackagingRow(idx, row) {
+      const name = String(row?.item_name || '').trim()
+      const isLast = idx === (shipPackagingRows.value || []).length - 1
+      return isLast && !!name && name !== PACKAGING_ITEM_NONE
+    }
+    function onAddPackagingRow() {
+      shipPackagingRows.value = [...(shipPackagingRows.value || []), { item_name: '' }]
+    }
+    function onRemovePackagingRow(idx) {
+      const rows = [...(shipPackagingRows.value || [])]
+      rows.splice(idx, 1)
+      shipPackagingRows.value = rows.length ? rows : [{ item_name: '' }]
       savePackagingSelection()
     }
     // ── 包材选择缓存（按 item_id / todo 持久化到 localStorage，重开详情时恢复） ──
@@ -963,26 +981,16 @@ export default defineComponent({
       }
     }
 
-    async function onClickShippingSizeLocation() {
+    function onClickShippingSizeLocation() {
       if (!currentRow.value?.id) return
       // 待发货但未关联本地库存：先去更新订单管理，禁止发货
       if (isWaitShipping.value && !hasInventoryMatch.value) {
         ElMessage.warning(t('todos.updateOrderFirst'))
         return
       }
-      // 先点开页面上的「商品サイズと発送場所を選択する」让浏览器跳到尺寸选择页
-      try {
-        await txOverlay.run({
-          title: t('todos.openingSizeSelection'),
-          consoleTag: '[尺寸选择]',
-          pollFn: (jobId) => todosApi.getSyncProgress(jobId),
-          actionFn: (jobId) =>
-            todosApi.startShippingClass(currentRow.value.id, { progress_job_id: jobId }),
-        })
-      } catch (e) {
-        if (!e?.response) ElMessage.error(e?.message || t('todos.openSizePageFailed'))
-        return
-      }
+      // 仅弹本地尺寸选择框，不开浏览器；尺寸列表是前端硬编码（按 shipping_method_name 区分）。
+      // 用户选好尺寸/发货地点「确认并发送」后，才由 confirmShippingSelection 一并打开浏览器、
+      // 点「商品サイズと発送場所を選択する」入口并完成后续选择。
       shippingPickedIdx.value = null
       shippingFacility.value = null
       shippingDialogVisible.value = true
@@ -1266,60 +1274,51 @@ export default defineComponent({
       }
     }
 
-    // ─── 修改发货方式（点「発送方法を変更する」→ /shipping_method → 下拉选择 → 「変更する」）───
+    // ─── 修改发货方式（图片三选一：邮局 / yamato / 其他）───
+    // 点「修改」只弹本地图片选择框，不开浏览器；选好类别点「変更」后才调用后端，由后端一步完成
+    //「打开交易页 → 点発送方法を変更する → /shipping_method 按类别匹配选中 → 変更する + 二次确认」。
     const changeMethodVisible = ref(false)
-    const changeMethodOptions = ref([])
     const changeMethodPicked = ref('')
     const changeMethodLoading = ref(false)
+    // 三个固定类别（category 与后端 _CATEGORY_KEYWORDS 对应；img 为 public/static/post_hukuro 文件名）
+    const changeMethodChoices = computed(() => [
+      { category: 'post', img: 'post-box', label: t('todos.methodPostLabel') },
+      { category: 'yamato', img: 'yamato', label: t('todos.methodYamatoLabel') },
+      { category: 'other', img: 'pick-up', label: t('todos.methodOtherLabel') },
+    ])
 
-    async function onClickShippingChangeMethod() {
+    function onClickShippingChangeMethod() {
       if (!currentRow.value?.id) return
       // 待发货但未关联本地库存：先去更新订单管理，禁止发货相关操作
       if (isWaitShipping.value && !hasInventoryMatch.value) {
         ElMessage.warning(t('todos.updateOrderFirst'))
         return
       }
-      try {
-        const result = await txOverlay.run({
-          title: t('todos.clickingChangeMethod'),
-          consoleTag: '[修改发送方式]',
-          pollFn: (jobId) => todosApi.getSyncProgress(jobId),
-          actionFn: (jobId) =>
-            todosApi.changeShippingMethod(currentRow.value.id, { progress_job_id: jobId }),
-        })
-        const opts = Array.isArray(result?.options) ? result.options : []
-        if (!opts.length) {
-          ElMessage.warning(t('todos.noShippingMethodOptions'))
-          return
-        }
-        changeMethodOptions.value = opts
-        const checked = opts.find((o) => o.checked)
-        changeMethodPicked.value = String((checked || opts[0]).value || '')
-        changeMethodVisible.value = true
-      } catch (e) {
-        if (!e?.response) ElMessage.error(e?.message || t('todos.clickFailed'))
-      }
+      // 仅打开本地图片选择框，不开浏览器
+      changeMethodPicked.value = ''
+      changeMethodVisible.value = true
     }
 
     async function onConfirmChangeShippingMethod() {
       const id = currentRow.value?.id
       if (!id) return
-      const val = String(changeMethodPicked.value || '')
-      if (!val) {
+      const cat = String(changeMethodPicked.value || '')
+      if (!cat) {
         ElMessage.warning(t('todos.pleasePickShippingMethod'))
         return
       }
-      const opt = (changeMethodOptions.value || []).find((o) => String(o.value) === val)
+      const choice = changeMethodChoices.value.find((c) => c.category === cat)
       changeMethodLoading.value = true
       try {
+        // 选好类别后才拉起浏览器做模拟操作（开浏览器→点入口→选中→変更する一步完成）
         await txOverlay.run({
           title: t('todos.changingShippingMethod'),
           consoleTag: '[修改发送方式]',
           pollFn: (jobId) => todosApi.getSyncProgress(jobId),
           actionFn: (jobId) =>
             todosApi.confirmChangeShippingMethod(id, {
-              method_value: val,
-              method_label: opt?.label || '',
+              method_category: cat,
+              method_label: choice?.label || '',
               progress_job_id: jobId,
             }),
         })
@@ -1560,6 +1559,11 @@ export default defineComponent({
       shipOutbound,
       hasPackagingSelected,
       onShipPackagingChange,
+      canAddPackagingRow,
+      onAddPackagingRow,
+      onRemovePackagingRow,
+      Plus,
+      Minus,
       replyLoading,
       reviewLoading,
       reactionLoading,
@@ -1617,7 +1621,7 @@ export default defineComponent({
       onClickShippingChangeMethod,
       onReviseShippingAfterQr,
       changeMethodVisible,
-      changeMethodOptions,
+      changeMethodChoices,
       changeMethodPicked,
       changeMethodLoading,
       onConfirmChangeShippingMethod,

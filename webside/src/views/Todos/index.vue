@@ -243,24 +243,45 @@
             <div v-else-if="!hasInventoryMatch" class="detail-empty-hint">{{ t('todos.updateOrderFirst') }}</div>
             <div v-else class="detail-ship-commit">
               <div class="detail-ship-pack">
-                <el-select
+                <div
                   v-for="(row, idx) in shipPackagingRows"
                   :key="idx"
-                  v-model="row.item_name"
-                  clearable
-                  size="large"
-                  class="detail-ship-pack-select"
-                  :placeholder="t('orders.packagingItemPlaceholder')"
-                  @change="onShipPackagingChange"
+                  class="detail-ship-pack-row"
                 >
-                  <el-option :label="t('orders.noPackaging')" :value="PACKAGING_ITEM_NONE" />
-                  <el-option
-                    v-for="item in packagingItemsOptions"
-                    :key="item.item_name"
-                    :label="`${item.item_name}（${t('orders.stockLabel')}:${Number(item.quantity || 0)}）`"
-                    :value="item.item_name"
+                  <el-select
+                    v-model="row.item_name"
+                    clearable
+                    size="large"
+                    class="detail-ship-pack-select"
+                    :placeholder="t('orders.packagingItemPlaceholder')"
+                    @change="onShipPackagingChange"
+                  >
+                    <el-option :label="t('orders.noPackaging')" :value="PACKAGING_ITEM_NONE" />
+                    <el-option
+                      v-for="item in packagingItemsOptions"
+                      :key="item.item_name"
+                      :label="`${item.item_name}（${t('orders.stockLabel')}:${Number(item.quantity || 0)}）`"
+                      :value="item.item_name"
+                    />
+                  </el-select>
+                  <!-- 选好一个后，行尾出现「+」新增一个下拉；多行时其余行显示「−」可删除 -->
+                  <el-button
+                    v-if="canAddPackagingRow(idx, row)"
+                    class="detail-ship-pack-btn"
+                    size="large"
+                    :icon="Plus"
+                    circle
+                    @click="onAddPackagingRow"
                   />
-                </el-select>
+                  <el-button
+                    v-else-if="shipPackagingRows.length > 1"
+                    class="detail-ship-pack-btn"
+                    size="large"
+                    :icon="Minus"
+                    circle
+                    @click="onRemovePackagingRow(idx)"
+                  />
+                </div>
               </div>
             </div>
           </section>
@@ -627,7 +648,6 @@
       destroy-on-close
       @close="onQrScanDialogClose"
     >
-      <div class="qr-scan-hint">{{ t('todos.qrCamHint') }}</div>
       <div class="qr-scan-stage">
         <video
           ref="qrVideoEl"
@@ -636,6 +656,14 @@
           playsinline
           muted
         ></video>
+        <!-- 中央扫描取景框：四角括号 + 扫描线，方便用户对准二维码 -->
+        <div v-if="!qrScanDone" class="qr-scan-frame" aria-hidden="true">
+          <span class="qr-scan-corner qr-scan-corner--tl"></span>
+          <span class="qr-scan-corner qr-scan-corner--tr"></span>
+          <span class="qr-scan-corner qr-scan-corner--bl"></span>
+          <span class="qr-scan-corner qr-scan-corner--br"></span>
+          <span class="qr-scan-line"></span>
+        </div>
         <div v-if="qrCamError" class="qr-scan-error">
           {{ t('todos.cameraOpenFailed') }}: {{ qrCamError }}
         </div>
@@ -683,15 +711,20 @@
       destroy-on-close
     >
       <div v-loading="changeMethodLoading">
-        <div class="detail-label" style="margin-bottom: 8px">{{ t('todos.changeMethodPick') }}</div>
-        <el-select v-model="changeMethodPicked" style="width: 100%" :placeholder="t('todos.changeMethodPick')">
-          <el-option
-            v-for="opt in changeMethodOptions"
-            :key="opt.value"
-            :label="opt.label"
-            :value="String(opt.value)"
-          />
-        </el-select>
+        <div class="detail-label" style="margin-bottom: 12px">{{ t('todos.changeMethodPick') }}</div>
+        <!-- 图片三选一：邮局 / yamato / 其他。点选只切换本地选中态，点「変更する」才拉起浏览器 -->
+        <div class="method-choice-grid">
+          <div
+            v-for="c in changeMethodChoices"
+            :key="c.category"
+            class="method-choice"
+            :class="{ 'is-active': changeMethodPicked === c.category }"
+            @click="changeMethodPicked = c.category"
+          >
+            <img class="method-choice-img" :src="facilityImageUrl(c.img)" :alt="c.label" />
+            <span class="method-choice-label">{{ c.label }}</span>
+          </div>
+        </div>
       </div>
       <template #footer>
         <el-button @click="changeMethodVisible = false">{{ t('common.cancel') }}</el-button>

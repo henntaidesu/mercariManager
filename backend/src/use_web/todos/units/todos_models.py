@@ -28,11 +28,13 @@ class ConfirmShippingSelectionRequest(PydanticModel):
 
 
 class ChangeShippingMethodRequest(PydanticModel):
-    """在 /shipping_method 页选中配送方式并点「変更する」。
+    """完整修改配送方式：打开浏览器 → 点「発送方法を変更する」→ 按类别选中 → 点「変更する」。
 
-    ``method_value`` 为 radio 的 value（优先），``method_label`` 为可读标签（回落）。
+    ``method_category`` 为前端图片类别（post=邮局 / yamato / other=其他），后端据此匹配
+    实际 radio；``method_value``/``method_label`` 为回落（直接指定 radio）。
     """
 
+    method_category: str = ""
     method_value: str = ""
     method_label: str = ""
     progress_job_id: Optional[str] = None

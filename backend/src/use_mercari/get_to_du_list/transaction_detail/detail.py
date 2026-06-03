@@ -181,7 +181,14 @@ async def fetch_transaction_detail(
     result["recipient_address"] = synced_recipient or None
     # 待发送通知状态（前端据此显示「确认发送」按钮，点后走 finalize_post_shipping）：
     # 仅在未发行二维码图时有效（二维码场景由 qr_image_url 分支处理）。
-    result["post_ship_ready"] = bool(post_ship.get("ready")) and not synced_qr_url
+    # 另：お届け先(recipient_address) が在る＝非匿名「未定」発送（出品者が自分で発送）であり、
+    # ゆうパケットポスト等の匿名スキャン発送ではない。この場合は post_ship_ready としない——
+    # でないと「确认发送」分支が描画され、お届け先(未发行分支で表示)が隠れてしまう。
+    result["post_ship_ready"] = (
+        bool(post_ship.get("ready"))
+        and not synced_qr_url
+        and not (synced_recipient or None)
+    )
     result["ship_confirm_code"] = post_ship.get("confirm_code")
     result["ship_tracking_no"] = post_ship.get("tracking_no")
     # 发送方法标签（通过什么发送，展示用）：优先页面抓到的「サイズ/配送の方法」，
