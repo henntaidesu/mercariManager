@@ -25,6 +25,10 @@ _WAIT_SHIPPING_TITLE = "発送をしてください"
 # 「待回复」待办：买家来信，处理面板展示消息流并回复。无需有头浏览器。
 _WAIT_REPLY_KINDS = frozenset({"IncomingMessage"})
 
+# 「待评价」待办：买家已收货，卖家需提交取引評価完成交易。处理面板展示评价表单。
+# 与待发货/待回复一样纳入「从煤炉同步」后的交易详情预缓存（按 item_id 抓取）。
+_WAIT_REVIEW_KINDS = frozenset({"ReviewedSeller"})
+
 def _is_wait_shipping_todo(todo: Any) -> bool:
     kind = (getattr(todo, "kind", "") or "").strip()
     title = (getattr(todo, "title", "") or "").strip()

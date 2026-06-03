@@ -8,6 +8,7 @@ import time
 from typing import Any, Dict, Optional
 from ....db_manage.models.todo_item import TodoItemModel
 from ....web_drive.core.manager import get_web_drive_manager
+from ....web_drive.core.mitm_session import mitm_automation_browser
 from ....web_drive.core.paths import mercari_account_key
 from ...get_order.get_in_progress_order.get_order_info import apply_item_info_to_order
 from ...sync.sync_progress import make_sync_reporter
@@ -28,10 +29,13 @@ async def submit_transaction_review(
     text: str,
     *,
     progress_job_id: Optional[str] = None,
+    force_headless: bool = False,
 ) -> Dict[str, Any]:
-    """在已打开的浏览器（取引評価页）填评价文本 + 点「購入者を評価して取引完了する」。
+    """打开取引評価页（按商品 ID）→ 填评价文本 → 点「購入者を評価して取引完了する」→ 二次确认。
 
-    页面上 ``良かった`` 通常默认选中，不需要再点。
+    自带浏览器开启（不再依赖「处理」预先打开的会话）：提交评价为全自动操作，无需用户在
+    浏览器内手动核对，故**始终无头静默**运行（不弹前台窗口）。``force_headless`` 保留为
+    兼容参数，当前实现下提交评价一律无头。页面上 ``良かった`` 通常默认选中，不需要再点。
     """
     report = make_sync_reporter(progress_job_id)
     report("resolve_todo", "正在准备评价提交…")
@@ -44,83 +48,91 @@ async def submit_transaction_review(
 
     aid = int(todo.account_id)
     item_id = (todo.item_id or "").strip()
+    if not item_id:
+        raise ValueError("该待办无关联 item_id，无法打开交易页")
+    url = f"https://jp.mercari.com/transaction/{item_id}"
     mgr = get_web_drive_manager()
     auto_key = mercari_account_key(aid)
-    report("attach_browser", "正在连接已打开的浏览器…")
-    try:
-        page = await mgr.active_tab_page(auto_key)
-    except Exception as exc:
-        raise RuntimeError("浏览器未打开或已关闭，请先点「处理」打开交易页") from exc
 
-    # 找到评价 textarea（按 placeholder）
-    report("fill_review", "正在填入评价文本…")
-    textarea = page.locator(
-        f'textarea[placeholder="{_REVIEW_TEXTAREA_PLACEHOLDER}"]'
-    )
-    try:
-        await textarea.first.wait_for(state="visible", timeout=8000)
-    except Exception as exc:
-        raise RuntimeError(
-            f"未找到评价输入框（placeholder 不匹配；当前 URL: {page.url}）"
-        ) from exc
-    await textarea.first.fill(body)
-    log.info("[review] 已填入评价文本 text_len=%s", len(body))
-
-    # 找到「購入者を評価して取引完了する」按钮
-    report("click_submit", "正在点击「購入者を評価して取引完了する」…")
-    btn = page.get_by_role("button", name=_REVIEW_SUBMIT_BUTTON_TEXT)
-    try:
-        await btn.first.wait_for(state="visible", timeout=4000)
-    except Exception:
-        btn = page.locator(f'button:has-text("{_REVIEW_SUBMIT_BUTTON_TEXT}")')
-        try:
-            await btn.first.wait_for(state="visible", timeout=2000)
-        except Exception as exc:
-            raise RuntimeError(
-                f"未找到「{_REVIEW_SUBMIT_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
-            ) from exc
-    await btn.first.click()
-    log.info(
-        "[review] 已点击「%s」 account_id=%s",
-        _REVIEW_SUBMIT_BUTTON_TEXT,
-        aid,
-    )
-
-    # 二次确认弹窗：「購入者を評価して取引を完了しますか？」→ 点「取引を完了する」
-    report("confirm_dialog", "正在点击二次确认「取引を完了する」…")
-    await asyncio.sleep(0.3)
-    confirm_btn = page.get_by_role("button", name=_REVIEW_CONFIRM_BUTTON_TEXT)
-    try:
-        await confirm_btn.first.wait_for(state="visible", timeout=6000)
-    except Exception:
-        confirm_btn = page.locator(f'button:has-text("{_REVIEW_CONFIRM_BUTTON_TEXT}")')
-        try:
-            await confirm_btn.first.wait_for(state="visible", timeout=3000)
-        except Exception as exc:
-            raise RuntimeError(
-                f"未找到二次确认按钮「{_REVIEW_CONFIRM_BUTTON_TEXT}」（当前 URL: {page.url}）"
-            ) from exc
-    await confirm_btn.first.click()
-    log.info(
-        "[review] 已点击二次确认「%s」 account_id=%s",
-        _REVIEW_CONFIRM_BUTTON_TEXT,
-        aid,
-    )
-
-    # 等页面刷新 + 检测「取引が完了しました」文案
-    report("wait_completed", "等待煤炉返回「取引が完了しました」…")
+    report("open_browser", f"正在打开交易页（{item_id}）…")
     completed = False
-    try:
-        completed_loc = page.get_by_text(_REVIEW_COMPLETED_TEXT, exact=False).first
-        await completed_loc.wait_for(state="visible", timeout=15000)
-        completed = True
-        log.info("[review] 检测到「%s」 account_id=%s", _REVIEW_COMPLETED_TEXT, aid)
-    except Exception:
-        log.warning(
-            "[review] 15s 内未检测到「%s」（可能已完成但页面文案变化；当前 URL: %s）",
-            _REVIEW_COMPLETED_TEXT,
-            page.url,
+    # 提交评价为全自动操作 → 始终无头静默（headless=True，minimized 自动失效）。
+    async with mitm_automation_browser(
+        aid,
+        start_url=url,
+        headless=True,
+        minimized=True,
+    ) as (mgr, main_key):
+        page = await mgr.active_tab_page(main_key)
+
+        # 找到评价 textarea（按 placeholder）
+        report("fill_review", "正在填入评价文本…")
+        textarea = page.locator(
+            f'textarea[placeholder="{_REVIEW_TEXTAREA_PLACEHOLDER}"]'
         )
+        try:
+            await textarea.first.wait_for(state="visible", timeout=10000)
+        except Exception as exc:
+            raise RuntimeError(
+                f"未找到评价输入框（该交易可能已评价完成或页面未加载；当前 URL: {page.url}）"
+            ) from exc
+        await textarea.first.fill(body)
+        log.info("[review] 已填入评价文本 text_len=%s", len(body))
+
+        # 找到「購入者を評価して取引完了する」按钮
+        report("click_submit", "正在点击「購入者を評価して取引完了する」…")
+        btn = page.get_by_role("button", name=_REVIEW_SUBMIT_BUTTON_TEXT)
+        try:
+            await btn.first.wait_for(state="visible", timeout=4000)
+        except Exception:
+            btn = page.locator(f'button:has-text("{_REVIEW_SUBMIT_BUTTON_TEXT}")')
+            try:
+                await btn.first.wait_for(state="visible", timeout=2000)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"未找到「{_REVIEW_SUBMIT_BUTTON_TEXT}」按钮（当前 URL: {page.url}）"
+                ) from exc
+        await btn.first.click()
+        log.info(
+            "[review] 已点击「%s」 account_id=%s",
+            _REVIEW_SUBMIT_BUTTON_TEXT,
+            aid,
+        )
+
+        # 二次确认弹窗：「購入者を評価して取引を完了しますか？」→ 点「取引を完了する」
+        report("confirm_dialog", "正在点击二次确认「取引を完了する」…")
+        await asyncio.sleep(0.3)
+        confirm_btn = page.get_by_role("button", name=_REVIEW_CONFIRM_BUTTON_TEXT)
+        try:
+            await confirm_btn.first.wait_for(state="visible", timeout=6000)
+        except Exception:
+            confirm_btn = page.locator(f'button:has-text("{_REVIEW_CONFIRM_BUTTON_TEXT}")')
+            try:
+                await confirm_btn.first.wait_for(state="visible", timeout=3000)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"未找到二次确认按钮「{_REVIEW_CONFIRM_BUTTON_TEXT}」（当前 URL: {page.url}）"
+                ) from exc
+        await confirm_btn.first.click()
+        log.info(
+            "[review] 已点击二次确认「%s」 account_id=%s",
+            _REVIEW_CONFIRM_BUTTON_TEXT,
+            aid,
+        )
+
+        # 等页面刷新 + 检测「取引が完了しました」文案
+        report("wait_completed", "等待煤炉返回「取引が完了しました」…")
+        try:
+            completed_loc = page.get_by_text(_REVIEW_COMPLETED_TEXT, exact=False).first
+            await completed_loc.wait_for(state="visible", timeout=15000)
+            completed = True
+            log.info("[review] 检测到「%s」 account_id=%s", _REVIEW_COMPLETED_TEXT, aid)
+        except Exception:
+            log.warning(
+                "[review] 15s 内未检测到「%s」（可能已完成但页面文案变化；当前 URL: %s）",
+                _REVIEW_COMPLETED_TEXT,
+                page.url,
+            )
 
     order_refresh_error: Optional[str] = None
     if completed:
