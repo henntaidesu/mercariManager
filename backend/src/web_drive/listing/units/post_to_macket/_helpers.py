@@ -150,7 +150,7 @@ async def _react_set_select(page: Any, xpath: str, value: str) -> bool:
 def _make_listing_progress_reporter(progress_job_id: Optional[str]) -> Callable[[str, str], None]:
     """控制台 + 日志 + 可选内存进度（供前端轮询）。"""
 
-    from .listing_progress import set_listing_progress
+    from ..listing_progress import set_listing_progress
 
     jid = (progress_job_id or "").strip() or None
 
