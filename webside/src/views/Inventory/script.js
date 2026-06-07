@@ -2751,6 +2751,7 @@ export default defineComponent({
       listingPostProgressTimer = setInterval(pollListingPostProgress, 400)
 
       let listingPostHadStepErrors = false
+      let listingSubmittedOk = false
       try {
         const res = await listingApi.postToMarket({
           account_key: accountKey,
@@ -2796,6 +2797,7 @@ export default defineComponent({
             if (d.shipping_days_set) parts.push(t('inventory.shippingDaysSet'))
             if (d.shipping_from_set) parts.push(t('inventory.shippingFromSet'))
             if (d.submitted === true) {
+              listingSubmittedOk = true
               ElMessage.success(t('inventory.listingSuccess') + (d.submit_message ? `（${d.submit_message}）` : ''))
             } else if (d.submitted === false && d.submit_message) {
               ElMessage.warning(t('inventory.listingSubmitWarning', { msg: d.submit_message }))
@@ -2820,6 +2822,53 @@ export default defineComponent({
         listingPostOverlayTitle.value = t('inventory.listingInProgress')
         listingPostOverlayFailed.value = false
         listingPostProgressLabel.value = ''
+      }
+
+      // ── 3. 出品联动：成功出品后，仅同步该账号在售列表并拉取新商品详情，立刻反映到在售页 ── //
+      if (listingSubmittedOk) {
+        const syncJobId =
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `job_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+        let lastSyncStep = ''
+        async function pollListingSyncProgress() {
+          try {
+            const pr = await onSaleItemApi.getSyncProgress(syncJobId)
+            const zh = pr?.data?.label_zh
+            if (zh) {
+              listingPostProgressLabel.value = zh
+              if (zh !== lastSyncStep) {
+                lastSyncStep = zh
+                console.log('[出品联动·在售同步]', zh)
+              }
+            }
+          } catch {
+            /* 轮询失败忽略 */
+          }
+        }
+
+        listingPostOverlayTitle.value = t('inventory.listingSyncingOnSale')
+        listingPostOverlayFailed.value = false
+        listingPostProgressLabel.value = t('inventory.connectingToServer')
+        listingPostOverlayVisible.value = true
+        await pollListingSyncProgress()
+        listingPostProgressTimer = setInterval(pollListingSyncProgress, 400)
+        try {
+          await onSaleItemApi.sync(
+            { account_id: Number(accountId), progress_job_id: syncJobId },
+            { timeout: 0 }
+          )
+        } catch {
+          // 联动同步失败不阻断出品成功提示：拦截器已弹窗
+        } finally {
+          if (listingPostProgressTimer != null) {
+            clearInterval(listingPostProgressTimer)
+            listingPostProgressTimer = null
+          }
+          listingPostOverlayVisible.value = false
+          listingPostOverlayTitle.value = t('inventory.listingInProgress')
+          listingPostProgressLabel.value = ''
+        }
       }
 
       if (listingPostHadStepErrors) {

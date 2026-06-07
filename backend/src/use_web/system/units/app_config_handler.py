@@ -93,6 +93,33 @@ def _read_listing_defaults() -> Dict[str, Any]:
     }
 
 
+class MgmtCipherModeOut(BaseModel):
+    """管理番号暗号编码模式：'binary'（二进制 ◇◆）/ 'base5'（五进制 -=~<>）。"""
+
+    mode: str
+
+
+class MgmtCipherModeUpdate(BaseModel):
+    mode: str
+
+
+def get_mgmt_cipher_mode():
+    from ....use_mercari.mgmt_id_cipher import get_cipher_mode
+
+    return MgmtCipherModeOut(mode=get_cipher_mode())
+
+
+def put_mgmt_cipher_mode(body: MgmtCipherModeUpdate):
+    mode = (body.mode or "").strip().lower()
+    if mode not in ("binary", "base5"):
+        raise HTTPException(status_code=400, detail=f"无效的 mode: {body.mode}")
+    from ....use_mercari.mgmt_id_cipher import MGMT_CIPHER_MODE_KEY
+
+    # base5 为默认：存空即删除该键；binary 显式写入
+    ConfigEntryModel.set_value(MGMT_CIPHER_MODE_KEY, "binary" if mode == "binary" else None)
+    return MgmtCipherModeOut(mode=mode)
+
+
 def get_listing_defaults():
     return ListingDefaultsOut(**_read_listing_defaults())
 

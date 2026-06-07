@@ -54,8 +54,9 @@ async def sync_on_sale(data: SyncOnSaleRequest):
     新列表中不存在的本地记录不物理删除，而是标记 is_delete=1（软删除）。
     列表接口默认仅返回 is_delete=0 数据。须已启动 mitmdump（与出品/抓包共用）。
 
-    不再指定单个账号：点击即同步全部已开启账号，逐个串行执行并汇总结果——每个账号的在售
+    不传 ``account_id``：点击即同步全部已开启账号，逐个串行执行并汇总结果——每个账号的在售
     抓取走按 seller 区分的响应文件，且每账号完成后立即关闭其浏览器，确保严格不重叠。
+    传 ``account_id``（如出品成功后的联动同步）：仅同步该账号，立刻刷新在售列表与新商品详情。
 
     ``progress_job_id`` 与 GET /use_web/on-sale-items/sync-progress/{job_id} 配合，
     供前端轮询当前步骤展示全屏等待框。
@@ -64,10 +65,13 @@ async def sync_on_sale(data: SyncOnSaleRequest):
     if jid and not _SYNC_JOB_ID_RE.fullmatch(jid):
         raise HTTPException(status_code=400, detail="invalid progress_job_id")
 
-    try:
-        account_ids = resolve_enabled_account_ids()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if data.account_id is not None:
+        account_ids = [int(data.account_id)]
+    else:
+        try:
+            account_ids = resolve_enabled_account_ids()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     lock_token = sync_lock_begin("page", LABEL_FULL)
     accounts: List[Dict[str, Any]] = []

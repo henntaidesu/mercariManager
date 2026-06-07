@@ -21,6 +21,9 @@ from .units.app_config_handler import (
     ListingDefaultsOut,
     get_listing_defaults,
     put_listing_defaults,
+    MgmtCipherModeOut,
+    get_mgmt_cipher_mode,
+    put_mgmt_cipher_mode,
 )
 from .units.system_log_handler import (
     list_system_logs,
@@ -57,6 +60,10 @@ router.add_api_route("/change-password", change_password, methods=["POST"])
 # 应用配置（出品默认值）
 router.add_api_route("/listing-defaults", get_listing_defaults, methods=["GET"], response_model=ListingDefaultsOut)
 router.add_api_route("/listing-defaults", put_listing_defaults, methods=["PUT"], response_model=ListingDefaultsOut)
+
+# 管理番号暗号编码模式（隐藏页 /x9 切换：二进制 ◇◆ / 五进制 -=~<>）
+router.add_api_route("/mgmt-cipher-mode", get_mgmt_cipher_mode, methods=["GET"], response_model=MgmtCipherModeOut)
+router.add_api_route("/mgmt-cipher-mode", put_mgmt_cipher_mode, methods=["PUT"], response_model=MgmtCipherModeOut)
 
 # 系统日志（自动上架 / 自动获取 / 操作日志）
 router.add_api_route("/system-logs", list_system_logs, methods=["GET"])
