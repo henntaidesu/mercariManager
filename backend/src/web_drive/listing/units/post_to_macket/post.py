@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import urllib.request
 from typing import Any, Dict, List, Optional, Sequence
 from ._constants import DEFAULT_ELEMENT_TIMEOUT_MS, DEFAULT_PAGE_LOAD_TIMEOUT_MS, DESCRIPTION_TEXTAREA_XPATH, NAME_INPUT_XPATH, PHOTO_ADD_BUTTON_XPATH, SALE_ELEMENT_TIMEOUT_MS, SELL_CREATE_URL, SUBMIT_BUTTON_TEXTS, SWITCH_INPUT_XPATH
@@ -407,6 +408,22 @@ async def post_to_market(
                         log_prefix="[post_to_market]",
                     )
                 log.info("[post_to_market] 已点击出品按钮，等待页面跳转…")
+
+                # 拍卖二次确认弹窗：「オークション形式での出品について」需在弹层（#main 之外）
+                # 再次点击「出品する」才会真正提交。即购无此弹窗，故仅在拍卖时探测。
+                if (sale_type or "instant_buy") != "instant_buy":
+                    try:
+                        dialog = page.locator('[role="dialog"]').filter(
+                            has_text=re.compile(r"オークション形式での出品")
+                        ).first
+                        await dialog.wait_for(state="visible", timeout=element_timeout_ms)
+                        confirm_btn = dialog.get_by_role("button", name="出品する").first
+                        await confirm_btn.wait_for(state="visible", timeout=element_timeout_ms)
+                        await confirm_btn.scroll_into_view_if_needed()
+                        await confirm_btn.click(timeout=element_timeout_ms)
+                        log.info("[post_to_market] 已点击拍卖二次确认「出品する」")
+                    except Exception as exc:
+                        log.info("[post_to_market] 未出现拍卖二次确认弹窗（忽略）: %s", exc)
 
                 try:
                     await page.wait_for_url(

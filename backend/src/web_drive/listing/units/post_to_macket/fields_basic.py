@@ -95,19 +95,35 @@ async def _pick_visible_price_locator(
     page: Any,
     price_xpath: str,
     *,
+    is_instant: bool = True,
     element_timeout_ms: int,
 ) -> Any:
     """
     販売価格 input：主 XPath 易随版式失效，依次尝试多种选择器。
+    即购与拍卖使用不同的输入框：拍卖为 name="auctionPrice"
+    （data-testid="auction-price-text-input"，inputmode="decimal"，placeholder "300~"），
+    与即购的 name="price"/inputmode="numeric" 完全不同，需分别兜底。
     """
     per = element_timeout_ms
-    candidates: List[Any] = [
-        page.locator(f"xpath={price_xpath}"),
-        page.locator('#main input[name="price"]'),
-        page.locator('[data-testid="input-price"] input'),
-        page.locator('[data-testid="price-input"] input'),
-        page.get_by_placeholder(re.compile(r"半角|数字|円", re.I)),
-    ]
+    if is_instant:
+        candidates: List[Any] = [
+            page.locator(f"xpath={price_xpath}"),
+            page.locator('#main input[name="price"]'),
+            page.locator('[data-testid="input-price"] input'),
+            page.locator('[data-testid="price-input"] input'),
+            page.get_by_placeholder(re.compile(r"半角|数字|円", re.I)),
+        ]
+        # 兜底：表单内靠后的数字输入（出品价通常在页面中下部）
+        fallback = page.locator('#main form input[inputmode="numeric"]').last
+    else:
+        candidates = [
+            page.locator(f"xpath={price_xpath}"),
+            page.locator('#main [data-testid="auction-price-text-input"]'),
+            page.locator('#main input[name="auctionPrice"]'),
+            page.get_by_placeholder(re.compile(r"300\s*~|~", re.I)),
+        ]
+        # 兜底：拍卖开始价为 decimal 输入
+        fallback = page.locator('#main form input[inputmode="decimal"]').last
     last_exc: Optional[BaseException] = None
     for loc in candidates:
         try:
@@ -116,11 +132,9 @@ async def _pick_visible_price_locator(
         except Exception as exc:
             last_exc = exc
             continue
-    # 兜底：表单内靠后的数字输入（出品价通常在页面中下部）
     try:
-        loc = page.locator('#main form input[inputmode="numeric"]').last
-        await loc.wait_for(state="visible", timeout=per)
-        return loc
+        await fallback.wait_for(state="visible", timeout=per)
+        return fallback
     except Exception as exc:
         last_exc = exc
     if last_exc:
@@ -199,7 +213,7 @@ async def _set_sale_type_and_price(
     # 填写价格（多选择器 + evaluate 写入）
     price_str = str(max(0, int(price)))
     price_loc = await _pick_visible_price_locator(
-        page, price_xpath, element_timeout_ms=element_timeout_ms
+        page, price_xpath, is_instant=is_instant, element_timeout_ms=element_timeout_ms
     )
     await price_loc.first.scroll_into_view_if_needed()
     await price_loc.first.click(timeout=element_timeout_ms)
