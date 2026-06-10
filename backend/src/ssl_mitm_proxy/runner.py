@@ -62,7 +62,8 @@ def _mitmdump_argv() -> list[str]:
 
     - 单文件打包(frozen)：backend.exe 自调用充当 mitmdump（配合 MERCARI_RUN_MITMDUMP=1，
       见 main.py 顶部守卫），无需外置 mitmdump.exe。
-    - 开发态：用 PATH 里的 mitmdump，或 venv 的 Scripts/mitmdump.exe。
+    - 开发态：用 PATH 里的 mitmdump，或当前解释器同级目录（venv 的
+      Scripts/mitmdump.exe（Windows）/ bin/mitmdump（mac/linux））。
     mitmproxy 10+ 须通过 mitmdump 入口启动；``python -m mitmproxy.tools.dump`` 不是有效 CLI。
     """
     if getattr(sys, "frozen", False):
@@ -74,6 +75,10 @@ def _mitmdump_argv() -> list[str]:
         scripts = os.path.join(os.path.dirname(sys.executable), "Scripts", "mitmdump.exe")
         if os.path.isfile(scripts):
             return [scripts]
+    else:
+        candidate = os.path.join(os.path.dirname(sys.executable), "mitmdump")
+        if os.path.isfile(candidate):
+            return [candidate]
     raise FileNotFoundError(
         "找不到 mitmdump。请在 backend 所在环境执行: pip install mitmproxy"
     )

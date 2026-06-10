@@ -28,10 +28,14 @@ Mercari is a **full-stack inventory and order management system** with deep inte
 ### Quick Start
 
 ```powershell
-start.bat
+start.bat   # Windows
 ```
 
-All-in-one: activates conda env, starts backend & frontend.
+```bash
+./start.sh  # Mac / Linux
+```
+
+All-in-one: activates conda env (or auto-creates backend/.venv on Mac/Linux), starts backend & frontend.
 
 ### Backend
 

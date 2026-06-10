@@ -129,6 +129,17 @@ start.bat
 
 该脚本会激活 conda 环境 `mercari`，启动后端 Uvicorn，并在 `webside` 目录执行 `npm install && npm run dev`。
 
+### 一键启动（Mac / Linux）
+
+仓库根目录执行：
+
+```bash
+chmod +x start.sh   # 仅首次需要
+./start.sh
+```
+
+优先使用 conda 环境 `mercari`；没有 conda 时自动创建 `backend/.venv` 并安装 `backend/requirements.txt`。如需浏览器自动化功能，另行执行 `python -m playwright install msedge` 安装 Edge。
+
 ### 手动 — 后端
 
 ```powershell
