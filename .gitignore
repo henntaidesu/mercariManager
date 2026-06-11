@@ -80,9 +80,10 @@ vite.config.ts.timestamp-*
 # Editor / test
 .vscode-test
 
-# Python bytecode
+# Python bytecode / virtualenv
 *.py[cod]
 __pycache__/
+.venv/
 backend/mercariDB.db*
 backend/imges/
 backend/mercariDB.db-wal
@@ -92,3 +93,16 @@ backend/ssl_mitm/
 1.json
 apk_code/
 SyncSettings.ffs_gui
+
+
+# FreeFileSync 同步工具文件
+*.ffs_db
+
+# 运行时自动生成的数据（自签证书 / 私钥等）
+backend/data/
+
+# macOS
+.DS_Store
+
+# Claude Code 个人本地配置
+.claude/settings.local.json
