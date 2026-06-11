@@ -57,6 +57,15 @@ async def _on_startup(force_headed_debug: bool = False) -> None:
     # ② 数据库初始化
     init_database()
 
+    # ②.5 图片搜索后台索引线程（懒加载模型；IMAGE_SEARCH_AUTO_INDEX=0 可关闭启动对账）
+    if _env_enabled("IMAGE_SEARCH_AUTO_INDEX"):
+        try:
+            from .use_web.inventory.image_search import start_indexer
+
+            start_indexer()
+        except Exception as exc:
+            logging.getLogger(__name__).warning("图片搜索索引线程未启动: %s", exc)
+
     # ③ 应用「强制有头调试」全局开关（在任何浏览器启动前设定）
     from .web_drive.core.manager import set_force_headed_debug
 

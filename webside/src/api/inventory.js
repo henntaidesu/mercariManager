@@ -15,6 +15,15 @@ export const inventoryApi = {
       timeout: 15000
     })
   },
+  imageSearch: (file, topK = 20) => {
+    const fd = new FormData()
+    fd.append('file', file, file?.name || 'query.jpg')
+    return http.post(`/use_web/inventory/image-search?top_k=${topK}`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000
+    })
+  },
+  imageSearchStatus: () => http.get('/use_web/inventory/image-search/status'),
   uploadImage: (file, onUploadProgress, signal) => {
     const fd = new FormData()
     fd.append('file', file, file?.name || 'inventory.jpg')

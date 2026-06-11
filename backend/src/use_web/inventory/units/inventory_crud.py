@@ -23,6 +23,7 @@ from .inventory_images import (
 )
 from .inventory_combined import _parse_combined_items
 from .inventory_models import InventoryCreate, InventoryUpdate
+from ..image_search import enqueue_inventory as _enqueue_image_index
 
 db = DatabaseManager()
 
@@ -83,6 +84,7 @@ def create_inventory(data: InventoryCreate, _claims: dict = Depends(require_auth
         if "unique" in err and "barcode" in err:
             raise HTTPException(status_code=400, detail="保存失败，条形码可能重复")
         raise HTTPException(status_code=400, detail="保存失败，请检查填写内容后重试")
+    _enqueue_image_index(new_id)
     inventory_items = _query_inventory_with_joins(" AND p.id = ? LIMIT 1", (new_id,))
     return inventory_items[0] if inventory_items else {"id": new_id}
 
@@ -172,6 +174,8 @@ def update_inventory(pid: int, data: InventoryUpdate, _claims: dict = Depends(re
             if source_ids:
                 from ....use_mercari.inventory_counters import recompute_listable_quantity
                 recompute_listable_quantity(source_ids)
+    if any(k in update_data for k in ("image", "image_front", "image_back", "images_json")):
+        _enqueue_image_index(pid)
     inventory_items = _query_inventory_with_joins(" AND p.id = ? LIMIT 1", (pid,))
     if not inventory_items:
         raise HTTPException(status_code=400, detail="更新失败，条形码可能重复")
@@ -186,4 +190,5 @@ def delete_inventory(pid: int):
         "UPDATE [inventory] SET is_delete = 1 WHERE id = ? AND COALESCE(is_delete, 0) = 0",
         (pid,),
     )
+    _enqueue_image_index(pid)
     return {"message": "删除成功"}

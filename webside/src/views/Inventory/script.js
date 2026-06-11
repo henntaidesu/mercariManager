@@ -1555,6 +1555,7 @@ export default defineComponent({
 
     async function load(options = {}) {
       const { resetPage = true } = options
+      imageSearchActive.value = false
       loading.value = true
       const params = {}
       if (keyword.value) params.keyword = keyword.value
@@ -3716,6 +3717,95 @@ export default defineComponent({
       if (!mobile) loadInventoryStats()
     })
 
+    // ============ 图片搜索（CLIP 以图搜库存） ============
+
+    const imageSearchVisible = ref(false)
+    const imageSearchLoading = ref(false)
+    /** 多结果模式：主表格当前展示的是图片搜索结果（带 match_score） */
+    const imageSearchActive = ref(false)
+    const imageSearchIndexStatus = ref(null)
+    const fileInputImageSearch = ref(null)
+
+    async function refreshImageSearchStatus() {
+      try {
+        imageSearchIndexStatus.value = await inventoryApi.imageSearchStatus()
+      } catch {
+        /* 拦截器已提示 */
+      }
+    }
+
+    function openImageSearch() {
+      imageSearchVisible.value = true
+      refreshImageSearchStatus()
+    }
+
+    async function doImageSearch(file) {
+      if (!file) return
+      if (!(file.type || '').startsWith('image/')) {
+        ElMessage.warning(t('inventory.imageSearchNeedImage'))
+        return
+      }
+      imageSearchLoading.value = true
+      try {
+        const res = await inventoryApi.imageSearch(file)
+        const results = res?.results || []
+        imageSearchIndexStatus.value = res?.index || imageSearchIndexStatus.value
+        if (!results.length) {
+          const st = res?.index
+          if (st?.state === 'indexing') {
+            ElMessage.warning(t('inventory.imageSearchIndexing', { done: st.done, total: st.total }))
+          } else {
+            ElMessage.info(t('inventory.imageSearchNoMatch'))
+          }
+          return
+        }
+        imageSearchVisible.value = false
+        if (results.length === 1) {
+          // 唯一匹配：直接打开商品详情表单
+          openDialog(results[0])
+          return
+        }
+        // 多个匹配：主表格按相似度展示结果
+        list.value = results
+        imageSearchActive.value = true
+        inventorySortProp.value = ''
+        inventorySortOrder.value = ''
+        currentPage.value = 1
+        ElMessage.success(t('inventory.imageSearchMatched', { count: results.length }))
+      } catch {
+        /* 拦截器已提示（含模型未就绪 503） */
+      } finally {
+        imageSearchLoading.value = false
+      }
+    }
+
+    function onImageSearchFileChange(e) {
+      const file = e.target.files?.[0]
+      e.target.value = ''
+      doImageSearch(file)
+    }
+
+    function onImageSearchDrop(e) {
+      const file = e.dataTransfer?.files?.[0]
+      doImageSearch(file)
+    }
+
+    function onImageSearchPaste(e) {
+      const item = Array.from(e.clipboardData?.items || []).find((i) => i.type.startsWith('image/'))
+      if (item) doImageSearch(item.getAsFile())
+    }
+
+    watch(imageSearchVisible, (visible) => {
+      if (visible) document.addEventListener('paste', onImageSearchPaste)
+      else document.removeEventListener('paste', onImageSearchPaste)
+    })
+    onBeforeUnmount(() => document.removeEventListener('paste', onImageSearchPaste))
+
+    function clearImageSearch() {
+      imageSearchActive.value = false
+      load()
+    }
+
     // ============ 生命周期 ============
 
     onBeforeUnmount(stopScan)
@@ -3825,6 +3915,15 @@ export default defineComponent({
       readViewCombinedOnlyPreference,
       viewCombinedOnly,
       viewAutoListingOnly,
+      imageSearchVisible,
+      imageSearchLoading,
+      imageSearchActive,
+      imageSearchIndexStatus,
+      fileInputImageSearch,
+      openImageSearch,
+      onImageSearchFileChange,
+      onImageSearchDrop,
+      clearImageSearch,
       currentPage,
       pageSize,
       dialogVisible,

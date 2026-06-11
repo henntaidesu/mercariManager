@@ -113,5 +113,8 @@ def split_inventory(pid: int, data: InventorySplitRequest, _claims: dict = Depen
     except Exception:
         raise HTTPException(status_code=400, detail="拆分失败，请稍后重试")
 
+    from ..image_search import enqueue_inventory as _enqueue_image_index
+    _enqueue_image_index(new_id)
+
     items = _query_inventory_with_joins(" AND p.id = ? LIMIT 1", (new_id,))
     return items[0] if items else {"id": new_id}

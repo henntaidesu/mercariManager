@@ -94,6 +94,7 @@
             <template v-if="!listingPickMode">
               <div class="search-actions-ios-row">
                 <el-button type="success" @click="openContScan">{{ t('inventory.barcodeInbound') }}</el-button>
+                <el-button type="primary" plain @click="openImageSearch">{{ t('inventory.imageSearch') }}</el-button>
               </div>
               <div class="search-actions-ios-row">
                 <el-button type="warning" @click="openNoBarcodeEntry">{{ t('inventory.noBarcodeInbound') }}</el-button>
@@ -111,6 +112,7 @@
           <template v-else>
             <template v-if="!listingPickMode">
               <el-button type="success" @click="openContScan">{{ t('inventory.barcodeInbound') }}</el-button>
+              <el-button type="primary" plain @click="openImageSearch">{{ t('inventory.imageSearch') }}</el-button>
               <el-button type="warning" @click="openNoBarcodeEntry">{{ t('inventory.noBarcodeInbound') }}</el-button>
               <el-button @click="enterListingPickMode()">{{ t('inventory.combinedProduct') }}</el-button>
             </template>
@@ -126,6 +128,11 @@
     </el-card>
 
     <el-card shadow="never" class="table-card">
+      <!-- 图片搜索结果模式提示条 -->
+      <div v-if="imageSearchActive" class="image-search-banner">
+        <el-tag type="primary" effect="light">{{ t('inventory.imageSearchResultCount', { count: list.length }) }}</el-tag>
+        <el-button size="small" link type="primary" @click="clearImageSearch">{{ t('inventory.imageSearchClear') }}</el-button>
+      </div>
       <div class="table-scroll">
       <el-table
         ref="inventoryTableRef"
@@ -225,6 +232,13 @@
               </span>
             </el-tooltip>
             <span v-else>{{ row.id }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="imageSearchActive" :label="t('inventory.matchScore')" width="86" align="center" header-align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="Number(row.match_score || 0) >= 0.8 ? 'success' : 'warning'" effect="light">
+              {{ Math.round(Number(row.match_score || 0) * 100) }}%
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column :label="t('inventory.productImage')" width="76" align="center" header-align="center">
@@ -1524,6 +1538,41 @@
       <template #footer>
         <el-button @click="ocrVisible = false">{{ t('common.cancel') }}</el-button>
       </template>
+    </el-dialog>
+
+    <!-- ===== 图片搜索弹窗 ===== -->
+    <el-dialog
+      v-model="imageSearchVisible"
+      :title="t('inventory.imageSearch')"
+      :width="isMobile ? '92vw' : '420px'"
+      :close-on-click-modal="!imageSearchLoading"
+    >
+      <div
+        class="image-search-dropzone"
+        v-loading="imageSearchLoading"
+        :element-loading-text="t('inventory.imageSearchSearching')"
+        @click="fileInputImageSearch?.click()"
+        @dragover.prevent
+        @drop.prevent="onImageSearchDrop"
+      >
+        <div class="image-search-dropzone-main">{{ t('inventory.imageSearchDropHint') }}</div>
+        <div class="image-search-dropzone-sub">{{ t('inventory.imageSearchPasteHint') }}</div>
+      </div>
+      <input
+        ref="fileInputImageSearch"
+        type="file"
+        accept="image/*"
+        style="display:none"
+        @change="onImageSearchFileChange"
+      />
+      <div
+        v-if="imageSearchIndexStatus?.state === 'indexing'"
+        class="image-search-index-tip"
+      >{{ t('inventory.imageSearchIndexing', { done: imageSearchIndexStatus.done, total: imageSearchIndexStatus.total }) }}</div>
+      <div
+        v-else-if="imageSearchIndexStatus?.state === 'error'"
+        class="image-search-index-tip image-search-index-tip--error"
+      >{{ imageSearchIndexStatus.message }}</div>
     </el-dialog>
 
     <teleport to="body">

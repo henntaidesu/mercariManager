@@ -1142,3 +1142,40 @@
 .search-card--ios :deep(.el-input__inner) {
   font-size: 16px;
 }
+
+/* ===== 图片搜索 ===== */
+.image-search-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.image-search-dropzone {
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  padding: 36px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+.image-search-dropzone:hover {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.image-search-dropzone-main {
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+}
+.image-search-dropzone-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.image-search-index-tip {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--el-color-warning);
+}
+.image-search-index-tip--error {
+  color: var(--el-color-danger);
+}

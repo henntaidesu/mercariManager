@@ -21,6 +21,7 @@ from .desired_price_offer import DesiredPriceOfferModel
 from .memo import MemoModel
 from .talk_script import TalkScriptModel
 from .system_log import SystemLogModel
+from .image_embedding import ImageEmbeddingModel
 
 __all__ = [
     'CategoryModel',
@@ -45,4 +46,5 @@ __all__ = [
     'MemoModel',
     'TalkScriptModel',
     'SystemLogModel',
+    'ImageEmbeddingModel',
 ]

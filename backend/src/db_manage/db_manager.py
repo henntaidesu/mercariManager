@@ -28,6 +28,7 @@ from .models import (
     MemoModel,
     TalkScriptModel,
     SystemLogModel,
+    ImageEmbeddingModel,
 )
 
 
@@ -528,6 +529,7 @@ class DBManager:
             MemoModel,  # 备忘录 / 站内信（依赖 users，仅顺序习惯）
             TalkScriptModel,  # 话术表（全局共享，无外键依赖）
             SystemLogModel,  # 系统日志（自动上架 / 自动获取，无外键依赖）
+            ImageEmbeddingModel,  # 商品图片特征向量（图片搜索索引，依赖 inventory，仅顺序习惯）
         ]
 
     def initialize_database(self) -> bool:

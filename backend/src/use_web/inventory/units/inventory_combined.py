@@ -144,6 +144,9 @@ def create_combined_inventory(data: CombinedInventoryCreate, _claims: dict = Dep
     from ....use_mercari.inventory_counters import recompute_listable_quantity
     recompute_listable_quantity([int(item["inventory_id"]) for item in items])
 
+    from ..image_search import enqueue_inventory as _enqueue_image_index
+    _enqueue_image_index(new_id)
+
     inventory_items = _query_inventory_with_joins(" AND p.id = ? LIMIT 1", (new_id,))
     return inventory_items[0] if inventory_items else {"id": new_id}
 
