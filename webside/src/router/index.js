@@ -20,6 +20,7 @@ const routes = [
       { path: 'notifications', name: 'Notifications', component: () => import('@/views/Notifications/index.vue'), meta: { title: '煤炉通知', icon: 'Bell' } },
       { path: 'mercari-accounts', name: 'MercariAccounts', component: () => import('@/views/MercariAccounts/index.vue'), meta: { title: '煤炉账号', icon: 'User' } },
       { path: 'memos', name: 'Memos', component: () => import('@/views/Memos/index.vue'), meta: { title: '备忘录', icon: 'ChatDotRound' } },
+      { path: 'gotion', name: 'Gotion', component: () => import('@/views/Gotion/index.vue'), meta: { title: '表格管理', icon: 'Notebook' } },
       // 系统管理（一级，二级菜单由 Layout 侧边栏右侧弹出，URL 嵌套到 /system/*）
       { path: 'system', name: 'System', component: () => import('@/views/system/System/index.vue'), meta: { title: '系统总览', icon: 'Setting' } },
       { path: 'system/transactions', name: 'Transactions', component: () => import('@/views/system/Transactions/index.vue'), meta: { title: '库存记录', icon: 'List' } },

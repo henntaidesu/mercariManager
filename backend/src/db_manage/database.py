@@ -17,6 +17,7 @@ class DatabaseManager:
 
     _instance = None
     _lock = threading.Lock()
+    _tlocal = threading.local()  # 每线程的活动事务连接（transaction() 内复用）
 
     def __new__(cls):
         if cls._instance is None:
@@ -42,13 +43,49 @@ class DatabaseManager:
             conn.execute('PRAGMA foreign_keys=ON')
             conn.commit()
 
+    def _active_transaction_conn(self):
+        """当前线程处于 transaction() 中时返回事务连接，否则 None"""
+        return getattr(self._tlocal, 'conn', None)
+
     @contextmanager
     def get_connection(self):
-        """获取数据库连接上下文管理器"""
+        """获取数据库连接上下文管理器（处于事务中时复用事务连接，由 transaction() 统一提交/关闭）"""
+        active = self._active_transaction_conn()
+        if active is not None:
+            yield active
+            return
         conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
         try:
             yield conn
         finally:
+            conn.close()
+
+    @contextmanager
+    def transaction(self):
+        """事务上下文：块内所有 execute_* 在同一连接上执行，结束时统一提交，异常时回滚。
+
+        嵌套调用时直接加入外层事务。不使用 transaction() 的代码路径行为完全不变。
+        """
+        active = self._active_transaction_conn()
+        if active is not None:
+            # 嵌套事务：直接加入外层事务
+            yield active
+            return
+        conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
+        conn.isolation_level = None  # 手动管理事务
+        conn.execute('BEGIN IMMEDIATE')
+        self._tlocal.conn = conn
+        try:
+            yield conn
+            conn.execute('COMMIT')
+        except BaseException:
+            try:
+                conn.execute('ROLLBACK')
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
+            self._tlocal.conn = None
             conn.close()
 
     def execute_query(self, sql: str, params: tuple = ()) -> List[tuple]:
@@ -63,7 +100,8 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(sql, params)
-            conn.commit()
+            if self._active_transaction_conn() is None:
+                conn.commit()
             return cursor.rowcount
 
     def execute_insert(self, sql: str, params: tuple = ()) -> Optional[int]:
@@ -71,7 +109,8 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(sql, params)
-            conn.commit()
+            if self._active_transaction_conn() is None:
+                conn.commit()
             return cursor.lastrowid
 
     def execute_many(self, sql: str, params_list: List[tuple]) -> int:
@@ -79,7 +118,8 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.executemany(sql, params_list)
-            conn.commit()
+            if self._active_transaction_conn() is None:
+                conn.commit()
             return cursor.rowcount
 
     def table_exists(self, table_name: str) -> bool:

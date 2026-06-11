@@ -36,6 +36,7 @@ from .todos.API import router as todos_router
 from .notifications.API import router as notifications_router
 from .memos.API import router as memos_router
 from .talk_scripts.API import router as talk_scripts_router
+from .gotion.API import router as gotion_router
 from .mercari_image.API import public_router as mercari_image_public_router
 
 router = APIRouter(prefix="/use_web")
@@ -63,3 +64,4 @@ router.include_router(todos_router, prefix="/todos", tags=["todos"], dependencie
 router.include_router(notifications_router, prefix="/notifications", tags=["notifications"], dependencies=_AUTH)
 router.include_router(memos_router, prefix="/memos", tags=["memos"], dependencies=_AUTH)
 router.include_router(talk_scripts_router, prefix="/talk-scripts", tags=["talk-scripts"], dependencies=_AUTH)
+router.include_router(gotion_router, prefix="/gotion", tags=["gotion"], dependencies=_AUTH)

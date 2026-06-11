@@ -21,6 +21,9 @@ from .desired_price_offer import DesiredPriceOfferModel
 from .memo import MemoModel
 from .talk_script import TalkScriptModel
 from .system_log import SystemLogModel
+from .gotion_table import GotionTableModel
+from .gotion_column import GotionColumnModel
+from .gotion_row import GotionRowModel
 
 __all__ = [
     'CategoryModel',
@@ -45,4 +48,7 @@ __all__ = [
     'MemoModel',
     'TalkScriptModel',
     'SystemLogModel',
+    'GotionTableModel',
+    'GotionColumnModel',
+    'GotionRowModel',
 ]
