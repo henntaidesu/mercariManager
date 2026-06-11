@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict
 from .....db_manage.models.todo_item import TodoItemModel
 from .....web_drive.core.manager import get_web_drive_manager
-from .....web_drive.core.paths import mercari_account_key
+from .....web_drive.core.paths import mercari_automation_key
 
 log = logging.getLogger(__name__)
 
@@ -178,7 +178,7 @@ async def push_remote_camera_frame(
         raise ValueError(f"待办事项 id={todo_id} 不存在")
     aid = int(todo.account_id)
     mgr = get_web_drive_manager()
-    auto_key = mercari_account_key(aid)
+    auto_key = mercari_automation_key(aid)
     try:
         page = await mgr.active_tab_page(auto_key)
     except Exception as exc:
@@ -229,7 +229,7 @@ async def capture_qr_scanner_frame(todo_id: int) -> Dict[str, Any]:
         raise ValueError(f"待办事项 id={todo_id} 不存在")
     aid = int(todo.account_id)
     mgr = get_web_drive_manager()
-    auto_key = mercari_account_key(aid)
+    auto_key = mercari_automation_key(aid)
     try:
         page = await mgr.active_tab_page(auto_key)
     except Exception as exc:

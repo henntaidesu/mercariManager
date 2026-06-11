@@ -2726,7 +2726,8 @@ export default defineComponent({
         return
       }
 
-      // account_key：mercari_{id}；后端会映射到独立有头 profile mercari_{id}__listing，不占用系统预启动主浏览器
+      // account_key：mercari_{id}；后端使用独立无头 profile mercari_{id}__listing 出品（全局出品锁：
+      // 同一时刻仅一人出品，冲突时返回 409 提示稍候），不占用主 profile / 手动打开的浏览器
       const accountKey = `mercari_${accountId}`
 
       // 收集图片 URL：单条出品用 listing_image_urls（与库存全部图一致）；否则正面/背面；组合出品用 combined_images

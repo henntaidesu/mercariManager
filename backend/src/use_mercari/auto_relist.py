@@ -98,10 +98,9 @@ async def run_auto_relist_for_orders(
     """
     为若干新售出订单**内联**执行补挂（不再 fire-and-forget）。
 
-    必须在该账号的串行队列槽内调用（``sync_new_data`` 即如此）：补挂的出品自动化
-    复用当前队列槽与已打开的浏览器会话、不再单独入队（``post_to_market(already_in_queue=True)``），
-    从而既避免同账号队列的自我死锁，又确保补挂在调用方「同步收尾强制关浏览器」之前就完成
-    ——这是之前 fire-and-forget 方案会与关浏览器竞态导致「会话不可用」的根因修复。
+    补挂的出品自动化使用独立无头出品 profile（``mercari_{id}__listing``），不占用
+    当前同步的主 profile 浏览器；以 ``post_to_market(background_caller=True)`` 调用——
+    若有用户正持有全局出品锁则排队等待，不丢任务。
 
     全程吞异常，绝不影响同步主流程。
     """
@@ -339,7 +338,7 @@ async def _relist_single_inventory(
             inventory_id,
         )
 
-    # 复用既有出品自动化（按账号串行队列、类目 position、MITM 代理全在其中）
+    # 复用既有出品自动化（独立无头出品 profile、全局出品锁、类目 position、MITM 代理全在其中）
     from ..web_drive.core.paths import mercari_account_key
     from ..use_web.web_drive.units.web_drive_handler import (
         PostToMarketBody,
@@ -373,9 +372,9 @@ async def _relist_single_inventory(
     if relisted_in_run is not None:
         relisted_in_run.add(inventory_id)
     try:
-        # already_in_queue=True：补挂在订单同步任务的队列槽内联执行，复用当前浏览器会话、
-        # 不再重复入队（避免自我死锁，且在同步收尾关浏览器之前完成）
-        res = await post_to_market(body, already_in_queue=True)
+        # background_caller=True：后台补挂排队等待全局出品锁（有用户正在出品时不丢任务）；
+        # 出品自动化使用独立无头 profile，不与本次订单同步的主 profile 浏览器冲突
+        res = await post_to_market(body, background_caller=True)
     except Exception as exc:
         log.exception("[auto_relist] 商品 %s 出品自动化失败：%s", inventory_id, exc)
         SystemLogModel.add(

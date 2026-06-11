@@ -22,7 +22,7 @@ from ....web_drive.core.account_serial_queue import (
     run_mercari_serial_async,
 )
 from ....web_drive.core.manager import get_web_drive_manager
-from ....web_drive.core.paths import mercari_account_key
+from ....web_drive.core.paths import mercari_automation_key
 from ....use_mercari.get_to_du_list.todolist_sync import sync_todos_with_details
 from ....use_mercari.get_notifications.notification.notification_sync import (
     sync_notifications_from_mercari,
@@ -112,7 +112,7 @@ async def sync_account_all_data(aid: int, req: SyncAccountDataRequest) -> Dict[s
         # 全批完成后统一关闭一次浏览器。
         try:
             mgr = get_web_drive_manager()
-            await mgr.close_session(mercari_account_key(account_id), force=True)
+            await mgr.close_session(mercari_automation_key(account_id), force=True)
         except Exception as close_exc:  # noqa: BLE001
             log.warning(
                 "[account-sync] 关闭 account_id=%s 浏览器失败: %s", account_id, close_exc

@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-MITM 自动化：按账号打开主 profile ``mercari_{id}`` 的有头 Edge 浏览器,
-经 MITM 代理捕获煤炉 API 响应。
+MITM 自动化：按账号打开**同步/自动化专用** profile ``mercari_{id}__sync`` 的
+（默认无头）Edge 浏览器,经 MITM 代理捕获煤炉 API 响应。
 
 设计要点：
-  - 直接使用主 profile,登录态由 Edge 持久化 cookie 自动维护,无需 cookie seed
-    与首页 prewarm。
+  - 自动化与 /mercari-accounts「打开浏览器」的有头主 profile ``mercari_{id}``
+    **完全分离**：同步的无头浏览器启动/关闭都不影响用户手动打开的浏览器。
+  - 登录态在自动化浏览器每次新启动时从主 profile 克隆 Cookie
+    （``clone_main_profile_cookies``：只读导出，绝不关闭/抢占已开浏览器）；
+    会话存活期间由该 profile 自行持久化。
   - 同账号通过 ``run_mercari_serial_async`` 串行执行,无并发问题;
     浏览器自动关闭由队列(``account_serial_queue.py``)负责:队列归 0 后
-    经 ``WEB_DRIVE_QUEUE_IDLE_CLOSE_SEC`` 秒延迟自动关闭。
-  - 若同账号已存在「非 MITM 代理」的主浏览器(用户从 /mercari-accounts 打开的),
-    首次进入会强制关闭并以 MITM 代理重新启动。
+    经 ``WEB_DRIVE_QUEUE_IDLE_CLOSE_SEC`` 秒延迟自动关闭 ``__sync`` 会话。
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from .manager import (
     force_headed_debug_enabled,
     get_web_drive_manager,
 )
-from .paths import mercari_account_key
+from .paths import mercari_account_key, mercari_automation_key
 
 log = logging.getLogger(__name__)
 
@@ -260,18 +261,38 @@ async def _is_context_alive(mgr: EdgeWebDriveManager, key: str) -> bool:
         return ctx is not None and mgr._is_context_alive(ctx)
 
 
+async def clone_main_profile_cookies(
+    mgr: EdgeWebDriveManager,
+    account_id: int,
+    target_key: str,
+) -> int:
+    """把主 profile（``mercari_{id}``，「打开浏览器」手动登录维护）的煤炉登录 Cookie 克隆到目标会话。
+
+    只读主 profile：已开的会话（含用户手动有头浏览器）直接复用、绝不关闭；
+    未开时由 ``export_cookies_full`` 临时无头打开读取、读完即关，不残留后台进程。
+    ``target_key`` 会话须已打开。返回注入条数。
+    """
+    aid = int(account_id)
+    cookies = await mgr.export_cookies_full(mercari_account_key(aid))
+    if not cookies:
+        raise RuntimeError(
+            "未读取到该账号的登录 Cookie，请先在「煤炉账号」页面打开浏览器登录 jp.mercari.com"
+        )
+    return await mgr.import_cookies(target_key, cookies)
+
+
 async def _launch_with_mitm(
     *,
     mgr: EdgeWebDriveManager,
     account_id: int,
-    main_key: str,
-    target_url: str,
+    browser_key: str,
     minimized: bool = True,
     headless: bool = False,
 ) -> None:
-    """启动账号主 profile Edge,直接进入目标页(经 MITM 代理)。
+    """启动同步/自动化专用 profile 的 Edge（经 MITM 代理，空白页起步）。
 
-    若同 profile 已有进程(无 MITM 代理),强制关闭后重启。
+    不导航到目标页——调用方须先 ``clone_main_profile_cookies`` 注入登录态，
+    再 ``reload_active_tab`` 进入目标页（避免无登录态命中受保护页面被误判掉登录）。
     ``headless=True`` 时启动无头浏览器(``minimized`` 自动失效);
     ``headless=False`` 且 ``minimized=True`` 时浏览器窗口最小化到任务栏(后台运行,不抢前台)。
     """
@@ -279,32 +300,18 @@ async def _launch_with_mitm(
     if r.get("error"):
         raise RuntimeError(f"MITM 代理不可用: {r['error']}")
 
-    if mgr.is_interactive_session_running(main_key):
-        log.info(
-            "[mitm] account_id=%d 主浏览器已在运行(无 MITM 代理),强制关闭后以 MITM 重新打开",
-            account_id,
-        )
-        try:
-            await mgr.close_session(main_key, force=True)
-        except Exception as exc:
-            log.warning("[mitm] 关闭主浏览器失败(继续尝试启动): %s", exc)
-
-    proxy = default_mitm_proxy_url()
-    target = (target_url or "").strip() or "https://jp.mercari.com/"
-
     await mgr.open_session(
-        main_key,
+        browser_key,
         headless=headless,
-        start_url=target,
-        proxy_server=proxy,
+        proxy_server=default_mitm_proxy_url(),
         interactive=not headless,
         restore_tabs=False,
         start_minimized=bool(minimized),
     )
 
-    if not await _is_context_alive(mgr, main_key):
+    if not await _is_context_alive(mgr, browser_key):
         raise RuntimeError(
-            f"主 profile MITM 浏览器启动失败: {main_key}。请检查 Edge / Playwright 状态后重试。"
+            f"自动化 MITM 浏览器启动失败: {browser_key}。请检查 Edge / Playwright 状态后重试。"
         )
 
 
@@ -322,11 +329,16 @@ async def mitm_automation_browser(
     headless: Optional[bool] = None,
 ) -> AsyncIterator[Tuple[EdgeWebDriveManager, str]]:
     """
-    上下文管理器:进入时确保账号主 profile 浏览器已开(走 MITM 代理),并导航到目标页。
+    上下文管理器:进入时确保账号**同步/自动化专用** profile（``mercari_{id}__sync``）
+    浏览器已开(走 MITM 代理),并导航到目标页。
 
-    yield ``(mgr, main_key)``;退出时**不关闭**浏览器——关闭由队列层
+    与 /mercari-accounts「打开浏览器」的有头主 profile（``mercari_{id}``）完全分离：
+    自动化的启动/刷新/关闭都不影响用户手动打开的浏览器。登录态在每次**新启动**时
+    从主 profile 克隆 Cookie（只读，不关闭、不抢占）；已开会话复用时仅刷新标签页。
+
+    yield ``(mgr, auto_key)``;退出时**不关闭**浏览器——关闭由队列层
     (``account_serial_queue._delayed_close_browser``)按 ``WEB_DRIVE_QUEUE_IDLE_CLOSE_SEC``
-    延迟自动处理。
+    延迟自动处理（只关 ``__sync`` 会话，不碰主 profile）。
 
     ``minimized``: 启动时是否最小化(后台运行)。``None`` = 读环境变量
     ``WEB_DRIVE_MITM_MINIMIZED``(默认 ``"1"`` = 最小化)。已有浏览器复用时仅
@@ -341,7 +353,7 @@ async def mitm_automation_browser(
     ( ``minimized`` 此时自动失效)。设环境变量为 0 可改回有头+最小化（调试用）。
     """
     aid = int(account_id)
-    main_key = mercari_account_key(aid)
+    auto_key = mercari_automation_key(aid)
     mgr = get_web_drive_manager()
     target_url = (start_url or "").strip()
     use_minimized = _default_minimized() if minimized is None else bool(minimized)
@@ -355,56 +367,55 @@ async def mitm_automation_browser(
     # 后直接重试，无需重启进程。
     clear_login_redirect_state(aid)
 
-    if await _is_context_alive(mgr, main_key):
-        # 复用:仅刷新当前标签页到目标 URL
+    async def _fresh_launch() -> None:
+        """空白页启动 → 从主 profile 克隆登录 Cookie → 导航目标页。"""
+        await _launch_with_mitm(
+            mgr=mgr,
+            account_id=aid,
+            browser_key=auto_key,
+            minimized=use_minimized,
+            headless=use_headless,
+        )
+        await clone_main_profile_cookies(mgr, aid, auto_key)
+        if target_url:
+            await mgr.reload_active_tab(auto_key, target_url)
+
+    if await _is_context_alive(mgr, auto_key):
+        # 复用:仅刷新当前标签页到目标 URL（登录态已在该 profile 持久化）
         if target_url:
             try:
-                await mgr.reload_active_tab(main_key, target_url)
-                log.debug("[mitm] 复用主浏览器 account_id=%d → %s", aid, target_url)
+                await mgr.reload_active_tab(auto_key, target_url)
+                log.debug("[mitm] 复用自动化浏览器 account_id=%d → %s", aid, target_url)
             except Exception as exc:
                 log.warning(
-                    "[mitm] 复用 reload 失败,强制重启浏览器 account_id=%d: %s",
+                    "[mitm] 复用 reload 失败,强制重启自动化浏览器 account_id=%d: %s",
                     aid,
                     exc,
                 )
                 try:
-                    await mgr.close_session(main_key, force=True)
+                    await mgr.close_session(auto_key, force=True)
                 except Exception:
                     pass
-                await _launch_with_mitm(
-                    mgr=mgr,
-                    account_id=aid,
-                    main_key=main_key,
-                    target_url=target_url,
-                    minimized=use_minimized,
-                    headless=use_headless,
-                )
+                await _fresh_launch()
     else:
-        await _launch_with_mitm(
-            mgr=mgr,
-            account_id=aid,
-            main_key=main_key,
-            target_url=target_url,
-            minimized=use_minimized,
-            headless=use_headless,
-        )
+        await _fresh_launch()
 
     # ── 检测登录态失效（重定向到 login.jp.mercari.com）── #
     # 命中则关浏览器 + 将 mercari_accounts.status 置为 'disabled' + 抛错；
     # 失败/正常加载则提前返回，不影响后续 MITM 截获。
-    await _detect_login_redirect_and_disable(mgr, aid, main_key)
+    await _detect_login_redirect_and_disable(mgr, aid, auto_key)
 
     # ── 安装实时登录跳转监听器 ── #
     # 后续任意一次页面跳转（按钮点击、reload、JS 重定向）只要命中 login.jp.mercari.com
     # 都会立刻把账号置为「停用」并强制关闭浏览器；轮询/操作侧通过
     # ``login_redirect_state_for(aid)`` 检测后抛 MercariLoginRequiredError。
     try:
-        active_page = await mgr.active_tab_page(main_key)
-        _install_login_redirect_listener(mgr, aid, main_key, active_page)
+        active_page = await mgr.active_tab_page(auto_key)
+        _install_login_redirect_listener(mgr, aid, auto_key, active_page)
     except Exception as exc:
         log.debug("[mitm] 安装登录跳转监听失败 account_id=%d: %s", aid, exc)
 
-    yield mgr, main_key
+    yield mgr, auto_key
 
 
 async def wait_mitm_capture(
@@ -421,8 +432,8 @@ async def wait_mitm_capture(
     """
     轮询 MITM 落盘文件;超时前按间隔刷新当前标签页以再次触发目标 API。
 
-    形参名 ``auto_key`` 系历史命名,实际传任意会话 key
-    (新版传入 ``mercari_account_key(aid)`` 主 profile key)。
+    形参名 ``auto_key`` 实际传任意会话 key
+    (新版传入 ``mercari_automation_key(aid)`` 同步专用 profile key)。
 
     每次轮询都会检查实时监听器是否已记录「跳转到登录页」；命中则提前抛
     ``MercariLoginRequiredError``，不再等待 MITM 超时。

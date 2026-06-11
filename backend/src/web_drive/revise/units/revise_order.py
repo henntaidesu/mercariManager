@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Mercari 在售商品修改：用账号主 profile 经 MITM 打开编辑页，填写「标题/价格/商品说明」
+Mercari 在售商品修改：用同步/自动化专用无头 profile（mercari_{id}__sync）经 MITM 打开编辑页，填写「标题/价格/商品说明」
 并点击「変更する」提交。提交成功后**不再从煤炉重新同步列表**，而是直接把改动写回本地
 ``on_sale_items`` 数据库（浏览器由队列空闲超时关闭）。
 
 流程（cookie 由 Edge 持久化自动维护）：
-  1. ``mitm_automation_browser(account_id, start_url=edit_url)`` 进入账号主 profile ``mercari_{id}``
+  1. ``mitm_automation_browser(account_id, start_url=edit_url)`` 进入同步/自动化专用无头 profile ``mercari_{id}__sync``
   2. 填写 标题(input[name=name]) / 价格(input[name=price]) / 商品说明(textarea[name=description])
   3. 点击「変更する」(button[data-testid=edit-button]) 提交
   4. 直接 UPDATE 本地 on_sale_items 表对应记录
@@ -103,7 +103,7 @@ async def revise_mercari_item(
     """
     from ...core.manager import EdgeWebDriveManager
     from ...core.mitm_session import mitm_automation_browser
-    from ...core.paths import mercari_account_key, mercari_id_from_account_key
+    from ...core.paths import mercari_automation_key, mercari_id_from_account_key
 
     report = make_sync_reporter(progress_job_id)
 
@@ -130,7 +130,7 @@ async def revise_mercari_item(
     if not name_val and desc_val is None and price_val is None:
         raise ValueError("没有需要修改的字段")
 
-    auto_key = mercari_account_key(account_id)
+    auto_key = mercari_automation_key(account_id)
     edit_url = build_sell_edit_url(item_id)
 
     log.info(

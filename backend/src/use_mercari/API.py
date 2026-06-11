@@ -21,7 +21,7 @@ from ..web_drive.core.account_serial_queue import (
     run_mercari_serial_async,
 )
 from ..web_drive.core.manager import get_web_drive_manager
-from ..web_drive.core.paths import mercari_account_key
+from ..web_drive.core.paths import mercari_automation_key
 from .sync.sync_data import (
     batch_refresh_orders_info,
     history_sync_precheck,
@@ -95,7 +95,7 @@ async def api_sync_new_data(data: SyncOrdersRequest):
             finally:
                 # 关闭当前账号浏览器，确保与下一账号不重叠（队列层默认 ~10s 后才关）。
                 try:
-                    await mgr.close_session(mercari_account_key(aid), force=True)
+                    await mgr.close_session(mercari_automation_key(aid), force=True)
                 except Exception as close_exc:  # noqa: BLE001 关闭失败不阻断后续账号
                     log.warning(
                         "[orders] 关闭 account_id=%s 浏览器失败: %s", aid, close_exc

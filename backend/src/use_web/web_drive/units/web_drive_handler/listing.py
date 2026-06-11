@@ -82,23 +82,24 @@ def listing_post_progress(job_id: str):
         return {"success": True, "data": {"step": None, "label_zh": None, "ts": None}}
     return {"success": True, "data": row}
 
-async def post_to_market(body: PostToMarketBody, *, already_in_queue: bool = False):
+async def post_to_market(body: PostToMarketBody, *, background_caller: bool = False):
     """
-    在账号主 profile（``mercari_{id}``）经 SSL 中间人代理打开 https://jp.mercari.com/sell/create，
-    并自动完成全部表单步骤（与订单页「更新列表」同模式，cookie 由 Edge 持久化自动维护）：
+    在出品专用**独立无头** profile（``mercari_{id}__listing``）经 SSL 中间人代理打开
+    https://jp.mercari.com/sell/create，并自动完成全部表单步骤：
       · Switch 检查 → 图片上传 → 商品名/说明填写
       · 商品类型选择 → 販売タイプ+价格 → 发货天数 → 发货地址
-    经 ``run_mercari_serial_async`` 串行执行；浏览器在队列空闲后由队列自动关闭。
+    登录态进入时从主 profile 克隆 Cookie，不占用 ``mercari_{id}``——与自动同步、
+    /#/mercari-accounts「打开浏览器」互不冲突；流程结束后无头会话立即关闭。
 
-    ``already_in_queue``：调用方**已持有该账号的串行队列槽**时传 True（如自动补挂在订单
-    同步任务内联执行）——此时直接运行出品流程，不再重复入队，避免同账号队列的自我死锁，
-    也确保在调用方关闭浏览器之前就完成出品（不与同步收尾的强制关浏览器竞态）。
+    全局出品锁：同一时刻只允许一个出品在执行（跨账号、跨用户）。
+    - HTTP 手动出品（默认）：锁被占用时直接 409，前端提示稍候再试；
+    - ``background_caller=True``（自动补挂等后台任务）：排队等待锁，不丢任务。
     """
-    from .....web_drive.core.account_serial_queue import (
-        queue_key_for_mercari_account,
-        run_mercari_serial_async,
-    )
     from .....web_drive.core.paths import mercari_id_from_account_key
+    from .....web_drive.listing.units.listing_lock import (
+        ListingBusyError,
+        hold_listing_lock,
+    )
     from .....web_drive.listing.units.listing_progress import clear_listing_progress
     from .....web_drive.listing.units.post_to_macket import post_to_market as _do_post
     from .....ssl_mitm_proxy.runner import default_mitm_proxy_url
@@ -144,15 +145,15 @@ async def post_to_market(body: PostToMarketBody, *, already_in_queue: bool = Fal
                 progress_job_id=jid,
             )
 
-        if already_in_queue:
-            # 调用方已持有该账号队列槽：直接运行，避免再次入队自我死锁
+        # 全局出品锁：手动入口冲突即 409；后台补挂排队等待
+        label = "自动出品（售出补挂）进行中" if background_caller else "其他用户正在出品"
+        async with hold_listing_lock(label, wait=background_caller):
             data = await _run()
-        else:
-            data = await run_mercari_serial_async(
-                queue_key_for_mercari_account(account_id),
-                _run,
-            )
         return {"success": True, "data": data}
+    except HTTPException:
+        raise
+    except ListingBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 
 from ....db_manage.models.mercari_account import MercariAccountModel
 from ....web_drive.core.manager import get_web_drive_manager
-from ....web_drive.core.paths import mercari_account_key
+from ....web_drive.core.paths import mercari_automation_key
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def _resolve_account_id(account_id: Optional[int]) -> int:
 async def close_account_browser(account_id: Optional[int] = None) -> Dict[str, Any]:
     """强制关闭指定账号的主 profile 浏览器。未运行时不报错。"""
     aid = _resolve_account_id(account_id)
-    main_key = mercari_account_key(int(aid))
+    main_key = mercari_automation_key(int(aid))
     mgr = get_web_drive_manager()
     closed = False
     try:

@@ -25,7 +25,7 @@ from ....web_drive.core.account_serial_queue import (
     run_mercari_serial_async,
 )
 from ....web_drive.core.manager import get_web_drive_manager
-from ....web_drive.core.paths import mercari_account_key
+from ....web_drive.core.paths import mercari_automation_key
 from .notifications_models import SyncNotificationsRequest
 
 
@@ -82,7 +82,7 @@ async def sync_notifications(req: SyncNotificationsRequest) -> Dict[str, Any]:
                 # 关闭当前账号浏览器，确保与下一账号不重叠（队列层默认 ~10s 后才关，
                 # 这里立即强制关闭以消除全局响应文件的串台窗口）。
                 try:
-                    await mgr.close_session(mercari_account_key(aid), force=True)
+                    await mgr.close_session(mercari_automation_key(aid), force=True)
                 except Exception as close_exc:  # noqa: BLE001 关闭失败不阻断后续账号
                     log.warning(
                         "[notification] 关闭 account_id=%s 浏览器失败: %s", aid, close_exc

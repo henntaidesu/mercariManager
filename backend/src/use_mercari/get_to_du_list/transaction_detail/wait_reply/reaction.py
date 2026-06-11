@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from .....db_manage.models.todo_item import TodoItemModel
 from .....web_drive.core.manager import get_web_drive_manager
 from .....web_drive.core.mitm_session import mitm_automation_browser
-from .....web_drive.core.paths import mercari_account_key
+from .....web_drive.core.paths import mercari_automation_key
 from ....sync.sync_progress import make_sync_reporter
 
 log = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ async def send_message_reaction_by_index(
     aid = int(todo.account_id)
     item_id = (todo.item_id or "").strip()
     mgr = get_web_drive_manager()
-    auto_key = mercari_account_key(aid)
+    auto_key = mercari_automation_key(aid)
 
     report("attach_browser", "正在连接已打开的浏览器交易页…")
     try:

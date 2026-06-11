@@ -20,7 +20,7 @@ from ....db_manage.database import DatabaseManager
 from ....db_manage.models.mercari_account import MercariAccountModel
 from ....web_drive.core.manager import EdgeWebDriveManager
 from ....web_drive.core.mitm_session import mitm_automation_browser
-from ....web_drive.core.paths import mercari_account_key
+from ....web_drive.core.paths import mercari_automation_key
 from .bundle_purchase_capture import (
     build_bundle_offer_url,
     detect_decided_state_on_page,
@@ -351,7 +351,7 @@ async def decide_bundle_purchase(
         raise ValueError(f"非法 action: {action!r}")
 
     aid = _resolve_account_id(account_id)
-    main_key = mercari_account_key(int(aid))
+    main_key = mercari_automation_key(int(aid))
     start_url = build_bundle_offer_url(bid)
 
     # 已决定的请求不允许重复操作

@@ -154,12 +154,23 @@ class _SessionsMixin:
         return saved
 
 
-    async def export_cookies(self, account_key: str) -> List[Dict[str, Any]]:
-        """读取账号 profile 当前登录态的煤炉 Cookie（复用已开会话；无则临时开无头会话读取）。
+    def has_alive_session(self, account_key: str) -> bool:
+        """该 key 当前是否有存活的浏览器上下文（任意 headed/headless）。"""
+        key = validate_account_key(account_key)
+        s = self._ts()
+        self._prune_dead_sessions(s)
+        ctx = s.contexts.get(key)
+        return ctx is not None and self._is_context_alive(ctx)
 
-        返回 [{"name","value","httpOnly"}, ...]，仅含 mercari 相关域名。
+
+    async def export_cookies_full(self, account_key: str) -> List[Dict[str, Any]]:
+        """导出账号 profile 当前登录态的煤炉 Cookie（Playwright 完整字段）。
+
+        复用已开会话（含用户手动有头），既不关闭也不抢占；未开时临时开无头会话读取，
+        **读完即关闭**，不残留后台进程。返回值可直接传给 ``import_cookies`` 克隆登录态。
         """
         key = validate_account_key(account_key)
+        was_alive = self.has_alive_session(key)
         # 确保有一个存活的上下文：已开（含用户手动有头）则复用，否则临时无头打开。
         await self.open_session(
             key, headless=True, interactive=False, restore_tabs=False
@@ -170,18 +181,55 @@ class _SessionsMixin:
             ctx = s.contexts.get(key)
         if ctx is None or not self._is_context_alive(ctx):
             raise RuntimeError("无法获取浏览器上下文以导出 Cookie")
-        raw = await ctx.cookies()
+        try:
+            raw = await ctx.cookies()
+        finally:
+            if not was_alive:
+                # 为读 Cookie 临时打开的无头会话：读完即关，不影响任何已开浏览器
+                try:
+                    await self.close_session(key, force=True)
+                except Exception:
+                    pass
         out: List[Dict[str, Any]] = []
         for c in raw:
             domain = (c.get("domain") or "").lower()
             if "mercari" not in domain:
                 continue
-            name = c.get("name")
-            value = c.get("value")
-            if not name or value is None:
+            if not c.get("name") or c.get("value") is None:
                 continue
-            out.append({"name": name, "value": value, "httpOnly": bool(c.get("httpOnly"))})
+            out.append(dict(c))
         return out
+
+
+    async def export_cookies(self, account_key: str) -> List[Dict[str, Any]]:
+        """读取账号 profile 当前登录态的煤炉 Cookie（复用已开会话；无则临时开无头会话读取）。
+
+        返回 [{"name","value","httpOnly"}, ...]，仅含 mercari 相关域名。
+        """
+        full = await self.export_cookies_full(account_key)
+        return [
+            {"name": c["name"], "value": c["value"], "httpOnly": bool(c.get("httpOnly"))}
+            for c in full
+        ]
+
+
+    async def import_cookies(self, account_key: str, cookies: List[Dict[str, Any]]) -> int:
+        """把 ``export_cookies_full`` 导出的 Cookie 写入指定会话上下文（须已打开）。
+
+        返回写入条数。用于把主 profile 的登录态克隆到独立自动化 profile
+        （如出品专用 ``mercari_{id}__listing``）。
+        """
+        key = validate_account_key(account_key)
+        if not cookies:
+            return 0
+        s = self._prepare_async()
+        async with s.lock:  # type: ignore[union-attr]
+            self._prune_dead_sessions(s)
+            ctx = s.contexts.get(key)
+        if ctx is None or not self._is_context_alive(ctx):
+            raise RuntimeError(f"会话不可用，无法注入 Cookie: {key}")
+        await ctx.add_cookies(list(cookies))
+        return len(cookies)
 
 
     async def _open_session_impl(

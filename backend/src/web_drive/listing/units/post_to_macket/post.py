@@ -40,7 +40,7 @@ async def post_to_market(
     # 发货
     shipping_days: str = "2_3_days",  # "1_2_days" | "2_3_days" | "4_7_days"
     shipping_from_area_id: str = "",  # "1"~"47","99"
-    # 代理 / 超时（proxy_server 保留为 API 兼容；实际由 mitm_automation_browser 统一配置）
+    # 代理 / 超时（proxy_server 保留为 API 兼容；实际由 listing_automation_browser 统一配置）
     proxy_server: Optional[str] = None,  # noqa: ARG001
     page_load_timeout_ms: int = DEFAULT_PAGE_LOAD_TIMEOUT_MS,
     element_timeout_ms: int = DEFAULT_ELEMENT_TIMEOUT_MS,
@@ -50,12 +50,14 @@ async def post_to_market(
     """
     自动填写 Mercari 出品表单的全部步骤。
 
-    与订单页「更新列表」同模式：使用账号主 profile ``mercari_{id}`` 经 MITM 代理打开出品页，
-    登录态由 Edge 持久化 cookie 自动维护（每次进入复用主 profile，cookie 始终保持最新）。
-    浏览器在队列空闲后由 ``account_serial_queue`` 自动关闭，不在此处显式关闭。
+    使用出品专用**独立无头** profile ``mercari_{id}__listing``（经 MITM 代理）：
+    登录态进入时从主 profile 克隆 Cookie，不占用主 profile ``mercari_{id}``，
+    与自动同步、/#/mercari-accounts「打开浏览器」的有头会话互不冲突。
+    会话由 ``listing_automation_browser`` 在流程结束（成功/失败）后立即关闭。
+    调用方须持有全局出品锁（``listing_lock``）。
     """
     from ....core.manager import EdgeWebDriveManager
-    from ....core.mitm_session import mitm_automation_browser
+    from ....core.listing_session import listing_automation_browser
 
     if not isinstance(manager, EdgeWebDriveManager):
         raise TypeError("manager 须为 EdgeWebDriveManager 实例")
@@ -79,7 +81,7 @@ async def post_to_market(
         raise ValueError(f"无效的 account_key: {account_key}")
     main_key = mercari_account_key(account_id)
 
-    report("open_session", "正在打开主 profile 浏览器并进入出品页…")
+    report("open_session", "正在初始化独立无头出品浏览器并进入出品页…")
 
     result: Dict[str, Any] = {
         "account_key": main_key,
@@ -104,8 +106,8 @@ async def post_to_market(
         "browser_kept_open": False,
     }
 
-    # ── 1. 主 profile MITM 浏览器（cookie 由 Edge 持久化，自动复用最新登录态） ── #
-    async with mitm_automation_browser(
+    # ── 1. 独立无头出品浏览器（登录态从主 profile 克隆，流程结束即关闭） ── #
+    async with listing_automation_browser(
         account_id,
         start_url=SELL_CREATE_URL,
     ) as (mgr, browser_key):
@@ -467,16 +469,14 @@ async def post_to_market(
                 )
 
         except ListingAborted:
-            result["browser_kept_open"] = True
             if report:
                 report(
                     "aborted",
-                    f"上架已终止（{result.get('abort_message', '步骤失败')}），浏览器保持打开",
+                    f"上架已终止（{result.get('abort_message', '步骤失败')}）",
                 )
         except Exception as exc:
             result["aborted"] = True
             result["fatal_error"] = str(exc)
-            result["browser_kept_open"] = True
             log.exception("[post_to_market] 未预期异常，已终止")
             if report:
                 report("fatal_error", f"上架流程异常终止：{exc}")
@@ -486,20 +486,11 @@ async def post_to_market(
         except Exception:
             pass
 
-    # 浏览器关闭由 ``account_serial_queue`` 在队列空闲后自动处理（与订单页「更新列表」一致）。
-    # 出品成功时仅在结果里标记，便于前端展示与排查。
+    # 独立无头出品会话由 ``listing_automation_browser`` 在退出上下文时强制关闭，
+    # 成功/失败都不留后台 Edge 进程。
     if result.get("submitted") is True and not result.get("aborted"):
         if report:
-            report("close_browser", "出品成功，等待队列空闲后自动关闭浏览器…")
-        log.info("[post_to_market] 出品成功 account_id=%d，浏览器将由队列空闲超时后关闭", account_id)
-    elif result.get("aborted") or any(
-        result.get(k) for k in (
-            "switch_error", "images_error", "name_error", "category_error",
-            "condition_error", "description_error", "shipping_payer_error",
-            "shipping_method_error", "shipping_from_error", "shipping_days_error",
-            "sale_price_error", "submit_error", "sell_wizard_error", "fatal_error",
-        )
-    ):
-        result["browser_kept_open"] = True
+            report("close_browser", "出品成功，正在关闭出品浏览器…")
+        log.info("[post_to_market] 出品成功 account_id=%d，出品无头浏览器已关闭", account_id)
 
     return result

@@ -9,7 +9,7 @@ from .....use_mercari.sync.sync_progress import clear_sync_progress
 from .....use_mercari.sync.sync_lock import LABEL_FULL, begin_or_conflict as sync_lock_begin, end as sync_lock_end
 from .....web_drive.core.account_serial_queue import queue_key_for_mercari_account, run_mercari_serial_async
 from .....web_drive.core.manager import get_web_drive_manager
-from .....web_drive.core.paths import mercari_account_key
+from .....web_drive.core.paths import mercari_automation_key
 from ..todos_models import SyncTodosRequest
 from .detail import _SYNC_JOB_ID_RE
 
@@ -72,7 +72,7 @@ async def sync_todos(req: SyncTodosRequest) -> Dict[str, Any]:
             finally:
                 # 关闭当前账号浏览器，确保与下一账号不重叠（消除全局响应文件的串台窗口）。
                 try:
-                    await mgr.close_session(mercari_account_key(aid), force=True)
+                    await mgr.close_session(mercari_automation_key(aid), force=True)
                 except Exception as close_exc:  # noqa: BLE001 关闭失败不阻断后续账号
                     log.warning(
                         "[todolist] 关闭 account_id=%s 浏览器失败: %s", aid, close_exc

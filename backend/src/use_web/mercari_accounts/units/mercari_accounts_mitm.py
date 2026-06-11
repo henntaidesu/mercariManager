@@ -263,21 +263,24 @@ async def fetch_auth_via_mitm(
             mgr = None
             if cfg.open_browser:
                 mgr = get_web_drive_manager()
-                from ....web_drive.core.paths import mercari_account_key
+                from ....web_drive.core.mitm_session import clone_main_profile_cookies
+                from ....web_drive.core.paths import mercari_automation_key
 
-                # 直接使用账号主 profile（与 /mercari-accounts 「打开浏览器」一致），
-                # 登录态由 Edge 持久化 cookie 自动维护，无需 cookie seed。
-                auto_key = mercari_account_key(aid)
+                # 使用同步/自动化专用无头 profile（mercari_{id}__sync）：
+                # 空白页启动 → 从主 profile 克隆登录 Cookie → 再导航取引中一覧，
+                # 不影响 /mercari-accounts「打开浏览器」的有头主 profile。
+                auto_key = mercari_automation_key(aid)
                 await mgr.close_session(auto_key, force=True)
                 headless = automation_headless_enabled()
                 await mgr.open_session(
                     auto_key,
                     headless=headless,
-                    start_url=MERCARI_IN_PROGRESS_URL,
                     proxy_server=default_mitm_proxy_url(),
                     interactive=False,
                     start_minimized=True,
                 )
+                await clone_main_profile_cookies(mgr, aid, auto_key)
+                await mgr.reload_active_tab(auto_key, MERCARI_IN_PROGRESS_URL)
 
             patch: Dict[str, Any] = {}
             capture_meta: Dict[str, Any] = {"seller_id": sid_cfg}

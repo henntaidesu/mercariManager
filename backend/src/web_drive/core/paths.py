@@ -88,16 +88,24 @@ def profile_dir_for(account_key: str) -> str:
 
 
 def mercari_account_key(account_id: int) -> str:
-    """账号主 profile（用户手动登录 + MITM 自动化共用，登录态由 Edge 持久化 cookie 自动维护）。"""
+    """账号主 profile（仅供 /mercari-accounts「打开浏览器」手动登录，登录态由 Edge 持久化 cookie 维护）。"""
     return f"mercari_{int(account_id)}"
 
 
+def mercari_automation_key(account_id: int) -> str:
+    """同步/自动化操作专用无头 profile（``mercari_{id}__sync``）。
+
+    登录态进入时从主 profile 克隆 Cookie（见 ``mitm_session.clone_main_profile_cookies``），
+    与「打开浏览器」的有头主 profile 完全隔离——自动化启动/关闭都不影响用户手动打开的浏览器。
+    """
+    return f"{mercari_account_key(account_id)}__sync"
+
+
+# mercari_<id> 及其派生 key（mercari_<id>__sync / mercari_<id>__listing 等）
+_MERCARI_KEY_ID_RE = re.compile(r"^mercari_(\d+)(?:__[a-z_]+)?$")
+
+
 def mercari_id_from_account_key(account_key: str) -> Optional[int]:
-    key = (account_key or "").strip()
-    prefix = "mercari_"
-    if not key.startswith(prefix):
-        return None
-    try:
-        return int(key[len(prefix):])
-    except ValueError:
-        return None
+    """``mercari_<id>`` 及其派生 key（``__sync`` / ``__listing``）→ 账号 id；其余返回 None。"""
+    m = _MERCARI_KEY_ID_RE.match((account_key or "").strip())
+    return int(m.group(1)) if m else None

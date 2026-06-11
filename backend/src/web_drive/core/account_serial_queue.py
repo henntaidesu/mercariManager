@@ -6,7 +6,8 @@
 队列同时承担**浏览器自动关闭**职责：
     - 每次 ``run_mercari_serial_async`` 调用都会让队列的 ``pending`` 计数 +1
     - 任务结束时 -1；当某账号队列 ``pending`` 归 0,会在
-      ``WEB_DRIVE_QUEUE_IDLE_CLOSE_SEC``(默认 10s) 后自动关闭该账号主 profile 浏览器
+      ``WEB_DRIVE_QUEUE_IDLE_CLOSE_SEC``(默认 10s) 后自动关闭该账号**同步/自动化专用**
+      浏览器（``mercari_<id>__sync``）；主 profile（「打开浏览器」的有头会话）不受影响
     - 延迟期内有新任务排队则取消关闭,继续复用浏览器
     - ``GLOBAL_QUEUE_KEY`` / 非 ``mercari_<id>`` 键不参与自动关闭
 """
@@ -94,9 +95,9 @@ def _account_id_from_queue_key(queue_key: str) -> Optional[int]:
 
 
 async def _delayed_close_browser(queue_key: str, state: _AccountQueueState) -> None:
-    """空闲 ``WEB_DRIVE_QUEUE_IDLE_CLOSE_SEC`` 秒后关闭该账号主 profile 浏览器。
+    """空闲 ``WEB_DRIVE_QUEUE_IDLE_CLOSE_SEC`` 秒后关闭该账号的自动化浏览器（``__sync``）。
 
-    若被新任务取消,直接返回(不关闭)。
+    主 profile（「打开浏览器」的有头会话）不在此关闭。若被新任务取消,直接返回(不关闭)。
     """
     delay = _idle_close_sec()
     try:
@@ -116,13 +117,14 @@ async def _delayed_close_browser(queue_key: str, state: _AccountQueueState) -> N
             return
         try:
             from .manager import get_web_drive_manager
-            from .paths import mercari_account_key
+            from .paths import mercari_automation_key
 
             mgr = get_web_drive_manager()
-            main_key = mercari_account_key(aid)
-            await mgr.close_session(main_key, force=True)
+            # 只关同步/自动化专用 __sync 会话；主 profile（「打开浏览器」的有头会话）不受影响
+            auto_key = mercari_automation_key(aid)
+            await mgr.close_session(auto_key, force=True)
             log.info(
-                "[queue] account_id=%d 队列空闲 %.1fs,已关闭浏览器",
+                "[queue] account_id=%d 队列空闲 %.1fs,已关闭自动化浏览器",
                 aid,
                 delay,
             )

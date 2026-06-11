@@ -19,7 +19,7 @@ from ....db_manage.models.mercari_account import MercariAccountModel
 from ....ssl_mitm_proxy.capture_config import clear_item_get_response_file
 from ....web_drive.core.manager import EdgeWebDriveManager
 from ....web_drive.core.mitm_session import mitm_automation_browser
-from ....web_drive.core.paths import mercari_account_key
+from ....web_drive.core.paths import mercari_automation_key
 from .item_comment_capture import (
     build_item_page_url,
     capture_item_get_via_mitm_session,
@@ -157,7 +157,7 @@ async def post_item_comment(
         raise ValueError("评论内容不能超过 1000 字")
 
     aid = _resolve_account_id(account_id)
-    main_key = mercari_account_key(int(aid))
+    main_key = mercari_automation_key(int(aid))
     start_url = build_item_page_url(iid)
 
     log.info(

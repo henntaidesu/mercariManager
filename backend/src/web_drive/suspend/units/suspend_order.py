@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Mercari 出售中商品暂停出售：用账号主 profile 经 MITM 打开编辑页并点击「出品を一時停止する」。
+Mercari 出售中商品暂停出售：用同步/自动化专用无头 profile（mercari_{id}__sync）经 MITM 打开编辑页并点击「出品を一時停止する」。
 提交成功后直接把本地 ``on_sale_items`` 状态改为 ``stop``（浏览器由队列空闲超时关闭）。
 
 仅适用于状态为「出售中（on_sale）」的商品；暂停出售（stop）的商品请使用「恢复出售」流程。
 
 流程（cookie 由 Edge 持久化自动维护）：
-  1. ``mitm_automation_browser(account_id, start_url=edit_url)`` 进入账号主 profile ``mercari_{id}``
+  1. ``mitm_automation_browser(account_id, start_url=edit_url)`` 进入同步/自动化专用无头 profile ``mercari_{id}__sync``
   2. 点击「出品を一時停止する」(button[data-testid=suspend-button]) 提交
   3. 直接 UPDATE 本地 on_sale_items 表对应记录 status='stop'
 """
@@ -67,7 +67,7 @@ async def suspend_mercari_item(
     """
     from ...core.manager import EdgeWebDriveManager
     from ...core.mitm_session import mitm_automation_browser
-    from ...core.paths import mercari_account_key, mercari_id_from_account_key
+    from ...core.paths import mercari_automation_key, mercari_id_from_account_key
 
     report = make_sync_reporter(progress_job_id)
 
@@ -82,7 +82,7 @@ async def suspend_mercari_item(
     if account_id is None:
         raise ValueError(f"无效的 account_key: {account_key}")
 
-    auto_key = mercari_account_key(account_id)
+    auto_key = mercari_automation_key(account_id)
     edit_url = build_sell_edit_url(item_id)
 
     log.info(

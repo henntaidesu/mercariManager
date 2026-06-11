@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Mercari 在售商品删除：用账号主 profile 经 MITM 打开编辑页并删除，完成后同步列表（浏览器由队列空闲超时关闭）。
+Mercari 在售商品删除：用同步/自动化专用无头 profile（mercari_{id}__sync）经 MITM 打开编辑页并删除，完成后同步列表（浏览器由队列空闲超时关闭）。
 
 流程（与 /orders 更新列表同模式，cookie 由 Edge 持久化自动维护）：
-  1. ``mitm_automation_browser(account_id, start_url=edit_url)`` 进入账号主 profile ``mercari_{id}``
+  1. ``mitm_automation_browser(account_id, start_url=edit_url)`` 进入同步/自动化专用无头 profile ``mercari_{id}__sync``
   2. 点击「この商品を削除する」→ 弹窗内点击「削除する」
   3. 等待跳转出品一覧，MITM 截获 items/get_items 并同步本地
   4. 上下文退出后，浏览器由 ``account_serial_queue`` 在队列空闲超时（默认 10s）后自动关闭
@@ -119,7 +119,7 @@ async def delete_mercari_item(
     """
     from ...core.manager import EdgeWebDriveManager
     from ...core.mitm_session import mitm_automation_browser
-    from ...core.paths import mercari_account_key, mercari_id_from_account_key
+    from ...core.paths import mercari_automation_key, mercari_id_from_account_key
     from ....use_mercari.get_order.get_on_sale.on_sale_list import (
         LISTINGS_PAGE_URL,
         sync_on_sale_from_listings_browser_page,
@@ -143,7 +143,7 @@ async def delete_mercari_item(
     report("resolve_account", "正在准备煤炉账号…")
     _aid, seller_id = _resolve_account_and_seller(account_id)
     seller_key = str(int(seller_id))
-    auto_key = mercari_account_key(account_id)
+    auto_key = mercari_automation_key(account_id)
     edit_url = build_sell_edit_url(item_id)
 
     clear_on_sale_list_response_file(seller_key)

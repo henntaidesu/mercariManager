@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from ....db_manage.models.todo_item import TodoItemModel
 from ....web_drive.core.manager import get_web_drive_manager
 from ....web_drive.core.mitm_session import mitm_automation_browser
-from ....web_drive.core.paths import mercari_account_key
+from ....web_drive.core.paths import mercari_automation_key
 from ...get_order.get_in_progress_order.get_order_info import apply_item_info_to_order
 from ...sync.sync_progress import make_sync_reporter
 
@@ -52,7 +52,7 @@ async def submit_transaction_review(
         raise ValueError("该待办无关联 item_id，无法打开交易页")
     url = f"https://jp.mercari.com/transaction/{item_id}"
     mgr = get_web_drive_manager()
-    auto_key = mercari_account_key(aid)
+    auto_key = mercari_automation_key(aid)
 
     report("open_browser", f"正在打开交易页（{item_id}）…")
     completed = False

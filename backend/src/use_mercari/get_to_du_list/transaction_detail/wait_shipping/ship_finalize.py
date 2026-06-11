@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from .....db_manage.models.todo_item import TodoItemModel
 from .....web_drive.core.manager import get_web_drive_manager
 from .....web_drive.core.mitm_session import mitm_automation_browser
-from .....web_drive.core.paths import mercari_account_key
+from .....web_drive.core.paths import mercari_automation_key
 from ....sync.sync_progress import make_sync_reporter
 from ....get_order.get_in_progress_order.get_order_info import (
     apply_item_info_to_order,
@@ -45,7 +45,7 @@ async def read_post_shipping_confirm_info(todo_id: int) -> Dict[str, Any]:
         raise ValueError(f"待办事项 id={todo_id} 不存在")
     aid = int(todo.account_id)
     mgr = get_web_drive_manager()
-    auto_key = mercari_account_key(aid)
+    auto_key = mercari_automation_key(aid)
     try:
         page = await mgr.active_tab_page(auto_key)
     except Exception as exc:
@@ -406,7 +406,7 @@ async def finalize_post_shipping(
     url = f"https://jp.mercari.com/transaction/{item_id}"
 
     mgr = get_web_drive_manager()
-    auto_key = mercari_account_key(aid)
+    auto_key = mercari_automation_key(aid)
     ticked = 0
     confirmed = False
     shipped_ok = False
