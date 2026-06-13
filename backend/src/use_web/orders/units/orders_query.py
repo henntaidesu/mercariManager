@@ -6,8 +6,8 @@ from fastapi import HTTPException
 
 from ....db_manage.models.order import OrderModel
 from ....db_manage.models.order_outbound_line import OrderOutboundLineModel
-from .order_goods_ratio import apply_bundle_title_ratio_pricing
-from .orders_helpers import _validate_status_query, db
+from .order_goods_ratio import _ensure_order_ratio_stored
+from .orders_helpers import _validate_status_query
 
 
 def order_stats(
@@ -79,14 +79,13 @@ def list_order_outbound_lines(
     ono = (order_no or "").strip()
     if not ono:
         raise HTTPException(status_code=400, detail="order_no 不能为空")
-    # 先取全量明细再算 bundle 比例（与订单金额一致）；按归属筛选时不得只拿子集算权重
+    # 比例（goods_ratio / ratio_price）已持久化在出库行上；首次访问/历史订单尚无值时惰性算一次写库
+    _ensure_order_ratio_stored(ono)
     all_items = OrderOutboundLineModel.list_enriched_for_order(ono)
-    order_rows = db.execute_query(
-        "SELECT COALESCE([amount], 0) FROM [orders] WHERE [order_no] = ? LIMIT 1",
-        (ono,),
-    )
-    order_amount = int(order_rows[0][0] or 0) if order_rows else 0
-    apply_bundle_title_ratio_pricing(all_items, order_amount)
+    # 「商品原价」列展示：优先用持久化的比例单价（组合标题在售匹配价/回退库存原价），缺省回退库存原价
+    for it in all_items:
+        if it.get("ratio_unit_price") is not None:
+            it["original_price"] = it.get("ratio_unit_price")
 
     if owner_user_id is not None and int(owner_user_id) > 0:
         oid = int(owner_user_id)

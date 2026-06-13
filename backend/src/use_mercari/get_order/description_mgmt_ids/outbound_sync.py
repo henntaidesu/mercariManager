@@ -82,6 +82,26 @@ def sync_outbound_lines_for_order(
     *,
     skip_if_has_lines: bool = False,
 ) -> None:
+    """重写出库行后，重算并持久化该订单各行的「货物比例」（goods_ratio / ratio_price / ratio_unit_price），
+    供订单列表 / 二级明细 / 统计 / 包材拆分直接读库，不再每次请求实时计算。
+
+    包一层在所有出库行变更（含 skip_if_has_lines 跳过重建、但订单金额可能已变化的刷新场景）后统一重算。
+    """
+    _sync_outbound_lines_for_order_impl(
+        order_no, description, skip_if_has_lines=skip_if_has_lines
+    )
+    # 延迟导入避免 use_mercari -> use_web 潜在环引用
+    from ....use_web.orders.units.order_goods_ratio import recompute_and_store_order_ratio
+
+    recompute_and_store_order_ratio((order_no or "").strip())
+
+
+def _sync_outbound_lines_for_order_impl(
+    order_no: str,
+    description: Optional[str],
+    *,
+    skip_if_has_lines: bool = False,
+) -> None:
     """
     根据最新商品说明重写该订单的 order_outbound_lines。
     无「管理ID:」「管理番号:」「バーコード:」或解析结果为空时，仅删除该订单原有明细。

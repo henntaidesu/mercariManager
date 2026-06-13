@@ -218,142 +218,98 @@ def apply_bundle_title_ratio_pricing(items: List[Dict[str, Any]], order_amount: 
     return _apply_inventory_line_ratio_pricing(items, order_amount)
 
 
-def owner_weights_from_order_goods_ratio(order_no: str) -> List[Dict[str, Any]]:
+def recompute_and_store_order_ratio(order_no: str) -> None:
     """
-    若订单存在可计算的比例（组合标题在售价，或库存行价×件数；与订单二级表同源），
-    返回 [{"owner": 展示名同商品归属, "weight": 整数权重}, ...]；
-    weight 为该归属下各出库行的 ratio_price 之和（与订单金额分摊一致）。
-
-    无法计算时返回 []，调用方应回退其它权重口径。
+    重算并持久化某订单各出库行的 goods_ratio / ratio_price / ratio_unit_price。
+    唯一计算口径仍是 apply_bundle_title_ratio_pricing（组合标题在售匹配价；否则库存价×件数分摊）。
+    在「订单创建 / 重建出库行 / 订单金额变化 / 单单刷新 / 同步」时调用；读取链路直接取库内值，
+    不再每次请求实时扫描 on_sale_items。
     """
     ono = (order_no or "").strip()
     if not ono:
-        return []
-
+        return
     items = OrderOutboundLineModel.list_enriched_for_order(ono)
+    if not items:
+        return
     order_rows = _db.execute_query(
         "SELECT COALESCE([amount], 0) FROM [orders] WHERE [order_no] = ? LIMIT 1",
         (ono,),
     )
-    order_amount = int(order_rows[0][0] or 0) if order_rows else 0
+    amount = int(order_rows[0][0] or 0) if order_rows else 0
+    apply_bundle_title_ratio_pricing(items, amount)
+    for it in items:
+        lid = it.get("id")
+        if lid is None:
+            continue
+        up = it.get("original_price")
+        _db.execute_update(
+            "UPDATE [order_outbound_lines] "
+            "SET [goods_ratio] = ?, [ratio_price] = ?, [ratio_unit_price] = ? "
+            "WHERE [id] = ?",
+            (
+                it.get("goods_ratio"),
+                it.get("ratio_price"),
+                int(up) if up is not None else None,
+                int(lid),
+            ),
+        )
 
-    if not apply_bundle_title_ratio_pricing(items, order_amount):
+
+def _ensure_order_ratio_stored(order_no: str) -> None:
+    """惰性兜底：订单有出库行、金额>0，但尚无任何 ratio_price 时，重算写库一次（之后即命中缓存）。"""
+    ono = (order_no or "").strip()
+    if not ono:
+        return
+    rows = _db.execute_query(
+        "SELECT COALESCE([amount], 0) FROM [orders] WHERE [order_no] = ? LIMIT 1",
+        (ono,),
+    )
+    amount = int(rows[0][0] or 0) if rows else 0
+    if amount <= 0:
+        return
+    has_ratio = _db.execute_query(
+        "SELECT 1 FROM [order_outbound_lines] WHERE [order_no] = ? AND [ratio_price] IS NOT NULL LIMIT 1",
+        (ono,),
+    )
+    if has_ratio:
+        return
+    has_line = _db.execute_query(
+        "SELECT 1 FROM [order_outbound_lines] WHERE [order_no] = ? LIMIT 1",
+        (ono,),
+    )
+    if has_line:
+        recompute_and_store_order_ratio(ono)
+
+
+def owner_weights_from_order_goods_ratio(order_no: str) -> List[Dict[str, Any]]:
+    """
+    返回 [{"owner": 展示名同商品归属, "weight": 整数权重}, ...]，weight 为该归属下各出库行
+    已持久化 ratio_price 之和（与订单金额分摊一致）。无可用比例时返回 []，调用方回退其它权重口径。
+    """
+    ono = (order_no or "").strip()
+    if not ono:
         return []
+    _ensure_order_ratio_stored(ono)
 
-    grouped: Dict[str, int] = {}
-    for it in items:
-        rp = it.get("ratio_price")
-        if rp is None:
-            continue
-        owner = str(
-            it.get("product_owner_name") or it.get("inventory_owner_name") or ""
-        ).strip()
-        if not owner:
-            continue
-        grouped[owner] = int(grouped.get(owner, 0)) + int(rp)
-
-    return [
-        {"owner": k, "weight": int(v)}
-        for k, v in grouped.items()
-        if int(v) > 0
-    ]
-
-
-def _allocate_int_by_weights(total: int, weights: Dict[int, int]) -> Dict[int, int]:
-    """按正整数权重将 total 日元拆分给各 key，与 bundle 分摊相同的「先 floor 再按小数最大补 1」。"""
-    total = int(total)
-    if total <= 0 or not weights:
-        return {}
-    keys = [k for k, w in weights.items() if int(w) > 0]
-    if not keys:
-        return {}
-    wvals = [int(weights[k]) for k in keys]
-    sum_w = sum(wvals)
-    if sum_w <= 0:
-        return {}
-    floors: List[int] = []
-    fracs: List[float] = []
-    for w in wvals:
-        raw_total = total * (float(w) / float(sum_w))
-        f = int(raw_total)
-        floors.append(f)
-        fracs.append(raw_total - f)
-    remain = total - sum(floors)
-    out = floors[:]
-    if remain > 0:
-        idxs = sorted(range(len(fracs)), key=lambda i: fracs[i], reverse=True)
-        for i in idxs[:remain]:
-            out[i] += 1
-    return {keys[i]: int(out[i]) for i in range(len(keys))}
-
-
-def _distinct_positive_owner_ids(items: List[Dict[str, Any]]) -> List[int]:
-    out: List[int] = []
-    seen = set()
-    for it in items:
-        raw = it.get("product_owner_user_id")
-        if raw is None:
-            raw = it.get("inventory_owner_user_id")
-        if raw is None:
-            continue
-        try:
-            oid = int(raw)
-        except (TypeError, ValueError):
-            continue
-        if oid <= 0:
-            continue
-        if oid not in seen:
-            seen.add(oid)
-            out.append(oid)
+    rows = _db.execute_query(
+        """
+        SELECT COALESCE(u.[display_name], u.[username]) AS owner,
+               COALESCE(SUM(l.[ratio_price]), 0) AS w
+        FROM [order_outbound_lines] l
+        JOIN [inventory] p ON p.[id] = l.[inventory_id]
+        LEFT JOIN [users] u ON u.[id] = p.[owner_user_id]
+        WHERE l.[order_no] = ? AND l.[ratio_price] IS NOT NULL
+        GROUP BY COALESCE(u.[display_name], u.[username])
+        """,
+        (ono,),
+    )
+    out: List[Dict[str, Any]] = []
+    for owner_raw, w_raw in rows:
+        name = str(owner_raw or "").strip()
+        w = int(w_raw or 0)
+        if name and w > 0:
+            out.append({"owner": name, "weight": w})
     return out
-
-
-def _fallback_owner_amount_and_basis(
-    items: List[Dict[str, Any]], order_amount: int, owner_user_id: int
-) -> Tuple[int, str]:
-    """无可用 bundle 比例时：按库存原价×件数（原价为 0 则退化为件数）汇总到各归属，再拆分订单金额。"""
-    oid = int(owner_user_id)
-    order_amount = int(order_amount or 0)
-    if order_amount <= 0:
-        return 0, "none"
-
-    weight_by_owner: Dict[int, int] = {}
-    for it in items:
-        if it.get("inventory_id") is None:
-            continue
-        ou = it.get("product_owner_user_id")
-        if ou is None:
-            ou = it.get("inventory_owner_user_id")
-        if ou is None:
-            continue
-        try:
-            oui = int(ou)
-        except (TypeError, ValueError):
-            continue
-        if oui <= 0:
-            continue
-        qty = max(1, int(it.get("quantity") or 1))
-        pr = it.get("original_price")
-        try:
-            pi = max(0, int(pr) if pr is not None else 0)
-        except (TypeError, ValueError):
-            pi = 0
-        w = max(0, pi) * qty
-        if w <= 0:
-            w = qty
-        weight_by_owner[oui] = int(weight_by_owner.get(oui, 0)) + int(w)
-
-    tw = sum(weight_by_owner.values())
-    if tw > 0:
-        alloc = _allocate_int_by_weights(order_amount, weight_by_owner)
-        return int(alloc.get(oid, 0)), "inventory_price"
-
-    owners = _distinct_positive_owner_ids(items)
-    if oid in owners and len(owners) > 0:
-        alloc = _allocate_int_by_weights(order_amount, {o: 1 for o in owners})
-        return int(alloc.get(oid, 0)), "equal_owners"
-
-    return 0, "none"
 
 
 def split_order_money_for_owner_user(
@@ -365,10 +321,8 @@ def split_order_money_for_owner_user(
     net_income_raw: Any,
 ) -> Dict[str, Any]:
     """
-    按商品归属拆分一单上的金额、手续费、快递费、净收益（与二级表 ratio_price 一致：bundle 或库存行分摊；否则按库存价×件数）。
-
-    返回 amount / service_fee / shipping_fee / net_income（与库字段同名，值为拆分后整数日元；
-    原字段为 null 的仍返回 null）。
+    按商品归属拆分一单的金额 / 手续费 / 快递费 / 净收益：归属额 = 该归属各出库行已持久化的
+    ratio_price 之和；其余字段按 归属额/整单额 比例缩放。原字段为 null 的仍返回 null。
     """
     ono = (order_no or "").strip()
     oid = int(owner_user_id)
@@ -383,42 +337,20 @@ def split_order_money_for_owner_user(
             "split_basis": "none",
         }
 
-    items = OrderOutboundLineModel.list_enriched_for_order(ono)
-    apply_bundle_title_ratio_pricing(items, amount)
-
     owner_amt = 0
-    basis = "bundle"
     if amount > 0:
-        for it in items:
-            rp = it.get("ratio_price")
-            if rp is None:
-                continue
-            u = it.get("product_owner_user_id")
-            if u is None:
-                u = it.get("inventory_owner_user_id")
-            if u is not None and int(u) == oid:
-                owner_amt += int(rp)
-        if owner_amt > 0:
-            has_non_bundle_ratio = any(
-                str(it.get("line_kind") or "").strip() != "bundle_title"
-                for it in items
-                if it.get("ratio_price") is not None
-            )
-            if has_non_bundle_ratio:
-                basis = "inventory_line"
-
-    if owner_amt <= 0 and amount > 0:
-        owner_amt, basis = _fallback_owner_amount_and_basis(items, amount, oid)
-
-    if owner_amt <= 0 and amount > 0:
-        distinct = _distinct_positive_owner_ids(items)
-        if len(distinct) == 1 and distinct[0] == oid:
-            owner_amt = amount
-            basis = "full"
-        elif oid in distinct and len(distinct) > 0:
-            alloc = _allocate_int_by_weights(amount, {o: 1 for o in distinct})
-            owner_amt = int(alloc.get(oid, 0))
-            basis = "equal_owners"
+        _ensure_order_ratio_stored(ono)
+        rows = _db.execute_query(
+            """
+            SELECT COALESCE(SUM(l.[ratio_price]), 0)
+            FROM [order_outbound_lines] l
+            JOIN [inventory] p ON p.[id] = l.[inventory_id]
+            WHERE l.[order_no] = ? AND l.[ratio_price] IS NOT NULL
+              AND IFNULL(p.[owner_user_id], 0) = ?
+            """,
+            (ono, oid),
+        )
+        owner_amt = int(rows[0][0] or 0) if rows else 0
 
     ratio = (float(owner_amt) / float(amount)) if amount > 0 else 1.0
 
@@ -436,5 +368,5 @@ def split_order_money_for_owner_user(
         "service_fee": _scale(service_fee_raw),
         "shipping_fee": _scale(shipping_fee_raw),
         "net_income": _scale(net_income_raw),
-        "split_basis": basis,
+        "split_basis": "stored",
     }

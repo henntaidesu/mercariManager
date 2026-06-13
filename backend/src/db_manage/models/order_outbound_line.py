@@ -92,6 +92,24 @@ class OrderOutboundLineModel(BaseModel):
                 "not_null": True,
                 "default": 0,
             },
+            # 以下为持久化的「货物比例」分摊结果（见 order_goods_ratio.recompute_and_store_order_ratio）：
+            # 由订单创建/重建出库行、订单金额变化、单单刷新、同步时重算写回，读取链路直接取库内值，
+            # 不再每次请求实时扫描 on_sale_items。
+            "goods_ratio": {  # 该行占整单金额比例 (0~1)
+                "type": "REAL",
+                "not_null": False,
+                "default": None,
+            },
+            "ratio_price": {  # 分摊到该行的订单金额（日元整数，含尾差补偿）
+                "type": "INTEGER",
+                "not_null": False,
+                "default": None,
+            },
+            "ratio_unit_price": {  # 计算比例所用单价（组合=在售匹配价/回退库存原价；其它=库存原价），「商品原价」列展示值
+                "type": "INTEGER",
+                "not_null": False,
+                "default": None,
+            },
         }
 
     @classmethod
@@ -134,6 +152,9 @@ class OrderOutboundLineModel(BaseModel):
                 COALESCE(l.is_stocked_out, 0) AS is_stocked_out,
                 l.stocked_out_at,
                 COALESCE(l.stock_deducted, 0) AS stock_deducted,
+                l.goods_ratio,
+                l.ratio_price,
+                l.ratio_unit_price,
                 p.name AS inventory_name,
                 p.barcode AS inventory_barcode,
                 p.sku AS inventory_sku,
@@ -164,6 +185,9 @@ class OrderOutboundLineModel(BaseModel):
             "is_stocked_out",
             "stocked_out_at",
             "stock_deducted",
+            "goods_ratio",
+            "ratio_price",
+            "ratio_unit_price",
             "inventory_name",
             "inventory_barcode",
             "inventory_sku",
@@ -179,6 +203,8 @@ class OrderOutboundLineModel(BaseModel):
         out = [dict(zip(keys, r)) for r in rows]
         for row in out:
             # 与 order_goods_ratio / 列表筛选字段名兼容
+            # 注意：original_price 在此保持为库存原价（p.price），作为 apply_bundle_title_ratio_pricing
+            # 回退权重基准；「商品原价」列的展示替换（用 ratio_unit_price）在读取链路 list_order_outbound_lines 处理。
             row["product_owner_user_id"] = row.get("inventory_owner_user_id")
             row["product_owner_name"] = row.get("inventory_owner_name")
         return out
