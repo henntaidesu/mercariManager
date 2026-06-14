@@ -534,6 +534,7 @@ export default defineComponent({
     const savingInlineCell = ref('')
     const editingCategoryRowId = ref(null)
     const editingProductTypeRowId = ref(null)
+    const editingWarehouseRowId = ref(null)
     const editingOwnerRowId = ref(null)
     const inlineOwnerSelectMap = new Map()
     const newCategoryName = ref('')
@@ -1177,6 +1178,11 @@ export default defineComponent({
       editingProductTypeRowId.value = row.id
     }
 
+    function openWarehouseInline(row) {
+      if (listingPickMode.value) return
+      editingWarehouseRowId.value = row.id
+    }
+
     function openOwnerInline(row) {
       if (listingPickMode.value) return
       editingOwnerRowId.value = row.id
@@ -1287,6 +1293,44 @@ export default defineComponent({
       if (!Number.isFinite(typeId)) return []
       const path = productTypeTreeMeta.value.idToPath.get(typeId)
       return path ? [...path] : []
+    }
+
+    function getInlineWarehousePath(row) {
+      const wid = Number(row?.warehouse_id)
+      if (!Number.isFinite(wid)) return []
+      const path = warehouseTreeMeta.value.idToPath.get(wid)
+      return path ? [...path] : []
+    }
+
+    async function saveWarehouseInline(row, path) {
+      const picked = Array.isArray(path) ? path[path.length - 1] : null
+      const normalized =
+        picked && String(picked).startsWith('WHS:') ? Number(String(picked).slice(4)) : null
+      const newId = Number.isFinite(normalized) ? normalized : null
+      if ((row.warehouse_id || null) === newId) {
+        editingWarehouseRowId.value = null
+        return
+      }
+      try {
+        await inventoryApi.update(row.id, { warehouse_id: newId })
+        row.warehouse_id = newId
+        const matched =
+          newId != null ? (warehouses.value || []).find((w) => Number(w.id) === newId) : null
+        if (matched) {
+          row.inv_wh_name = warehouseGroupKey(matched)
+          const sn = String(matched.shelf_name ?? '').trim()
+          row.inv_shelf_name = sn || null
+          const code = String(matched.name ?? '').trim()
+          row.inv_shelf_code = code || null
+        } else {
+          row.inv_wh_name = null
+          row.inv_shelf_name = null
+          row.inv_shelf_code = null
+        }
+        ElMessage.success(t('inventory.warehouseUpdated'))
+      } finally {
+        editingWarehouseRowId.value = null
+      }
     }
 
     async function saveOwnerInline(row, ownerUserId) {
@@ -1403,7 +1447,11 @@ export default defineComponent({
 
     /** 三级：仓库 → 货架名称(shelf_name) → 货架号(行 id) */
     const warehouseTreeMeta = computed(() => {
-      const list = Array.isArray(warehouses.value) ? warehouses.value : []
+      // 仅货架号(shelf_no/叶子)可承载库存；过滤掉空白仓库/货架占位行
+      const list = (Array.isArray(warehouses.value) ? warehouses.value : []).filter((w) => {
+        const ty = w?.node_type
+        return ty ? ty === 'shelf_no' : w?.name != null && String(w.name).trim() !== ''
+      })
       const idToPath = new Map()
       const byWh = new Map()
       for (const w of list) {
@@ -3136,6 +3184,7 @@ export default defineComponent({
     function closeAllInlineEditors() {
       editingCategoryRowId.value = null
       editingProductTypeRowId.value = null
+      editingWarehouseRowId.value = null
       editingOwnerRowId.value = null
       editingCell.value = ''
       editingValue.value = ''
@@ -4099,6 +4148,7 @@ export default defineComponent({
       savingInlineCell,
       editingCategoryRowId,
       editingProductTypeRowId,
+      editingWarehouseRowId,
       editingOwnerRowId,
       inlineOwnerSelectMap,
       newCategoryName,
@@ -4199,6 +4249,9 @@ export default defineComponent({
       saveCategoryInline,
       saveProductTypeInline,
       getInlineProductTypePath,
+      openWarehouseInline,
+      saveWarehouseInline,
+      getInlineWarehousePath,
       saveOwnerInline,
       startCreateCategory,
       cancelCreateCategory,

@@ -18,10 +18,23 @@ export default defineComponent({
 
     const EMPTY_SHELF_NAME_KEY = '__shelf_name_empty__'
 
-    /** 三级结构：在同一仓库下按 shelf_name 分组成二级，每组内为货架号（行） */
+    /** 行节点类型：warehouse=空白仓库占位 / shelf=货架 / shelf_no=货架号（叶子）。缺省时按字段推断。 */
+    function rowType(row) {
+      const t = row?.node_type
+      if (t === 'warehouse' || t === 'shelf' || t === 'shelf_no') return t
+      const hasName = row?.name != null && String(row.name).trim()
+      const hasShelf = row?.shelf_name != null && String(row.shelf_name).trim()
+      if (hasName) return 'shelf_no'
+      if (hasShelf) return 'shelf'
+      return 'warehouse'
+    }
+
+    /** 三级结构：在同一仓库下按 shelf_name 分组成二级（货架），每组内为货架号（叶子行） */
     function buildShelfNameGroups(shelves) {
       const m = new Map()
       for (const row of shelves) {
+        const type = rowType(row)
+        if (type === 'warehouse') continue // 仓库占位行不参与货架分区
         const raw = row.shelf_name && String(row.shelf_name).trim() ? String(row.shelf_name).trim() : ''
         const key = raw || EMPTY_SHELF_NAME_KEY
         if (!m.has(key)) {
@@ -32,7 +45,8 @@ export default defineComponent({
             shelves: []
           })
         }
-        m.get(key).shelves.push(row)
+        // 货架占位行(shelf)仅建立分区；只有货架号(shelf_no)进入表格
+        if (type === 'shelf_no') m.get(key).shelves.push(row)
       }
       const list = [...m.values()].map((g) => {
         const productTypes = g.shelves.reduce((s, i) => s + Number(i.product_types || 0), 0)
@@ -73,16 +87,18 @@ export default defineComponent({
     const renameShelfNew = ref('')
     const renameShelfSubmitting = ref(false)
     const submitting = ref(false)
+    const addWarehouseSubmitting = ref(false)
     const formRef = ref()
     const form = ref({
       id: null,
+      node_type: null,
       warehouse: '默认仓库',
       shelf_name: '',
       name: '',
       location: '',
       description: ''
     })
-    /** 新建来源：shelfOnly = 添加货架（货架号可空）；shelfNo = 添加货架号；shelf = 编辑等 */
+    /** 新建来源：shelf = 添加货架（仅货架名称）；shelf_no = 添加货架号；edit = 编辑货架号 */
     const createDialogKind = ref('shelf')
 
     const migrateInventoryDialogVisible = ref(false)
@@ -94,26 +110,35 @@ export default defineComponent({
     const shelfDialogTitle = computed(() => {
       if (form.value?.id) return t('system.editShelf')
       const wh = normalizeWarehouseName(form.value?.warehouse)
-      if (createDialogKind.value === 'shelfNo') {
+      if (createDialogKind.value === 'shelf_no') {
         const sn = (form.value?.shelf_name || '').trim()
         if (sn) return `${t('system.addShelfNumber')} · ${wh} / ${sn}`
         return `${t('system.addShelfNumber')} · ${wh}`
       }
-      if (createDialogKind.value === 'shelfOnly') {
-        if (wh && wh !== DEFAULT_WAREHOUSE) return `${t('system.addShelfSlot')} · ${wh}`
-        return t('system.addShelfSlot')
-      }
-      if (wh && wh !== DEFAULT_WAREHOUSE) return `${t('system.createShelf')} · ${wh}`
-      return t('system.createShelf')
+      // createDialogKind === 'shelf'：新增货架（货架名称）
+      if (wh && wh !== DEFAULT_WAREHOUSE) return `${t('system.addShelfSlot')} · ${wh}`
+      return t('system.addShelfSlot')
     })
 
     const rules = {
       warehouse: [{ required: true, message: t('system.pleaseFillWarehouse'), trigger: 'blur' }],
+      shelf_name: [
+        {
+          validator: (_, val, cb) => {
+            if (!form.value.id && createDialogKind.value === 'shelf' && !String(val ?? '').trim()) {
+              return cb(new Error(t('system.pleaseFillShelfName')))
+            }
+            cb()
+          },
+          trigger: 'blur',
+        },
+      ],
       name: [
         {
           validator: (_, val, cb) => {
-            if (!form.value.id && createDialogKind.value === 'shelfOnly') return cb()
-            if (!String(val ?? '').trim()) return cb(new Error(t('system.pleaseFillShelfNumber')))
+            const needName =
+              createDialogKind.value === 'shelf_no' || (form.value.id && form.value.node_type === 'shelf_no')
+            if (needName && !String(val ?? '').trim()) return cb(new Error(t('system.pleaseFillShelfNumber')))
             cb()
           },
           trigger: 'blur',
@@ -138,13 +163,14 @@ export default defineComponent({
       return names.map((name) => {
         const shelves = map.get(name)
         const shelfNameGroups = buildShelfNameGroups(shelves)
-        const productTypes = shelves.reduce((s, i) => s + Number(i.product_types || 0), 0)
-        const totalQuantity = shelves.reduce((s, i) => s + Number(i.total_quantity || 0), 0)
+        const leafRows = shelves.filter((r) => rowType(r) === 'shelf_no')
+        const productTypes = leafRows.reduce((s, i) => s + Number(i.product_types || 0), 0)
+        const totalQuantity = leafRows.reduce((s, i) => s + Number(i.total_quantity || 0), 0)
         return {
           warehouse: name,
-          shelves,
+          shelves, // 含仓库/货架占位行，整仓删除时一并清除
           shelfNameGroups,
-          shelfCount: shelves.length,
+          shelfCount: leafRows.length,
           productTypes,
           totalQuantity,
         }
@@ -152,10 +178,11 @@ export default defineComponent({
     })
 
     const mergedWarehouse = computed(() => {
-      const productTypes = list.value.reduce((sum, item) => sum + Number(item.product_types || 0), 0)
-      const totalQuantity = list.value.reduce((sum, item) => sum + Number(item.total_quantity || 0), 0)
+      const leaves = list.value.filter((r) => rowType(r) === 'shelf_no')
+      const productTypes = leaves.reduce((sum, item) => sum + Number(item.product_types || 0), 0)
+      const totalQuantity = leaves.reduce((sum, item) => sum + Number(item.total_quantity || 0), 0)
       return {
-        shelf_count: list.value.length,
+        shelf_count: leaves.length,
         product_types: productTypes,
         total_quantity: totalQuantity
       }
@@ -164,7 +191,7 @@ export default defineComponent({
     const migrateInventoryOptions = computed(() => {
       const sid = migrateSourceWarehouseId.value
       return list.value
-        .filter((w) => w.id != null && Number(w.id) !== Number(sid))
+        .filter((w) => w.id != null && Number(w.id) !== Number(sid) && rowType(w) === 'shelf_no')
         .map((w) => ({
           value: Number(w.id),
           label: `${normalizeWarehouseName(w.warehouse)} · ${warehouseShelfLabel(w)}`,
@@ -186,6 +213,7 @@ export default defineComponent({
       for (const row of list.value) {
         const id = Number(row?.id)
         if (!Number.isFinite(id) || id === sid) continue
+        if (rowType(row) !== 'shelf_no') continue // 仅货架号可作为迁移目标
         const wh = normalizeWarehouseName(row.warehouse)
         if (!byWh.has(wh)) byWh.set(wh, [])
         byWh.get(wh).push(row)
@@ -243,7 +271,7 @@ export default defineComponent({
     const renameDialogShelves = computed(() => {
       if (!renameWarehouseDialogVisible.value || !renameWarehouseGroupKey.value) return []
       const key = renameWarehouseGroupKey.value
-      return list.value.filter((r) => normalizeWarehouseName(r.warehouse) === key)
+      return list.value.filter((r) => normalizeWarehouseName(r.warehouse) === key && rowType(r) === 'shelf_no')
     })
 
     function onMigrateInventoryDialogClosed() {
@@ -320,6 +348,33 @@ export default defineComponent({
       renameShelfNameDialogVisible.value = true
     }
 
+    async function removeShelfPartition() {
+      const wh = normalizeWarehouseName(renameShelfWarehouse.value)
+      const raw = String(renameShelfOldRaw.value ?? '').trim()
+      const rows = list.value.filter(
+        (r) =>
+          normalizeWarehouseName(r.warehouse) === wh &&
+          rowType(r) !== 'warehouse' &&
+          String(r.shelf_name ?? '').trim() === raw
+      )
+      if (!rows.length) {
+        renameShelfNameDialogVisible.value = false
+        return
+      }
+      for (const r of rows) {
+        try {
+          await warehouseApi.remove(r.id)
+        } catch (e) {
+          ElMessage.error(apiErrorMessage(e))
+          await load()
+          return
+        }
+      }
+      ElMessage.success(t('system.deleteSuccess'))
+      renameShelfNameDialogVisible.value = false
+      await load()
+    }
+
     async function submitRenameShelfName() {
       const oldRaw = String(renameShelfOldRaw.value ?? '').trim()
       const newT = String(renameShelfNew.value ?? '').trim()
@@ -390,15 +445,24 @@ export default defineComponent({
       addWarehouseNameDialogVisible.value = true
     }
 
-    function confirmAddWarehouseName() {
+    async function confirmAddWarehouseName() {
       const raw = (newWarehouseNameInput.value || '').trim()
       if (!raw) {
         ElMessage.warning(t('system.pleaseEnterWarehouseName'))
         return
       }
       const name = normalizeWarehouseName(raw)
-      addWarehouseNameDialogVisible.value = false
-      openDialogShelfOnly(name, '')
+      addWarehouseSubmitting.value = true
+      try {
+        await warehouseApi.create({ warehouse: name, node_type: 'warehouse' })
+        ElMessage.success(t('system.warehouseCreated'))
+        addWarehouseNameDialogVisible.value = false
+        await load()
+      } catch (e) {
+        ElMessage.error(apiErrorMessage(e))
+      } finally {
+        addWarehouseSubmitting.value = false
+      }
     }
 
     function warehouseDeleteConfirmTextForDialog() {
@@ -410,10 +474,12 @@ export default defineComponent({
     }
 
     async function removeWarehouseGroupForDialog() {
-      const shelves = [...renameDialogShelves.value]
+      const key = renameWarehouseGroupKey.value
+      // 含仓库/货架占位行，确保空仓库也能整体删除
+      const shelves = list.value.filter((r) => normalizeWarehouseName(r.warehouse) === key)
       if (!shelves.length) return
       const grp = {
-        warehouse: renameWarehouseGroupKey.value,
+        warehouse: key,
         shelves,
         shelfCount: shelves.length,
       }
@@ -453,25 +519,28 @@ export default defineComponent({
     }
 
     function openDialog(row = null) {
-      if (row) {
-        createDialogKind.value = 'shelf'
-        form.value = { ...row, warehouse: normalizeWarehouseName(row.warehouse), shelf_name: row.shelf_name || '' }
-      } else {
-        openDialogShelfOnly(DEFAULT_WAREHOUSE, '')
+      if (!row) {
+        openAddWarehouseNameDialog()
         return
+      }
+      createDialogKind.value = 'edit'
+      form.value = {
+        ...row,
+        node_type: rowType(row),
+        warehouse: normalizeWarehouseName(row.warehouse),
+        shelf_name: row.shelf_name || '',
       }
       dialogVisible.value = true
     }
 
-    /**
-     * 二级「添加货架」：不必填货架号，预填当前分区的货架名称（rawShelfName 可为空）
-     */
-    function openDialogShelfOnly(warehouseName, rawShelfName = '') {
-      createDialogKind.value = 'shelfOnly'
+    /** 仓库下「添加货架」：仅填货架名称(shelf_name)，创建一个空货架 */
+    function openDialogAddShelf(warehouseName) {
+      createDialogKind.value = 'shelf'
       form.value = {
         id: null,
+        node_type: 'shelf',
         warehouse: normalizeWarehouseName(warehouseName),
-        shelf_name: rawShelfName != null && String(rawShelfName).trim() ? String(rawShelfName).trim() : '',
+        shelf_name: '',
         name: '',
         location: '',
         description: '',
@@ -479,11 +548,12 @@ export default defineComponent({
       dialogVisible.value = true
     }
 
-    /** 在三级列表添加货架号（预填仓库 + 货架名称） */
+    /** 货架下「添加货架号」（预填仓库 + 货架名称） */
     function openDialogForShelfGroup(warehouseName, rawShelfName) {
-      createDialogKind.value = 'shelfNo'
+      createDialogKind.value = 'shelf_no'
       form.value = {
         id: null,
+        node_type: 'shelf_no',
         warehouse: normalizeWarehouseName(warehouseName),
         shelf_name: rawShelfName ? String(rawShelfName).trim() : '',
         name: '',
@@ -504,17 +574,25 @@ export default defineComponent({
       await formRef.value.validate()
       submitting.value = true
       try {
-        const payload = {
-          warehouse: form.value.warehouse,
-          name: (form.value.name || '').trim() || null,
-          shelf_name: (form.value.shelf_name || '').trim() || null,
-          location: form.value.location,
-          description: form.value.description
-        }
         if (form.value.id) {
-          await warehouseApi.update(form.value.id, payload)
+          await warehouseApi.update(form.value.id, {
+            warehouse: form.value.warehouse,
+            name: (form.value.name || '').trim() || null,
+            shelf_name: (form.value.shelf_name || '').trim() || null,
+            location: form.value.location,
+            description: form.value.description,
+          })
           ElMessage.success(t('system.saveSuccess'))
         } else {
+          const kind = createDialogKind.value
+          const payload = {
+            warehouse: form.value.warehouse,
+            node_type: kind,
+            shelf_name: (form.value.shelf_name || '').trim() || null,
+            location: form.value.location,
+            description: form.value.description,
+          }
+          if (kind === 'shelf_no') payload.name = (form.value.name || '').trim() || null
           const created = await warehouseApi.create(payload)
           ElMessage.success(t('system.saveSuccessWithId', { id: created?.id ?? '—' }))
         }
@@ -562,6 +640,7 @@ export default defineComponent({
       renameShelfNew,
       renameShelfSubmitting,
       submitting,
+      addWarehouseSubmitting,
       formRef,
       form,
       createDialogKind,
@@ -587,6 +666,7 @@ export default defineComponent({
       onRenameShelfNameDialogClosed,
       openRenameShelfNameDialog,
       submitRenameShelfName,
+      removeShelfPartition,
       onRenameWarehouseDialogClosed,
       openRenameWarehouseDialog,
       submitRenameWarehouse,
@@ -597,7 +677,7 @@ export default defineComponent({
       removeWarehouseGroup,
       removeShelfFromRenameDialog,
       openDialog,
-      openDialogShelfOnly,
+      openDialogAddShelf,
       openDialogForShelfGroup,
       apiErrorMessage,
       submit,

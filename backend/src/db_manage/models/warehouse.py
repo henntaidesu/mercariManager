@@ -34,6 +34,12 @@ class WarehouseModel(BaseModel):
                 'not_null': False,
                 'default': None,
             },
+            # 节点类型：warehouse=空白仓库占位 / shelf=货架(货架名称) / shelf_no=货架号(叶子，承载库存)
+            'node_type': {
+                'type': 'TEXT',
+                'not_null': False,
+                'default': None,
+            },
             'warehouse': {
                 'type': 'TEXT',
                 'not_null': False,
@@ -77,24 +83,6 @@ class WarehouseModel(BaseModel):
     def find_by_name(cls, name: str):
         """根据货架名称查找（仍可能有同名跨仓库，谨慎使用）"""
         result = cls.find_all("name = ?", (name,), limit=1)
-        return result[0] if result else None
-
-    @classmethod
-    def find_by_warehouse_and_name(cls, warehouse: Any, name: Any):
-        """同一仓库下查找货架号；name 为空或 None 时匹配 [name] IS NULL（仅用于唯一性校验等）"""
-        wh = cls.normalize_warehouse_key(warehouse)
-        if name is None or (isinstance(name, str) and not str(name).strip()):
-            result = cls.find_all(
-                "COALESCE(NULLIF(TRIM([warehouse]), ''), '默认仓库') = ? AND [name] IS NULL",
-                (wh,),
-                limit=1,
-            )
-        else:
-            result = cls.find_all(
-                "COALESCE(NULLIF(TRIM([warehouse]), ''), '默认仓库') = ? AND [name] = ?",
-                (wh, str(name).strip()),
-                limit=1,
-            )
         return result[0] if result else None
 
     @classmethod

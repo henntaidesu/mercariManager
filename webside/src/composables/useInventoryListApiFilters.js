@@ -127,7 +127,11 @@ export function useInventoryListApiFilters(scheduleReload) {
   })
 
   const warehouseTreeMeta = computed(() => {
-    const list = Array.isArray(warehouses.value) ? warehouses.value : []
+    // 仅货架号(shelf_no/叶子)可承载库存；过滤掉空白仓库/货架占位行
+    const list = (Array.isArray(warehouses.value) ? warehouses.value : []).filter((w) => {
+      const ty = w?.node_type
+      return ty ? ty === 'shelf_no' : w?.name != null && String(w.name).trim() !== ''
+    })
     const idToPath = new Map()
     const byWh = new Map()
     for (const w of list) {

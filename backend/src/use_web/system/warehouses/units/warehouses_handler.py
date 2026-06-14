@@ -16,6 +16,7 @@ class WarehouseCreate(PydanticModel):
     name: Optional[str] = None  # 货架号（可重复）；可为空表示暂未编号
     warehouse: Optional[str] = "默认仓库"
     shelf_name: Optional[str] = None  # 货架名称（展示）
+    node_type: Optional[str] = None  # warehouse / shelf / shelf_no（缺省时按字段推断）
     location: Optional[str] = None
     description: Optional[str] = None
 
@@ -69,53 +70,64 @@ def list_warehouses():
     return [_serialize(w) for w in WarehouseModel.find_all(order_by="id ASC")]
 
 
-def _safe_remove_default_template_shelf(name: str, exclude_id: int) -> None:
-    """
-    在非默认仓库新建同名货架后，若默认仓库仍有同名「模板」货架则删除之，
-    避免列表里长期保留重复名称；有出入库或库存占用时不删。
-    """
-    default_key = WarehouseModel.normalize_warehouse_key(None)
-    tmpl = WarehouseModel.find_by_warehouse_and_name(default_key, name)
-    if not tmpl or tmpl.id == exclude_id:
-        return
-    wid = tmpl.id
-    has_tx = db.execute_query(
-        "SELECT 1 FROM [transactions] WHERE warehouse_id = ? OR target_warehouse_id = ? LIMIT 1",
-        (wid, wid),
+def _row_wh_key(w: WarehouseModel) -> str:
+    return WarehouseModel.normalize_warehouse_key(w.warehouse)
+
+
+def _warehouse_exists(wh_key: str) -> bool:
+    return any(_row_wh_key(w) == wh_key for w in WarehouseModel.find_all())
+
+
+def _shelf_exists(wh_key: str, shelf_name: Optional[str]) -> bool:
+    sn = _norm_shelf_name_key(shelf_name)
+    if not sn:
+        return False
+    return any(
+        _row_wh_key(w) == wh_key and _norm_shelf_name_key(w.shelf_name) == sn
+        for w in WarehouseModel.find_all()
     )
-    if has_tx:
-        return
-    has_inv = db.execute_query(
-        "SELECT 1 FROM [inventory] WHERE warehouse_id = ? LIMIT 1",
-        (wid,),
-    )
-    if has_inv:
-        return
-    has_cost = db.execute_query(
-        "SELECT 1 FROM [cost_records] WHERE warehouse_id = ? LIMIT 1",
-        (wid,),
-    )
-    if has_cost:
-        return
-    tmpl.delete()
 
 
 def create_warehouse(data: WarehouseCreate):
+    """按 仓库 > 货架 > 货架号 三级层级创建；不能脱离上级单独创建货架/货架号。"""
     wh_key = WarehouseModel.normalize_warehouse_key(data.warehouse)
+    nt = (data.node_type or "").strip().lower()
+    sn = _norm_shelf_name_key(data.shelf_name)
     nm = _norm_shelf_code(data.name)
-    sn = (data.shelf_name or "").strip() or None
+    if nt not in ("warehouse", "shelf", "shelf_no"):
+        nt = "shelf_no" if nm else ("shelf" if sn else "warehouse")
+
+    if nt == "warehouse":
+        if _warehouse_exists(wh_key):
+            raise HTTPException(status_code=400, detail="该仓库已存在")
+        sn = None
+        nm = None
+    elif nt == "shelf":
+        if not sn:
+            raise HTTPException(status_code=400, detail="请填写货架名称")
+        if not _warehouse_exists(wh_key):
+            raise HTTPException(status_code=400, detail="所属仓库不存在，请先创建仓库")
+        if _shelf_exists(wh_key, sn):
+            raise HTTPException(status_code=400, detail="该仓库下已存在同名货架")
+        nm = None
+    else:  # shelf_no
+        if not sn:
+            raise HTTPException(status_code=400, detail="请先选择所属货架")
+        if not nm:
+            raise HTTPException(status_code=400, detail="请填写货架号")
+        if not _shelf_exists(wh_key, sn):
+            raise HTTPException(status_code=400, detail="所属货架不存在，请先创建货架")
+
     wh = WarehouseModel(
         name=nm,
         warehouse=wh_key,
         shelf_name=sn,
+        node_type=nt,
         location=data.location,
-        description=data.description
+        description=data.description,
     )
     if not wh.save():
         raise HTTPException(status_code=500, detail="保存失败")
-    default_key = WarehouseModel.normalize_warehouse_key(None)
-    if wh_key != default_key and nm:
-        _safe_remove_default_template_shelf(nm, wh.id)
     return _serialize(wh)
 
 

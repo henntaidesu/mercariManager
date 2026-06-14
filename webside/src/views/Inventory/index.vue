@@ -333,8 +333,24 @@
             <div v-else class="editable-cell" @click="openOwnerInline(row)">{{ displayOwnerName(row) }}</div>
           </template>
         </el-table-column>
-        <el-table-column :label="t('inventory.warehouseLocation')" min-width="160" align="left" header-align="left" show-overflow-tooltip>
-          <template #default="{ row }">{{ displayWarehouseLocation(row) }}</template>
+        <el-table-column :label="t('inventory.warehouseLocation')" min-width="160" align="left" header-align="left">
+          <template #default="{ row }">
+            <el-cascader
+              v-if="editingWarehouseRowId === row.id"
+              :model-value="getInlineWarehousePath(row)"
+              :options="warehouseCascaderOptions"
+              :props="warehouseCascaderProps"
+              :show-all-levels="false"
+              size="small"
+              class="inventory-inline-select"
+              :placeholder="t('inventory.warehouseShelfArrowPlaceholder')"
+              popper-class="product-type-cascader-popper"
+              clearable
+              @change="saveWarehouseInline(row, $event)"
+              @visible-change="(v) => { if (!v) editingWarehouseRowId = null }"
+            />
+            <div v-else class="editable-cell" @click="openWarehouseInline(row)">{{ displayWarehouseLocation(row) }}</div>
+          </template>
         </el-table-column>
         <el-table-column :label="t('inventory.unitPrice')" prop="price" width="120" align="center" header-align="center" sortable="custom">
           <template #default="{ row }">

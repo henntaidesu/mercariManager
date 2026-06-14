@@ -58,7 +58,7 @@
                 </div>
               </div>
               <div class="collapse-title-end collapse-title-actions" @click.stop>
-                <el-button type="primary" size="small" @click.stop="openDialogShelfOnly(grp.warehouse, '')">
+                <el-button type="primary" size="small" @click.stop="openDialogAddShelf(grp.warehouse)">
                   <el-icon><Plus /></el-icon>
                   {{ t('system.addShelfSlot') }}
                 </el-button>
@@ -145,12 +145,20 @@
           <el-input :model-value="String(form.id)" disabled />
         </el-form-item>
         <el-form-item :label="t('system.belongingWarehouse')" prop="warehouse">
-          <el-input v-model="form.warehouse" clearable />
+          <el-input
+            v-model="form.warehouse"
+            clearable
+            :disabled="!form.id && (createDialogKind === 'shelf' || createDialogKind === 'shelf_no')"
+          />
         </el-form-item>
-        <el-form-item :label="t('system.shelfNameLabel')">
-          <el-input v-model="form.shelf_name" clearable />
+        <el-form-item
+          v-if="form.id || createDialogKind === 'shelf' || createDialogKind === 'shelf_no'"
+          :label="t('system.shelfNameLabel')"
+          prop="shelf_name"
+        >
+          <el-input v-model="form.shelf_name" clearable :disabled="!form.id && createDialogKind === 'shelf_no'" />
         </el-form-item>
-        <el-form-item v-if="form.id || createDialogKind !== 'shelfOnly'" :label="t('system.shelfNumber')" prop="name">
+        <el-form-item v-if="form.id || createDialogKind === 'shelf_no'" :label="t('system.shelfNumber')" prop="name">
           <el-input v-model="form.name" clearable />
         </el-form-item>
         <el-form-item :label="t('system.locationField')">
@@ -280,8 +288,23 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="renameShelfNameDialogVisible = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" :loading="renameShelfSubmitting" @click="submitRenameShelfName">{{ t('common.save') }}</el-button>
+        <div class="rename-dialog-footer">
+          <el-popconfirm
+            :title="t('system.shelfPartitionDeleteConfirm')"
+            width="300"
+            :confirm-button-text="t('system.confirmDelete')"
+            :cancel-button-text="t('common.cancel')"
+            @confirm="removeShelfPartition"
+          >
+            <template #reference>
+              <el-button type="danger" plain>{{ t('system.deleteShelf') }}</el-button>
+            </template>
+          </el-popconfirm>
+          <div class="rename-dialog-footer-right">
+            <el-button @click="renameShelfNameDialogVisible = false">{{ t('common.cancel') }}</el-button>
+            <el-button type="primary" :loading="renameShelfSubmitting" @click="submitRenameShelfName">{{ t('common.save') }}</el-button>
+          </div>
+        </div>
       </template>
     </el-dialog>
 
@@ -297,7 +320,7 @@
       </el-form>
       <template #footer>
         <el-button @click="addWarehouseNameDialogVisible = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="confirmAddWarehouseName">{{ t('system.nextAddShelf') }}</el-button>
+        <el-button type="primary" :loading="addWarehouseSubmitting" @click="confirmAddWarehouseName">{{ t('system.createWarehouse') }}</el-button>
       </template>
     </el-dialog>
   </div>

@@ -240,6 +240,44 @@ class DBManager:
         print("[OK] warehouses 去唯一约束迁移完成")
         return True
 
+    def _migrate_warehouses_backfill_node_type(self) -> bool:
+        """为 warehouses 行回填 node_type：有货架号→shelf_no，仅有货架名称→shelf，否则→warehouse。"""
+        db = self.db
+        if not db.table_exists("warehouses"):
+            return True
+        cols = {c["name"] for c in db.get_table_columns("warehouses")}
+        if "node_type" not in cols:
+            return True  # 列尚未创建（ensure_table_exists 会先补列）
+        pending = db.execute_query(
+            "SELECT 1 FROM [warehouses] WHERE node_type IS NULL OR TRIM(node_type) = '' LIMIT 1"
+        )
+        if not pending:
+            return True
+        print("正在迁移 warehouses：回填 node_type（仓库/货架/货架号）...")
+        try:
+            db.execute_update(
+                """
+                UPDATE [warehouses]
+                SET node_type = CASE
+                    WHEN [name] IS NOT NULL AND TRIM([name]) != '' THEN 'shelf_no'
+                    WHEN [shelf_name] IS NOT NULL AND TRIM([shelf_name]) != '' THEN 'shelf'
+                    ELSE 'warehouse'
+                END
+                WHERE node_type IS NULL OR TRIM(node_type) = ''
+                """
+            )
+        except Exception as e:
+            print(f"[错误] warehouses node_type 回填失败: {e}")
+            return False
+        cache_attr = "_cached_table_columns"
+        if hasattr(WarehouseModel, cache_attr):
+            try:
+                delattr(WarehouseModel, cache_attr)
+            except Exception:
+                pass
+        print("[OK] warehouses node_type 回填完成")
+        return True
+
     def _migrate_ptcm_to_independent_module(self) -> bool:
         """
         将 product_type_category_mappings 从 product_type_id 迁移到纯文本 product_type。
@@ -603,6 +641,8 @@ class DBManager:
         if not self._migrate_warehouses_name_nullable():
             return False
         if not self._migrate_warehouses_drop_shelf_code_unique():
+            return False
+        if not self._migrate_warehouses_backfill_node_type():
             return False
         if not self._migrate_restore_combined_source_stock():
             return False
