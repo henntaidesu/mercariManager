@@ -1178,11 +1178,6 @@ export default defineComponent({
       editingProductTypeRowId.value = row.id
     }
 
-    function openWarehouseInline(row) {
-      if (listingPickMode.value) return
-      editingWarehouseRowId.value = row.id
-    }
-
     function openOwnerInline(row) {
       if (listingPickMode.value) return
       editingOwnerRowId.value = row.id
@@ -4249,7 +4244,6 @@ export default defineComponent({
       saveCategoryInline,
       saveProductTypeInline,
       getInlineProductTypePath,
-      openWarehouseInline,
       saveWarehouseInline,
       getInlineWarehousePath,
       saveOwnerInline,

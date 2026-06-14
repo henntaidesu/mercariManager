@@ -17,6 +17,55 @@
   min-width: 120px !important;
 }
 
+/* 列表内联编辑：点击单元格在下方弹出选择面板（单元格仍显示原文本） */
+.el-popover.inline-edit-popover {
+  padding: 6px 0;
+  min-width: 160px;
+}
+.el-popover.inline-edit-popover.inline-edit-popover--cascader {
+  padding: 0;
+  width: auto !important;
+  min-width: unset !important;
+  max-width: none !important;
+}
+.inline-edit-popover .inline-edit-option {
+  padding: 6px 14px;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--el-text-color-regular);
+}
+.inline-edit-popover .inline-edit-option:hover {
+  background: var(--el-fill-color-light);
+}
+.inline-edit-popover .inline-edit-option.is-active {
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+.inline-edit-popover--cascader .el-cascader-panel {
+  display: flex;
+  --el-cascader-menu-text-color: var(--el-text-color-regular);
+}
+/* 每级菜单等高且填满，避免叶子列露出底层表格内容 */
+.inline-edit-popover--cascader .el-cascader-menu {
+  height: 240px !important;
+  min-width: 160px;
+}
+.inline-edit-popover--cascader .el-cascader-menu__wrap {
+  height: 240px !important;
+  max-height: 240px !important;
+}
+.inline-edit-popover--cascader .el-scrollbar__wrap {
+  height: 240px !important;
+  max-height: 240px !important;
+}
+.inline-edit-popover--cascader .el-cascader-menu__list {
+  min-height: 240px !important;
+}
+
 .product-type-cascader-popper .el-cascader-menu {
   height: 300px !important;
 }

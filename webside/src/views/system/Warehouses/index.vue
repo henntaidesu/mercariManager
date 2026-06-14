@@ -144,19 +144,19 @@
         <el-form-item v-if="form.id" :label="t('system.shelfPrimaryKey')">
           <el-input :model-value="String(form.id)" disabled />
         </el-form-item>
-        <el-form-item :label="t('system.belongingWarehouse')" prop="warehouse">
+        <el-form-item v-if="!form.id" :label="t('system.belongingWarehouse')" prop="warehouse">
           <el-input
             v-model="form.warehouse"
             clearable
-            :disabled="!form.id && (createDialogKind === 'shelf' || createDialogKind === 'shelf_no')"
+            :disabled="createDialogKind === 'shelf' || createDialogKind === 'shelf_no'"
           />
         </el-form-item>
         <el-form-item
-          v-if="form.id || createDialogKind === 'shelf' || createDialogKind === 'shelf_no'"
+          v-if="!form.id && (createDialogKind === 'shelf' || createDialogKind === 'shelf_no')"
           :label="t('system.shelfNameLabel')"
           prop="shelf_name"
         >
-          <el-input v-model="form.shelf_name" clearable :disabled="!form.id && createDialogKind === 'shelf_no'" />
+          <el-input v-model="form.shelf_name" clearable :disabled="createDialogKind === 'shelf_no'" />
         </el-form-item>
         <el-form-item v-if="form.id || createDialogKind === 'shelf_no'" :label="t('system.shelfNumber')" prop="name">
           <el-input v-model="form.name" clearable />

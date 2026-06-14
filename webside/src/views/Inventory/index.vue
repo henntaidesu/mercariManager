@@ -280,76 +280,90 @@
         </el-table-column>
         <el-table-column :label="t('inventory.gameCategory')" width="120" align="center" header-align="center">
           <template #default="{ row }">
-            <el-select
-              v-if="editingCategoryRowId === row.id"
-              :model-value="row.category_id"
-              size="small"
-              style="width: 100%"
-              :placeholder="t('inventory.selectCategory')"
-              @change="saveCategoryInline(row, $event)"
-              @visible-change="(v) => { if (!v) editingCategoryRowId = null }"
+            <el-popover
+              :visible="editingCategoryRowId === row.id"
+              trigger="click"
+              :disabled="listingPickMode"
+              placement="bottom-start"
+              :width="200"
+              popper-class="inline-edit-popover"
+              @update:visible="(v) => { editingCategoryRowId = v ? row.id : null }"
             >
-              <el-option :label="t('inventory.uncategorized')" :value="null" />
-              <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
-            </el-select>
-            <div v-else class="editable-cell" @click="!listingPickMode && (editingCategoryRowId = row.id)">{{ row.category_name || t('inventory.uncategorized') }}</div>
+              <template #reference>
+                <div class="editable-cell">{{ row.category_name || t('inventory.uncategorized') }}</div>
+              </template>
+              <el-scrollbar max-height="240px">
+                <div class="inline-edit-option" :class="{ 'is-active': !row.category_id }" @click="saveCategoryInline(row, null)">{{ t('inventory.uncategorized') }}</div>
+                <div v-for="c in categories" :key="c.id" class="inline-edit-option" :class="{ 'is-active': row.category_id === c.id }" @click="saveCategoryInline(row, c.id)">{{ c.name }}</div>
+              </el-scrollbar>
+            </el-popover>
           </template>
         </el-table-column>
         <el-table-column :label="t('inventory.productType')" width="120" align="center" header-align="center">
           <template #default="{ row }">
-            <el-cascader
-              v-if="editingProductTypeRowId === row.id"
-              :model-value="getInlineProductTypePath(row)"
-              :options="productTypeCascaderOptions"
-              :props="productTypeCascaderProps"
-              :show-all-levels="false"
-              size="small"
-              class="inventory-inline-select"
-              :placeholder="t('inventory.selectType')"
-              popper-class="product-type-cascader-popper"
-              clearable
-              @change="saveProductTypeInline(row, $event)"
-              @visible-change="(v) => { if (!v) editingProductTypeRowId = null }"
-            />
-            <div v-else class="editable-cell" @click="openProductTypeInline(row)">{{ displayProductTypeName(row) }}</div>
+            <el-popover
+              :visible="editingProductTypeRowId === row.id"
+              trigger="click"
+              :disabled="listingPickMode"
+              placement="bottom-start"
+              width="auto"
+              popper-class="inline-edit-popover inline-edit-popover--cascader"
+              @update:visible="(v) => { editingProductTypeRowId = v ? row.id : null }"
+            >
+              <template #reference>
+                <div class="editable-cell">{{ displayProductTypeName(row) || '-' }}</div>
+              </template>
+              <el-cascader-panel
+                :model-value="getInlineProductTypePath(row)"
+                :options="productTypeCascaderOptions"
+                :props="productTypeCascaderProps"
+                @change="saveProductTypeInline(row, $event)"
+              />
+            </el-popover>
           </template>
         </el-table-column>
         <el-table-column :label="t('inventory.productOwner')" width="120" align="center" header-align="center">
           <template #default="{ row }">
-            <el-select
-              v-if="editingOwnerRowId === row.id"
-              :model-value="row.owner_user_id"
-              :ref="(el) => setInlineOwnerSelectRef(row.id, el)"
-              size="small"
-              class="inventory-inline-select"
-              :placeholder="t('inventory.selectOwner')"
-              popper-class="inventory-inline-select-popper"
-              @change="saveOwnerInline(row, $event)"
-              @visible-change="(v) => { if (!v) editingOwnerRowId = null }"
+            <el-popover
+              :visible="editingOwnerRowId === row.id"
+              trigger="click"
+              :disabled="listingPickMode"
+              placement="bottom-start"
+              :width="200"
+              popper-class="inline-edit-popover"
+              @update:visible="(v) => { editingOwnerRowId = v ? row.id : null }"
             >
-              <el-option label="" :value="null" />
-              <el-option v-for="u in ownerUsers" :key="u.id" :label="u.display_name || u.username" :value="u.id" />
-            </el-select>
-            <div v-else class="editable-cell" @click="openOwnerInline(row)">{{ displayOwnerName(row) }}</div>
+              <template #reference>
+                <div class="editable-cell">{{ displayOwnerName(row) || '-' }}</div>
+              </template>
+              <el-scrollbar max-height="240px">
+                <div class="inline-edit-option" :class="{ 'is-active': !row.owner_user_id }" @click="saveOwnerInline(row, null)">—</div>
+                <div v-for="u in ownerUsers" :key="u.id" class="inline-edit-option" :class="{ 'is-active': row.owner_user_id === u.id }" @click="saveOwnerInline(row, u.id)">{{ u.display_name || u.username }}</div>
+              </el-scrollbar>
+            </el-popover>
           </template>
         </el-table-column>
         <el-table-column :label="t('inventory.warehouseLocation')" min-width="160" align="left" header-align="left">
           <template #default="{ row }">
-            <el-cascader
-              v-if="editingWarehouseRowId === row.id"
-              :model-value="getInlineWarehousePath(row)"
-              :options="warehouseCascaderOptions"
-              :props="warehouseCascaderProps"
-              :show-all-levels="false"
-              size="small"
-              class="inventory-inline-select"
-              :placeholder="t('inventory.warehouseShelfArrowPlaceholder')"
-              popper-class="product-type-cascader-popper"
-              clearable
-              @change="saveWarehouseInline(row, $event)"
-              @visible-change="(v) => { if (!v) editingWarehouseRowId = null }"
-            />
-            <div v-else class="editable-cell" @click="openWarehouseInline(row)">{{ displayWarehouseLocation(row) }}</div>
+            <el-popover
+              :visible="editingWarehouseRowId === row.id"
+              trigger="click"
+              :disabled="listingPickMode"
+              placement="bottom-start"
+              width="auto"
+              popper-class="inline-edit-popover inline-edit-popover--cascader"
+              @update:visible="(v) => { editingWarehouseRowId = v ? row.id : null }"
+            >
+              <template #reference>
+                <div class="editable-cell">{{ displayWarehouseLocation(row) }}</div>
+              </template>
+              <el-cascader-panel
+                :model-value="getInlineWarehousePath(row)"
+                :options="warehouseCascaderOptions"
+                :props="warehouseCascaderProps"
+                @change="saveWarehouseInline(row, $event)"
+              />
+            </el-popover>
           </template>
         </el-table-column>
         <el-table-column :label="t('inventory.unitPrice')" prop="price" width="120" align="center" header-align="center" sortable="custom">
