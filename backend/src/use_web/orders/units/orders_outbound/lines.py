@@ -213,7 +213,7 @@ def convert_outbound_line_owner(
         raise HTTPException(status_code=400, detail=f"原库存不足以转化，当前库存：{src_quantity}")
 
     import uuid as _uuid
-    from ...image_storage import get_image_root
+    from ....image_storage import get_image_root
     import os as _os
     import shutil as _shutil
 
