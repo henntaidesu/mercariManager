@@ -56,6 +56,13 @@ class SubmitTransactionReviewRequest(PydanticModel):
     progress_job_id: Optional[str] = None
 
 
+class BulkSubmitReviewsRequest(PydanticModel):
+    """一键好评：对所有「評価をしてください」待办批量提交评价（不指定则全部启用账号）。"""
+
+    text: str = Field("", max_length=140)
+    progress_job_id: Optional[str] = None
+
+
 class TransactionActionRequest(PydanticModel):
     """无 body 的浏览器操作（拉详情/启动尺寸选择/修改发送方式）仍需透传 job_id。"""
 

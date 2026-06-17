@@ -32,6 +32,11 @@ from .precache import precache_uncached_todo_details
 
 # ── 待评价 ──
 from .review import submit_transaction_review
+from .bulk_review import (
+    bulk_submit_reviews_for_account,
+    list_pending_review_todos,
+    pending_review_account_ids,
+)
 
 # ── 待回复 ──
 from .wait_reply.message import send_transaction_message
@@ -65,6 +70,9 @@ __all__ = [
     "list_uncached_detail_todo_ids",
     "precache_uncached_todo_details",
     "submit_transaction_review",
+    "bulk_submit_reviews_for_account",
+    "list_pending_review_todos",
+    "pending_review_account_ids",
     "send_transaction_message",
     "SUPPORTED_REACTIONS",
     "send_message_reaction_by_index",

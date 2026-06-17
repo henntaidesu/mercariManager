@@ -30,6 +30,9 @@ export const todosApi = {
   /** 在已开浏览器（取引評価页）填评价并点击「購入者を評価して取引完了する」 */
   submitTransactionReview: (todoId, text, opts = {}, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/submit-review`, { text, ...opts }, { timeout: 60000, ...axiosConfig }),
+  /** 一键好评：后端按账号分组、复用浏览器逐条提交评价（不设超时，进度走 sync-progress 轮询） */
+  bulkSubmitReviews: (body = {}, axiosConfig = {}) =>
+    http.post('/use_web/todos/bulk-review', body || {}, { timeout: 0, ...axiosConfig }),
   /** 点「商品サイズと発送場所を選択する」→ 抓 shipping_classes → 返回可选项 */
   startShippingClass: (todoId, body = {}, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/shipping/start`, body || {}, { timeout: 60000, ...axiosConfig }),

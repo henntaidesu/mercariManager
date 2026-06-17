@@ -323,12 +323,15 @@ async def apply_item_info_to_order(
     expected_seller_id: Optional[str] = None,
     *,
     progress_job_id: Optional[str] = None,
+    timeout: int = 90,
 ) -> Optional[str]:
     """
     拉取 transaction_evidences/get 并写入已存在订单（order_no == item_id）。
     expected_seller_id：校验 data.seller_id 与该卖家 ID 一致。
 
     ``progress_job_id`` 配合通用 ``sync_progress``：每个阶段写入中文步骤供前端轮询。
+    ``timeout``：MITM 截获 transaction_evidences/get 的等待上限（秒）；批量场景可调小以限制
+    单条最坏耗时。
     """
     report = make_sync_reporter(progress_job_id)
     item_id = str(item_id or "").strip()
@@ -337,7 +340,7 @@ async def apply_item_info_to_order(
 
     report("open_browser", f"正在打开取引页并截获详情（{item_id}）…")
     try:
-        resp = await fetch_item_info(item_id, account_id=account_id)
+        resp = await fetch_item_info(item_id, account_id=account_id, timeout=int(timeout))
     except Exception as exc:
         return f"request:{exc}"
 

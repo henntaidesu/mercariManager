@@ -817,25 +817,26 @@ export default defineComponent({
     async function runBulkReview() {
       if (bulkReviewLoading.value || syncLoading.value) return
 
-      let candidates = []
+      // 先统计候选数量（仅用于二次确认提示；真正的逐条编排在后端按账号分组复用浏览器执行）
+      let candidateCount = 0
       try {
         const res = await todosApi.list({ page: 1, page_size: 500, kind: 'ReviewedSeller' })
-        candidates = (res?.items || []).filter(
+        candidateCount = (res?.items || []).filter(
           (r) => !r.is_delete && String(r.title || '').trim() === '評価をしてください',
-        )
+        ).length
       } catch (e) {
         ElMessage.error(e?.message || t('todos.loadFailed'))
         return
       }
 
-      if (!candidates.length) {
+      if (!candidateCount) {
         ElMessage.info(t('todos.bulkReviewNoCandidates'))
         return
       }
 
       try {
         await ElMessageBox.confirm(
-          t('todos.bulkReviewConfirmMessage', { count: candidates.length }),
+          t('todos.bulkReviewConfirmMessage', { count: candidateCount }),
           t('todos.bulkReviewConfirmTitle'),
           { type: 'info', confirmButtonText: t('todos.start'), cancelButtonText: t('common.cancel') },
         )
@@ -843,61 +844,55 @@ export default defineComponent({
         return
       }
 
+      // 进度轮询：后端按账号分组逐条评价，步骤写入 sync-progress，前端轮询展示
+      const progressJobId =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `job_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+      let progressTimer = null
+      async function pollProgress() {
+        try {
+          const pr = await todosApi.getSyncProgress(progressJobId)
+          const zh = pr?.data?.label_zh
+          if (zh) syncProgressLabel.value = zh
+        } catch { /* 轮询失败忽略 */ }
+      }
+
       bulkReviewLoading.value = true
       syncOverlayTitle.value = t('todos.bulkReviewRunning')
       syncOverlayFailed.value = false
       syncProgressLabel.value = t('todos.connectingServer')
       syncOverlayVisible.value = true
+      progressTimer = setInterval(pollProgress, 400)
 
-      let okCount = 0
-      let failCount = 0
-      const failures = []
-
-      for (let i = 0; i < candidates.length; i++) {
-        const row = candidates[i]
-        syncProgressLabel.value = t('todos.bulkReviewProgress', {
-          current: i + 1,
-          total: candidates.length,
-          itemId: row.item_id || `#${row.id}`,
-        })
-        try {
-          await todosApi.fetchTransactionDetail(row.id, {})
-          const result = await todosApi.submitTransactionReview(row.id, DEFAULT_REVIEW, {})
-          if (result?.completed) {
-            okCount += 1
-          } else {
-            failCount += 1
-            failures.push(`#${row.id} ${row.item_id || ''}`.trim())
-          }
-        } catch (e) {
-          failCount += 1
-          const msg = e?.response?.data?.detail || e?.message || 'error'
-          failures.push(`#${row.id} ${row.item_id || ''}: ${msg}`.trim())
-          console.error('[一键好评]', row.id, msg)
-        } finally {
-          // 每条结束后幂等关一次浏览器，避免下一条被卡
-          const aid = row.account_id
-          if (aid) {
-            try { await todosApi.closeDetailBrowser(aid) } catch { /* 忽略 */ }
-          }
+      try {
+        const d = (await todosApi.bulkSubmitReviews({
+          text: DEFAULT_REVIEW,
+          progress_job_id: progressJobId,
+        })) || {}
+        const okCount = Number(d.ok || 0)
+        const failCount = Number(d.fail || 0)
+        const total = Number(d.total || 0)
+        const failures = Array.isArray(d.failures) ? d.failures : []
+        const summary = t('todos.bulkReviewResult', { ok: okCount, fail: failCount, total })
+        ElMessageBox.alert(
+          failures.length ? `${summary}\n${failures.slice(0, 10).join('\n')}` : summary,
+          t('todos.bulkReviewConfirmTitle'),
+          { type: failCount ? 'warning' : 'success', confirmButtonText: t('dialog.confirmBtn') },
+        )
+      } catch (e) {
+        const msg = e?.response?.data?.detail || e?.message || t('todos.bulkReviewRunning')
+        ElMessage.error(msg)
+      } finally {
+        if (progressTimer != null) {
+          clearInterval(progressTimer)
+          progressTimer = null
         }
+        syncOverlayVisible.value = false
+        syncOverlayTitle.value = t('todos.syncingFromMercari')
+        syncProgressLabel.value = ''
+        bulkReviewLoading.value = false
       }
-
-      syncOverlayVisible.value = false
-      syncOverlayTitle.value = t('todos.syncingFromMercari')
-      syncProgressLabel.value = ''
-      bulkReviewLoading.value = false
-
-      const summary = t('todos.bulkReviewResult', {
-        ok: okCount,
-        fail: failCount,
-        total: candidates.length,
-      })
-      ElMessageBox.alert(
-        failures.length ? `${summary}\n${failures.slice(0, 10).join('\n')}` : summary,
-        t('todos.bulkReviewConfirmTitle'),
-        { type: failCount ? 'warning' : 'success', confirmButtonText: t('dialog.confirmBtn') },
-      )
 
       await load()
     }
