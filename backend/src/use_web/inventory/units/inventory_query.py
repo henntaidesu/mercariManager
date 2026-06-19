@@ -78,6 +78,22 @@ def list_inventory(
     return _query_inventory_with_joins(where_sql, tuple(params))
 
 
+def inventory_summary():
+    """库存汇总：全库（未软删）条目数与库存总数量。
+
+    供控制台 / 库存页统计卡使用，替代「拉取整张库存表后在前端 length + reduce」的做法。
+    口径与 list_inventory（默认无筛选）一致：仅统计 is_delete=0 的行。
+    """
+    row = db.execute_query(
+        "SELECT COUNT(*), COALESCE(SUM([quantity]), 0) "
+        "FROM [inventory] WHERE COALESCE([is_delete], 0) = 0"
+    )[0]
+    return {
+        "total_inventory": int(row[0] or 0),
+        "total_quantity": int(row[1] or 0),
+    }
+
+
 def find_by_barcode(barcode: str):
     """根据条形码精确查找商品（用于连续扫码流程）"""
     inventory_items = _query_inventory_with_joins(" AND p.barcode = ? LIMIT 1", (barcode.strip(),))

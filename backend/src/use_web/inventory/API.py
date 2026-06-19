@@ -9,7 +9,7 @@
 """
 from fastapi import APIRouter
 
-from .units.inventory_query import list_inventory, find_by_barcode, get_inventory, list_inventory_pending_outbound_lines, list_inventory_used_in_combos
+from .units.inventory_query import list_inventory, inventory_summary, find_by_barcode, get_inventory, list_inventory_pending_outbound_lines, list_inventory_used_in_combos
 from .units.inventory_crud import create_inventory, update_inventory, delete_inventory
 from .units.inventory_stock import stock_in_inventory, stock_out_inventory
 from .units.inventory_combined import create_combined_inventory, remove_combined_component
@@ -28,6 +28,8 @@ public_router.add_api_route("/image-thumb", get_image_thumb, methods=["GET"])
 
 # 库存 CRUD
 router.add_api_route("", list_inventory, methods=["GET"])
+# 汇总（条目数 / 总数量）——须在 /{pid} 之前注册，避免被动态段捕获
+router.add_api_route("/summary", inventory_summary, methods=["GET"])
 router.add_api_route("/barcode/{barcode}", find_by_barcode, methods=["GET"])
 router.add_api_route("/find-by-image", find_by_image, methods=["POST"])
 # 图片搜索（CLIP 相似度检索，多结果带 match_score）

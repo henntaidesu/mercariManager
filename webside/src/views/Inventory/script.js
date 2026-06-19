@@ -1667,14 +1667,13 @@ export default defineComponent({
     /** 与控制台相同：全库条目/总数量 + 接口返回的今日入出库（手机端不展示统计，一般不请求） */
     async function loadInventoryStats() {
       if (isMobile.value) return
-      const [inventoryItems, tx] = await Promise.all([
-        inventoryApi.list(),
+      const [invSummary, tx] = await Promise.all([
+        inventoryApi.summary(),
         transactionApi.list({ page_size: 10 }),
       ])
-      const totalQuantity = inventoryItems.reduce((sum, p) => sum + (p.quantity || 0), 0)
       inventorySummary.value = {
-        total_inventory: inventoryItems.length,
-        total_quantity: totalQuantity,
+        total_inventory: invSummary.total_inventory ?? 0,
+        total_quantity: invSummary.total_quantity ?? 0,
         today_in: tx.today_in ?? '-',
         today_out: tx.today_out ?? '-',
       }

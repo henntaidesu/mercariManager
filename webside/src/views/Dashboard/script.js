@@ -130,15 +130,14 @@ export default defineComponent({
     }
 
     async function load() {
-      const [inventoryItems, tx] = await Promise.all([
-        inventoryApi.list(),
+      const [invSummary, tx] = await Promise.all([
+        inventoryApi.summary(),
         transactionApi.list({ page_size: 10 }),
       ])
       await loadOrderStats()
-      const totalQuantity = inventoryItems.reduce((sum, p) => sum + (p.quantity || 0), 0)
       summary.value = {
-        total_inventory: inventoryItems.length,
-        total_quantity: totalQuantity,
+        total_inventory: invSummary.total_inventory ?? 0,
+        total_quantity: invSummary.total_quantity ?? 0,
         today_in: tx.today_in ?? '-',
         today_out: tx.today_out ?? '-'
       }

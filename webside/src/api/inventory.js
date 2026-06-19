@@ -3,6 +3,7 @@ import http from './http'
 // 库存 → /mercariV2/src/use_web/inventory/*
 export const inventoryApi = {
   list: (params) => http.get('/use_web/inventory', { params }),
+  summary: () => http.get('/use_web/inventory/summary'),
   get: (id) => http.get(`/use_web/inventory/${id}`),
   pendingOutboundLines: (id) => http.get(`/use_web/inventory/${id}/pending-outbound-lines`),
   usedInCombos: (id) => http.get(`/use_web/inventory/${id}/used-in-combos`),
