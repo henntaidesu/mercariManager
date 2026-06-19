@@ -16,7 +16,7 @@ from src.API import router as v2_router
 from src.lifecycle import register_lifecycle
 from src.web_static import mount_spa, register_health
 
-WEB_DRIVE_FORCE_HEADED_DEBUG = True
+WEB_DRIVE_FORCE_HEADED_DEBUG = False
   # 强制启用 headed 模式以兼容部分环境（如 Windows 打包后）无法正常使用无头模式的情况  
 
 app = FastAPI(title="mercari V2 订单管理", version="2.0.0")

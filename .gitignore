@@ -107,3 +107,5 @@ backend/data/
 # Claude Code 个人本地配置
 .claude/settings.local.json
 backend/mercariDB*
+.agents
+skills-lock.json

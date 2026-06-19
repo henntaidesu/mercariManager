@@ -281,6 +281,78 @@ def _ensure_order_ratio_stored(order_no: str) -> None:
         recompute_and_store_order_ratio(ono)
 
 
+def _chunked(seq: List[Any], size: int = 500):
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
+def ensure_orders_ratio_stored(order_nos: List[str]) -> None:
+    """批量惰性兜底：对「金额>0、有出库行、但无任何 ratio_price」的订单各重算写库一次。
+
+    语义与逐单 _ensure_order_ratio_stored 一致，但用一条查询筛出需要重算的订单，
+    避免对每个订单都各跑「查金额 / 查是否已有比例」两条 SQL。
+    """
+    onos = [str(o or "").strip() for o in order_nos]
+    onos = list(dict.fromkeys([o for o in onos if o]))
+    if not onos:
+        return
+    need: List[str] = []
+    for chunk in _chunked(onos):
+        ph = ",".join("?" * len(chunk))
+        rows = _db.execute_query(
+            f"""
+            SELECT o.[order_no]
+            FROM [orders] o
+            WHERE o.[order_no] IN ({ph})
+              AND COALESCE(o.[amount], 0) > 0
+              AND EXISTS (
+                  SELECT 1 FROM [order_outbound_lines] l WHERE l.[order_no] = o.[order_no]
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM [order_outbound_lines] l
+                  WHERE l.[order_no] = o.[order_no] AND l.[ratio_price] IS NOT NULL
+              )
+            """,
+            tuple(chunk),
+        )
+        need.extend(str(r[0]).strip() for r in rows if r and r[0])
+    for ono in need:
+        recompute_and_store_order_ratio(ono)
+
+
+def owner_amt_by_order(order_nos: List[str], owner_user_id: int) -> Dict[str, int]:
+    """一次性返回 {order_no: 该归属各出库行已持久化 ratio_price 之和}，缺省视为 0。
+
+    口径与 split_order_money_for_owner_user 的归属额完全一致（JOIN inventory、ratio_price 非空、
+    owner_user_id 匹配），但用一条 GROUP BY 取代逐单聚合查询。
+    """
+    oid = int(owner_user_id or 0)
+    onos = [str(o or "").strip() for o in order_nos]
+    onos = list(dict.fromkeys([o for o in onos if o]))
+    out: Dict[str, int] = {}
+    if oid <= 0 or not onos:
+        return out
+    for chunk in _chunked(onos):
+        ph = ",".join("?" * len(chunk))
+        rows = _db.execute_query(
+            f"""
+            SELECT l.[order_no], COALESCE(SUM(l.[ratio_price]), 0)
+            FROM [order_outbound_lines] l
+            JOIN [inventory] p ON p.[id] = l.[inventory_id]
+            WHERE l.[order_no] IN ({ph})
+              AND l.[ratio_price] IS NOT NULL
+              AND IFNULL(p.[owner_user_id], 0) = ?
+            GROUP BY l.[order_no]
+            """,
+            tuple(chunk) + (oid,),
+        )
+        for ono_raw, w_raw in rows:
+            ono = str(ono_raw or "").strip()
+            if ono:
+                out[ono] = int(w_raw or 0)
+    return out
+
+
 def owner_weights_from_order_goods_ratio(order_no: str) -> List[Dict[str, Any]]:
     """
     返回 [{"owner": 展示名同商品归属, "weight": 整数权重}, ...]，weight 为该归属下各出库行

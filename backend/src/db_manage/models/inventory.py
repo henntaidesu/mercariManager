@@ -212,6 +212,7 @@ class InventoryModel(BaseModel):
             {'name': 'idx_inventory_name', 'columns': ['name']},
             {'name': 'idx_inventory_category', 'columns': ['category_id']},
             {'name': 'idx_inventory_barcode', 'columns': ['barcode'], 'unique': True},
+            {'name': 'idx_inventory_owner_user_id', 'columns': ['owner_user_id']},
         ]
 
     @classmethod

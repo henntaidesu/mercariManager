@@ -130,38 +130,46 @@ class _QueryMixin:
                 ELSE 0
             END
         """
-        order_needs_alert_sql = f"""
-            CASE WHEN ({owner_unmatched_sql}) = 1
-                      OR ({no_bound_outbound_sql}) = 1
-                      OR ({packaging_pending_sql}) = 1
-                      OR ({wait_review_pending_alert_sql}) = 1
-                 THEN 1 ELSE 0 END
-        """
+        # 先在派生表里把各告警子句各算一次，外层再用已算出的列派生 order_needs_alert，
+        # 避免 no_bound / packaging / wait_review 子查询被重复求值。
         select_sql = f"""
-            SELECT o.id, o.order_no, o.order_date, o.order_updated_at, o.purchase_time, o.customer_name, o.data_user,
-                   o.status, o.amount,
-                   o.service_fee, o.net_income, o.carrier_display_name, o.request_class_display_name,
-                   o.shipping_fee, o.tracking_no, o.ship_confirm_code, o.transaction_evidence_id, o.remark, o.description,
-                   o.inventory_synced, o.inventory_synced_quantity, o.thumbnails,
-                   COALESCE(o.[packaging_waived], 0) AS packaging_waived,
-                   {pending_case_sql} AS pending_outbound_qty,
-                   {owner_unmatched_sql} AS has_owner_unmatched_outbound,
-                   {no_bound_outbound_sql} AS has_no_bound_outbound,
-                   {packaging_pending_sql} AS has_packaging_pending,
-                   {order_needs_alert_sql} AS order_needs_alert
-            {base_sql}
+            SELECT q.id, q.order_no, q.order_date, q.order_updated_at, q.purchase_time, q.customer_name, q.data_user,
+                   q.status, q.amount,
+                   q.service_fee, q.net_income, q.carrier_display_name, q.request_class_display_name,
+                   q.shipping_fee, q.tracking_no, q.ship_confirm_code, q.transaction_evidence_id, q.remark, q.description,
+                   q.inventory_synced, q.inventory_synced_quantity, q.thumbnails, q.packaging_waived,
+                   q.pending_outbound_qty, q.has_owner_unmatched_outbound, q.has_no_bound_outbound,
+                   q.has_packaging_pending,
+                   CASE WHEN q.has_owner_unmatched_outbound = 1
+                             OR q.has_no_bound_outbound = 1
+                             OR q.has_packaging_pending = 1
+                             OR q.wait_review_pending_alert = 1
+                        THEN 1 ELSE 0 END AS order_needs_alert
+            FROM (
+                SELECT o.id, o.order_no, o.order_date, o.order_updated_at, o.purchase_time, o.customer_name, o.data_user,
+                       o.status, o.amount,
+                       o.service_fee, o.net_income, o.carrier_display_name, o.request_class_display_name,
+                       o.shipping_fee, o.tracking_no, o.ship_confirm_code, o.transaction_evidence_id, o.remark, o.description,
+                       o.inventory_synced, o.inventory_synced_quantity, o.thumbnails,
+                       COALESCE(o.[packaging_waived], 0) AS packaging_waived,
+                       {pending_case_sql} AS pending_outbound_qty,
+                       {owner_unmatched_sql} AS has_owner_unmatched_outbound,
+                       {no_bound_outbound_sql} AS has_no_bound_outbound,
+                       {packaging_pending_sql} AS has_packaging_pending,
+                       {wait_review_pending_alert_sql} AS wait_review_pending_alert
+                {base_sql}
+            ) q
             ORDER BY order_needs_alert DESC,
-                     COALESCE(o.purchase_time, o.order_updated_at, o.order_date) DESC, o.id DESC
+                     COALESCE(q.purchase_time, q.order_updated_at, q.order_date) DESC, q.id DESC
             LIMIT ? OFFSET ?
         """
         term_bind = tuple(TERMINAL_ORDER_STATUSES)
         skip_bind = tuple(OUTBOUND_ALERT_SKIP_STATUSES)
         pkg_bind = tuple(PACKAGING_CHECK_STATUSES)
-        # order_needs_alert 内再次引用 no_bound / packaging 子句，占位符须重复绑定
+        # 派生表内各告警子句仅各算一次：pending(term) / no_bound(skip) / packaging(pkg)，
+        # 占位符按其在 SQL 文本中的先后绑定一次即可。
         bind = (
             term_bind
-            + skip_bind
-            + pkg_bind
             + skip_bind
             + pkg_bind
             + tuple(params)
@@ -179,9 +187,27 @@ class _QueryMixin:
         ]
         items = [dict(zip(keys, row)) for row in rows]
         if owner_user_id is not None and int(owner_user_id) > 0:
-            from ....use_web.orders.units.order_goods_ratio import split_order_money_for_owner_user
+            from ....use_web.orders.units.order_goods_ratio import (
+                ensure_orders_ratio_stored,
+                owner_amt_by_order,
+            )
 
             oid = int(owner_user_id)
+            # 批量兜底比例落库 + 一次性取本页各单该归属额，替代逐行 split 的 N×3 次查询；
+            # 取整/缩放仍逐行进行，与 split_order_money_for_owner_user 完全一致。
+            page_order_nos = [str(row.get("order_no") or "").strip() for row in items]
+            ensure_orders_ratio_stored(page_order_nos)
+            owner_amt_map = owner_amt_by_order(page_order_nos, oid)
+
+            def _scale(v: Any, ratio: float) -> Optional[int]:
+                if v is None or v == "":
+                    return None
+                try:
+                    vi = int(v)
+                except (TypeError, ValueError):
+                    return None
+                return int(round(float(vi) * ratio))
+
             for row in items:
                 row["_owner_split_money_db"] = {
                     "amount": row.get("amount"),
@@ -189,18 +215,18 @@ class _QueryMixin:
                     "shipping_fee": row.get("shipping_fee"),
                     "net_income": row.get("net_income"),
                 }
-                parts = split_order_money_for_owner_user(
-                    str(row.get("order_no") or "").strip(),
-                    oid,
-                    row.get("amount"),
-                    row.get("service_fee"),
-                    row.get("shipping_fee"),
-                    row.get("net_income"),
-                )
-                row["amount"] = parts["amount"]
-                row["service_fee"] = parts["service_fee"]
-                row["shipping_fee"] = parts["shipping_fee"]
-                row["net_income"] = parts["net_income"]
+                amount_raw = row.get("amount")
+                amount = int(amount_raw or 0) if amount_raw is not None else 0
+                if amount > 0:
+                    owner_amt = int(owner_amt_map.get(str(row.get("order_no") or "").strip(), 0))
+                    ratio = float(owner_amt) / float(amount)
+                else:
+                    owner_amt = 0
+                    ratio = 1.0
+                row["amount"] = owner_amt
+                row["service_fee"] = _scale(row.get("service_fee"), ratio)
+                row["shipping_fee"] = _scale(row.get("shipping_fee"), ratio)
+                row["net_income"] = _scale(row.get("net_income"), ratio)
         return {
             'total': total,
             'page': page,

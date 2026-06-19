@@ -182,7 +182,10 @@ class _AggregateMixin:
         owner_user_id: int = 0,
         by_purchase_time: bool = False,
     ) -> Dict[str, Any]:
-        from ....use_web.orders.units.order_goods_ratio import split_order_money_for_owner_user
+        from ....use_web.orders.units.order_goods_ratio import (
+            ensure_orders_ratio_stored,
+            owner_amt_by_order,
+        )
 
         db = cls().db
         base_sql, params = cls._build_list_filter(
@@ -200,31 +203,46 @@ class _AggregateMixin:
         """
         rows = db.execute_query(sql, tuple(params))
         oid = int(owner_user_id)
+
+        # 批量兜底比例落库 + 一次性取每单该归属额，替代逐单 split 的 N 次查询；
+        # 每单的取整/缩放仍在 Python 端逐单进行，与 split_order_money_for_owner_user 完全一致。
+        order_nos = [str(r[0] or "").strip() for r in rows if r and len(r) >= 1]
+        ensure_orders_ratio_stored(order_nos)
+        owner_amt_map = owner_amt_by_order(order_nos, oid)
+
+        def _scale(v: Any, ratio: float) -> Optional[int]:
+            if v is None or v == "":
+                return None
+            try:
+                vi = int(v)
+            except (TypeError, ValueError):
+                return None
+            return int(round(float(vi) * ratio))
+
         tc = 0
         sa = ss = sh = sn = 0
         for r in rows:
             if not r or len(r) < 5:
                 continue
             ono, amt, sf, ship, ni = r[0], r[1], r[2], r[3], r[4]
-            parts = split_order_money_for_owner_user(
-                str(ono or "").strip(),
-                oid,
-                amt,
-                sf,
-                ship,
-                ni,
-            )
+            amount = int(amt or 0) if amt is not None else 0
+            if amount > 0:
+                owner_amt = int(owner_amt_map.get(str(ono or "").strip(), 0))
+                ratio = float(owner_amt) / float(amount)
+            else:
+                owner_amt = 0
+                ratio = 1.0
             tc += 1
-            sa += int(parts.get("amount") or 0)
-            pv = parts.get("service_fee")
+            sa += owner_amt
+            pv = _scale(sf, ratio)
             if pv is not None:
-                ss += int(pv)
-            pv = parts.get("shipping_fee")
+                ss += pv
+            pv = _scale(ship, ratio)
             if pv is not None:
-                sh += int(pv)
-            pv = parts.get("net_income")
+                sh += pv
+            pv = _scale(ni, ratio)
             if pv is not None:
-                sn += int(pv)
+                sn += pv
         return {
             "total_count": tc,
             "sum_amount": sa,
