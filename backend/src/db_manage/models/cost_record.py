@@ -83,6 +83,8 @@ class CostRecordModel(BaseModel):
             {'name': 'idx_cost_records_date', 'columns': ['cost_date']},
             {'name': 'idx_cost_records_type', 'columns': ['type']},
             {'name': 'idx_cost_records_warehouse', 'columns': ['warehouse_id']},
+            # 包材按名称取最新行（_find_packaging_item_latest）：type+item_name 过滤 + cost_date 排序
+            {'name': 'idx_cost_records_type_item_date', 'columns': ['type', 'item_name', 'cost_date']},
         ]
 
     @classmethod

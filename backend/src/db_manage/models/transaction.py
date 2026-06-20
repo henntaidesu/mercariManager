@@ -90,6 +90,7 @@ class TransactionModel(BaseModel):
         return [
             {'name': 'idx_transactions_inventory', 'columns': ['inventory_id']},
             {'name': 'idx_transactions_warehouse', 'columns': ['warehouse_id']},
+            {'name': 'idx_transactions_target_warehouse', 'columns': ['target_warehouse_id']},
             {'name': 'idx_transactions_created', 'columns': ['created_at']},
         ]
 

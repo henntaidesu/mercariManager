@@ -67,7 +67,13 @@ def _serialize(wh: WarehouseModel) -> dict:
 
 
 def list_warehouses():
-    return [_serialize(w) for w in WarehouseModel.find_all(order_by="id ASC")]
+    stats = WarehouseModel.get_stats_all()
+    out = []
+    for w in WarehouseModel.find_all(order_by="id ASC"):
+        d = w.to_dict()
+        d.update(stats.get(int(w.id), {'total_quantity': 0, 'product_types': 0}))
+        out.append(d)
+    return out
 
 
 def _row_wh_key(w: WarehouseModel) -> str:

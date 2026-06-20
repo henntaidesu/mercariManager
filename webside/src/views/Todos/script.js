@@ -766,7 +766,7 @@ export default defineComponent({
       syncOverlayVisible.value = true
       syncLoading.value = true
       await pollSyncProgress()
-      syncProgressTimer = setInterval(pollSyncProgress, 400)
+      syncProgressTimer = setInterval(pollSyncProgress, 1000)
 
       let syncHadError = false
       try {

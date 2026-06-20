@@ -193,7 +193,7 @@ def match_inventory_for_item(item_id: str) -> Dict[str, Any]:
         LEFT JOIN [warehouses] w ON w.id = p.warehouse_id
         LEFT JOIN [product_type_category_mappings] ptcm
                ON ptcm.mapping_id = CAST(p.product_type_id AS TEXT)
-        WHERE TRIM(l.order_no) = TRIM(?)
+        WHERE l.order_no = ?
           AND l.inventory_id IS NOT NULL
           AND COALESCE(p.is_delete, 0) = 0
         GROUP BY p.id
@@ -232,7 +232,7 @@ def match_inventory_for_item(item_id: str) -> Dict[str, Any]:
     # 订单号即 item_id：仅当库中确有该订单时回显
     order_nos: List[str] = []
     has_order = db.execute_query(
-        "SELECT 1 FROM [orders] WHERE TRIM(order_no) = TRIM(?) LIMIT 1",
+        "SELECT 1 FROM [orders] WHERE order_no = ? LIMIT 1",
         (iid,),
     )
     if has_order:

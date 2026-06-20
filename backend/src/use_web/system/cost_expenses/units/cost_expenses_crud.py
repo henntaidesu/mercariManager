@@ -73,12 +73,11 @@ def list_cost_expenses(
 def create_cost_expense(data: CostExpenseCreate):
     item_name = _validate_required_text(data.item_name, "物品名称")
     expense_quantity = _validate_positive_int(data.quantity, "数量")
-    _validate_packaging_stock(item_name, expense_quantity)
+    # 包材源行只查一次，复用于库存校验与类型同步（原先三处各查一次 cost_records）
     source = _find_packaging_item_latest(item_name)
-    if not source:
-        raise HTTPException(status_code=400, detail="库存包材中不存在该物品名称")
+    _validate_packaging_stock(item_name, expense_quantity, source=source)
     source_original_quantity = int(source.quantity or 0)
-    synced_type = _sync_expense_type_from_source(item_name)
+    synced_type = _sync_expense_type_from_source(item_name, source=source)
     bound_order_no = _ensure_order_exists(data.order_no)
     unit_price = _validate_positive_int(data.unit_price, "单价")
     expense_total = int(expense_quantity) * int(unit_price)

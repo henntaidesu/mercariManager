@@ -146,4 +146,6 @@ class NotificationModel(BaseModel):
             {"name": "idx_notifications_account_kind", "columns": ["account_id", "kind"]},
             {"name": "idx_notifications_item_id", "columns": ["item_id"]},
             {"name": "idx_notifications_mercari_created", "columns": ["mercari_created"]},
+            # 默认视图按「未读」过滤并按 mercari_created 排序
+            {"name": "idx_notifications_isread_created", "columns": ["is_read", "mercari_created"]},
         ]

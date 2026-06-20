@@ -130,6 +130,52 @@ class WarehouseModel(BaseModel):
         }
 
     @classmethod
+    def get_stats_all(cls) -> Dict[int, Dict[str, int]]:
+        """一次性返回 {warehouse_id: {total_quantity, product_types}}，口径与 get_stats 完全一致，
+        但用一条按 (仓库, 商品) 聚合的查询替代「逐仓库 2 次全表扫描」的 N+1。
+
+        每笔 transactions 对仓位的净增减：in/out/transfer 计入 warehouse_id（in 加、out/transfer 减），
+        transfer 另把数量计入 target_warehouse_id。total_quantity = 该仓位所有净增减之和；
+        product_types = 该仓位下「按商品聚合后净库存 > 0」的商品种类数。
+        """
+        db = cls().db
+        rows = db.execute_query(
+            """
+            SELECT wh, SUM(net) AS total_quantity,
+                   SUM(CASE WHEN net > 0 THEN 1 ELSE 0 END) AS product_types
+            FROM (
+                SELECT wh, inventory_id, SUM(delta) AS net
+                FROM (
+                    SELECT warehouse_id AS wh, inventory_id,
+                           CASE type
+                               WHEN 'in' THEN quantity
+                               WHEN 'out' THEN -quantity
+                               WHEN 'transfer' THEN -quantity
+                               ELSE 0
+                           END AS delta
+                    FROM [transactions]
+                    WHERE warehouse_id IS NOT NULL
+                    UNION ALL
+                    SELECT target_warehouse_id AS wh, inventory_id, quantity AS delta
+                    FROM [transactions]
+                    WHERE type = 'transfer' AND target_warehouse_id IS NOT NULL
+                )
+                GROUP BY wh, inventory_id
+            )
+            GROUP BY wh
+            """
+        )
+        out: Dict[int, Dict[str, int]] = {}
+        for r in rows or []:
+            if r is None or r[0] is None:
+                continue
+            out[int(r[0])] = {
+                'total_quantity': int(r[1] or 0),
+                'product_types': int(r[2] or 0),
+            }
+        return out
+
+    @classmethod
     def sql_display_label(cls, alias: str = "w") -> str:
         """JOIN warehouses AS {alias} 时，列表展示的仓位文案：有货架名称则「名称（货架号）」否则货架号"""
         a = alias.strip() or "w"

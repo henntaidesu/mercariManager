@@ -54,3 +54,13 @@ class CategoryModel(BaseModel):
             "SELECT COUNT(*) FROM [inventory] WHERE category_id = ?", (category_id,)
         )
         return result[0][0] if result else 0
+
+    @classmethod
+    def get_inventory_counts_all(cls) -> Dict[int, int]:
+        """一次性返回 {category_id: 库存条数}，供列表避免逐分类 COUNT 的 N+1。"""
+        db = cls().db
+        rows = db.execute_query(
+            "SELECT category_id, COUNT(*) FROM [inventory] "
+            "WHERE category_id IS NOT NULL GROUP BY category_id"
+        )
+        return {int(r[0]): int(r[1] or 0) for r in rows if r and r[0] is not None}

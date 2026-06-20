@@ -81,7 +81,8 @@ def list_notifications(
     where = ["1=1"]
     params: List[Any] = []
     if only_unread:
-        where.append("COALESCE(n.[is_read], 0) = 0")
+        # is_read 为 NOT NULL DEFAULT 0，等价于 COALESCE(...,0)=0，但裸列比较可命中索引
+        where.append("n.[is_read] = 0")
     if account_id is not None:
         where.append("n.[account_id] = ?")
         params.append(int(account_id))

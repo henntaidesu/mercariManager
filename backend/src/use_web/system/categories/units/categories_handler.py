@@ -23,7 +23,13 @@ def _serialize(cat: CategoryModel) -> dict:
 
 
 def list_categories():
-    return [_serialize(c) for c in CategoryModel.find_all(order_by="id ASC")]
+    counts = CategoryModel.get_inventory_counts_all()
+    out = []
+    for c in CategoryModel.find_all(order_by="id ASC"):
+        d = c.to_dict()
+        d['inventory_count'] = counts.get(int(c.id), 0)
+        out.append(d)
+    return out
 
 
 def create_category(data: CategoryCreate):

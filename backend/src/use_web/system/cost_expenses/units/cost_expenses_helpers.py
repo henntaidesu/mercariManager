@@ -50,8 +50,10 @@ def _find_packaging_item_latest(item_name: str):
     return rows[0] if rows else None
 
 
-def _validate_packaging_stock(item_name: str, quantity: int):
-    source = _find_packaging_item_latest(item_name)
+def _validate_packaging_stock(item_name: str, quantity: int, source=None):
+    """source 可由调用方预取传入，避免重复查询 cost_records。"""
+    if source is None:
+        source = _find_packaging_item_latest(item_name)
     if not source:
         raise HTTPException(status_code=400, detail="库存包材中不存在该物品名称")
     stock_qty = int(source.quantity or 0)
@@ -59,8 +61,10 @@ def _validate_packaging_stock(item_name: str, quantity: int):
         raise HTTPException(status_code=400, detail=f"库存包材数量不足，当前仅剩 {stock_qty}")
 
 
-def _sync_expense_type_from_source(item_name: str) -> str:
-    source = _find_packaging_item_latest(item_name)
+def _sync_expense_type_from_source(item_name: str, source=None) -> str:
+    """source 可由调用方预取传入，避免重复查询 cost_records。"""
+    if source is None:
+        source = _find_packaging_item_latest(item_name)
     if not source:
         raise HTTPException(status_code=400, detail="库存包材中不存在该物品名称")
     source_type = (source.type or "").strip()
