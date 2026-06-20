@@ -7,6 +7,9 @@ export const todosApi = {
   /** 「発送をしてください」处理：按商品 ID 反查本地库存（图片）与关联订单号 */
   matchInventory: (itemId, axiosConfig = {}) =>
     http.get('/use_web/todos/inventory-match', { params: { item_id: itemId }, ...axiosConfig }),
+  /** 旧数据按需翻译：把单条消息日译中并写回 text_zh，返回 { ok, text_zh } */
+  translateMessage: (payload, axiosConfig = {}) =>
+    http.post('/use_web/todos/translate-message', payload, { timeout: 20000, ...axiosConfig }),
   sync: (data, axiosConfig = {}) =>
     http.post('/use_web/todos/sync', data, { timeout: 0, ...axiosConfig }),
   /** 与 sync 的 progress_job_id 配合，轮询当前同步步骤 */

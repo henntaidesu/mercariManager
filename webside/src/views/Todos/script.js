@@ -940,8 +940,56 @@ export default defineComponent({
       return `https://jp.mercari.com/item/${s}`
     }
 
+    // 消息译文/原文切换：默认显示中文译文（仅买家消息且有 text_zh），点「原文」切回日文。
+    // 按消息 id（无 id 退化为索引）记录哪些消息正在显示原文；每次打开详情重置。
+    const msgOriginalKeys = reactive(new Set())
+    function msgKeyOf(m, i) {
+      return m && m.id ? `id:${m.id}` : `i:${i}`
+    }
+    function isShowingOriginal(m, i) {
+      return msgOriginalKeys.has(msgKeyOf(m, i))
+    }
+    function toggleMsgOriginal(m, i) {
+      const k = msgKeyOf(m, i)
+      if (msgOriginalKeys.has(k)) msgOriginalKeys.delete(k)
+      else msgOriginalKeys.add(k)
+    }
+    function msgDisplayText(m, i) {
+      if (m && m.is_buyer && m.text_zh && !isShowingOriginal(m, i)) return m.text_zh
+      return (m && m.text) || ''
+    }
+
+    // 旧数据按需翻译：买家消息无 text_zh 时显示「翻译」按钮，点后调后端译中并写回。
+    const msgTranslatingKeys = reactive(new Set())
+    function isTranslating(m, i) {
+      return msgTranslatingKeys.has(msgKeyOf(m, i))
+    }
+    async function onTranslateOld(m, i) {
+      if (!m || !m.text || isTranslating(m, i)) return
+      const k = msgKeyOf(m, i)
+      msgTranslatingKeys.add(k)
+      try {
+        const res = await todosApi.translateMessage({
+          order_no: detail.item_id || '',
+          msg_id: m.id || null,
+          text: m.text,
+        })
+        if (res && res.text_zh) {
+          m.text_zh = res.text_zh // 反应式：按钮切换为「原文/译文」并默认显示中文
+        } else {
+          ElMessage.info(t('todos.translateUnavailable')) // 静默回落：保持原文
+        }
+      } catch {
+        ElMessage.info(t('todos.translateUnavailable'))
+      } finally {
+        msgTranslatingKeys.delete(k)
+      }
+    }
+
     function onProcess(row) {
       currentRow.value = row
+      msgOriginalKeys.clear()
+      msgTranslatingKeys.clear()
       Object.assign(detail, createEmptyDetail(), {
         item_id: row.item_id || '',
         item_name: row.item_name || '',
@@ -1642,6 +1690,11 @@ export default defineComponent({
       REACTION_EMOJI_BY_KEY,
       reactionOptions,
       emojiFor,
+      msgDisplayText,
+      isShowingOriginal,
+      toggleMsgOriginal,
+      isTranslating,
+      onTranslateOld,
       isReviewedSeller,
       isWaitReply,
       canReactToMessages,

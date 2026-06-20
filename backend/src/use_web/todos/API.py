@@ -14,6 +14,7 @@ from typing import Optional
 from fastapi import APIRouter
 
 from .units.todos_query import list_kinds, list_todos, match_inventory_for_item
+from .units.todos_translate import translate_message_endpoint
 from .units.todos_sync import (
     bulk_submit_reviews_endpoint,
     camera_frame_endpoint,
@@ -68,6 +69,7 @@ def _inventory_match_endpoint(item_id: str = ""):
 router.add_api_route("", _list_todos_endpoint, methods=["GET"])
 router.add_api_route("/kinds", _list_kinds_endpoint, methods=["GET"])
 router.add_api_route("/inventory-match", _inventory_match_endpoint, methods=["GET"])
+router.add_api_route("/translate-message", translate_message_endpoint, methods=["POST"])
 router.add_api_route("/sync", sync_todos, methods=["POST"])
 router.add_api_route("/sync-progress/{job_id}", todos_sync_progress, methods=["GET"])
 router.add_api_route("/{todo_id}/transaction-detail", fetch_todo_transaction_detail, methods=["POST"])

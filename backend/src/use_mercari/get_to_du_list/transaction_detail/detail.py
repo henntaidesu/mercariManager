@@ -16,7 +16,8 @@ from ._cache import _clear_qr_image, _persist_transaction_detail
 from ._captures import _wait_for_both_captures
 from ._common import _WAIT_REPLY_KINDS, _is_wait_shipping_todo, _parse_messages, _parse_shipping_info
 from ._messages_media import cache_message_images
-from ._messages_store import replace_order_messages
+from ._messages_store import load_order_messages, replace_order_messages
+from ._translate import translate_buyer_messages
 from ._qr_facility import _extract_delivery_address, _extract_post_ship_ready, _extract_shipping_facility, _qr_code_exists, _save_qr_code_image
 
 log = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ async def fetch_transaction_detail(
             start_url=url,
             since_ms=since_ms,
             require=require_api,
+            expect_item_id=item_id,
         )
         # 同步发货码（QR 二维码 / らくらく×セブン等返回的条形码，二者通用同一处理）：
         # 交易页若带发货码（含在 App/其他平台已完成发货）→ 抓取保存；
@@ -132,6 +134,15 @@ async def fetch_transaction_detail(
     # 消息里的图片（storage.googleapis.com 签名 URL，会过期）下载到本地 /imges 持久化，
     # 前端只显示本地图、不直连煤炉/谷歌签名 URL。原地把 messages[i].images 换成本地路径。
     await cache_message_images(item_id, int(todo_id), messages_part.get("messages") or [])
+    # 买家消息日译中（仅新数据）：存入 text_zh，复用上次译文避免重复请求免费端点。
+    if messages is not None:
+        try:
+            await translate_buyer_messages(
+                messages_part.get("messages") or [],
+                old_messages=load_order_messages(item_id),
+            )
+        except Exception as exc:  # noqa: BLE001 翻译失败不影响主流程
+            log.debug("[txdetail] 买家消息翻译失败 todo_id=%s: %s", todo_id, exc)
     # 消息按订单ID写入 transaction_messages（唯一来源）：仅在确实截获到消息接口时整体替换，
     # 避免待发货等未取消息的抓取把已存的对话清空。
     if messages is not None:

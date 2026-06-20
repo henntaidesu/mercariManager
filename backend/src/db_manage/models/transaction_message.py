@@ -70,6 +70,12 @@ class TransactionMessageModel(BaseModel):
                 "not_null": False,
                 "default": None,
             },
+            # 中文译文（仅买家消息、抓取时经谷歌翻译生成；旧数据为 NULL）
+            "text_zh": {
+                "type": "TEXT",
+                "not_null": False,
+                "default": None,
+            },
             # 本地 /imges 路径列表（JSON 字符串）
             "images_json": {
                 "type": "TEXT",

@@ -15,6 +15,16 @@ class SendTransactionMessageRequest(PydanticModel):
     progress_job_id: Optional[str] = None
 
 
+class TranslateMessageRequest(PydanticModel):
+    """按需翻译单条消息（旧数据「翻译」按钮）：译为中文并写回 text_zh。"""
+
+    # 订单ID（= item_id），用于把译文写回对应消息行；缺失则只翻译不持久化
+    order_no: str = ""
+    # 煤炉消息 id（用于精确定位行；可空，空则按原文定位）
+    msg_id: Optional[str] = None
+    text: str = Field(..., min_length=1, max_length=2000)
+
+
 class ConfirmShippingSelectionRequest(PydanticModel):
     class_text: str = Field(..., min_length=1, max_length=200)
     # 仅对需要选择 facility 的 size 必填，与煤炉 radio value 一致：

@@ -413,6 +413,19 @@
   font-size: 10px;
   color: var(--el-text-color-placeholder);
 }
+.detail-msg-trans-toggle {
+  margin-right: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--el-color-primary);
+}
+.detail-msg-trans-toggle:hover {
+  text-decoration: underline;
+}
 .detail-msg-footer {
   display: flex;
   align-items: center;

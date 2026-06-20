@@ -29,6 +29,8 @@ from ._cache import (
     list_uncached_detail_todo_ids,
 )
 from .precache import precache_uncached_todo_details
+from ._translate import translate_text
+from ._messages_store import set_message_translation
 
 # ── 待评价 ──
 from .review import submit_transaction_review
@@ -69,6 +71,8 @@ __all__ = [
     "get_cached_transaction_detail",
     "list_uncached_detail_todo_ids",
     "precache_uncached_todo_details",
+    "translate_text",
+    "set_message_translation",
     "submit_transaction_review",
     "bulk_submit_reviews_for_account",
     "list_pending_review_todos",

@@ -51,6 +51,7 @@ def replace_order_messages(
                 (m.get("user_id") or None),
                 1 if m.get("is_buyer") else 0,
                 (m.get("text") or ""),
+                (m.get("text_zh") or None),
                 _images_to_json(m.get("images")),
                 (m.get("reaction") or None),
                 (m.get("at") or None),
@@ -67,8 +68,8 @@ def replace_order_messages(
                 cur.executemany(
                     "INSERT INTO [transaction_messages] "
                     "([order_no],[account_id],[msg_id],[sender_name],[user_id],[is_buyer],"
-                    "[text],[images_json],[reaction],[at_text],[created_ms],[sort_index],[synced_at]) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "[text],[text_zh],[images_json],[reaction],[at_text],[created_ms],[sort_index],[synced_at]) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     rows,
                 )
             conn.commit()
@@ -83,7 +84,7 @@ def load_order_messages(order_no: str) -> List[Dict[str, Any]]:
         return []
     try:
         rows = DatabaseManager().execute_query(
-            "SELECT [msg_id],[sender_name],[user_id],[is_buyer],[text],[images_json],"
+            "SELECT [msg_id],[sender_name],[user_id],[is_buyer],[text],[text_zh],[images_json],"
             "[reaction],[at_text],[created_ms],[sort_index] "
             "FROM [transaction_messages] WHERE TRIM([order_no])=TRIM(?) "
             "ORDER BY COALESCE([created_ms],0) ASC, [sort_index] ASC, [id] ASC",
@@ -93,7 +94,7 @@ def load_order_messages(order_no: str) -> List[Dict[str, Any]]:
         log.warning("[txmsg] 读取订单消息失败 order_no=%s: %s", ono, exc)
         return []
     out: List[Dict[str, Any]] = []
-    for msg_id, sender, uid, is_buyer, text, images_json, reaction, at_text, created_ms, _sort in rows:
+    for msg_id, sender, uid, is_buyer, text, text_zh, images_json, reaction, at_text, created_ms, _sort in rows:
         try:
             images = json.loads(images_json) if images_json else []
             if not isinstance(images, list):
@@ -105,6 +106,7 @@ def load_order_messages(order_no: str) -> List[Dict[str, Any]]:
                 "id": msg_id or None,
                 "from": sender or None,
                 "text": text or "",
+                "text_zh": text_zh or None,
                 "at": at_text or None,
                 "is_buyer": bool(is_buyer),
                 "user_id": uid or None,
@@ -114,6 +116,49 @@ def load_order_messages(order_no: str) -> List[Dict[str, Any]]:
             }
         )
     return out
+
+
+def set_message_translation(
+    order_no: str,
+    msg_id: Optional[str],
+    text: str,
+    text_zh: str,
+) -> bool:
+    """把按需翻译得到的中文译文写回某条消息（旧数据按钮触发）。
+
+    优先按 ``(order_no, msg_id)`` 定位；msg_id 缺失时按 ``(order_no, 原文)`` 命中一行
+    （优先未翻译的）。命中并更新返回 True。
+    """
+    ono = (order_no or "").strip()
+    if not ono or not (text_zh or "").strip():
+        return False
+    db = DatabaseManager()
+    try:
+        mid = (str(msg_id).strip() if msg_id is not None else "")
+        if mid:
+            n = db.execute_update(
+                "UPDATE [transaction_messages] SET [text_zh]=? "
+                "WHERE TRIM([order_no])=TRIM(?) AND [msg_id]=?",
+                (text_zh, ono, mid),
+            )
+            if n:
+                return True
+        # 无 msg_id 或未命中：按原文定位一行（优先尚未翻译的）
+        rows = db.execute_query(
+            "SELECT [id] FROM [transaction_messages] "
+            "WHERE TRIM([order_no])=TRIM(?) AND [text]=? "
+            "ORDER BY ([text_zh] IS NOT NULL) ASC, [id] ASC LIMIT 1",
+            (ono, text or ""),
+        )
+        if rows and rows[0]:
+            db.execute_update(
+                "UPDATE [transaction_messages] SET [text_zh]=? WHERE [id]=?",
+                (text_zh, rows[0][0]),
+            )
+            return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[txmsg] 写回译文失败 order_no=%s: %s", ono, exc)
+    return False
 
 
 def load_order_buyer_name(order_no: str) -> Optional[str]:
