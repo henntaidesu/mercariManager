@@ -81,6 +81,12 @@ async def _on_startup(force_headed_debug: bool = False) -> None:
 
     asyncio.create_task(mercari_auto_fetch_loop())
 
+    # ④.5 内存回收后台循环（周期性 gc + Windows 工作集裁剪；MEMORY_RECYCLE_AUTO=0 可关闭）
+    if _env_enabled("MEMORY_RECYCLE_AUTO"):
+        from .memory_recycle import memory_recycle_loop
+
+        asyncio.create_task(memory_recycle_loop())
+
     async def _startup_web_drive_browsers() -> None:
         # 煤炉账号页「打开浏览器」：有头 mercari_{id}；INTERACTIVE_BROWSER_AUTO_START=0 可关闭
         from .web_drive.core.interactive_browser import (
