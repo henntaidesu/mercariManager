@@ -48,6 +48,9 @@
           >{{ t('notifications.showPrivateMessages') }}</div>
         </el-col>
         <el-col :xs="24" :md="8" class="search-actions">
+          <el-button type="success" plain :loading="markAllReadLoading" :disabled="!list.length" @click="onMarkAllRead">
+            {{ t('notifications.markAllRead') }}
+          </el-button>
           <el-tooltip :disabled="!syncLockStore.locked" :content="syncLockStore.label" placement="top">
             <span>
               <el-button type="primary" :icon="Download" :loading="syncLoading || syncLockStore.locked" :disabled="syncLockStore.locked" @click="runSync">

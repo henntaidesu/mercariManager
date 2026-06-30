@@ -16,6 +16,9 @@ const http = axios.create({
 let offlineLoading = null
 let healthTimer = null
 
+// ---- 登录过期：并发 401 只提示一次 ----
+let authExpiredHandled = false
+
 function isNetworkError(err) {
   return err.code === 'ERR_NETWORK' || err.message === 'Network Error'
 }
@@ -67,6 +70,8 @@ http.interceptors.response.use(
   (res) => {
     // 任意请求成功即视为后端已恢复，关闭断连提示
     hideOfflineOverlay()
+    // 请求成功说明已重新登录，重置过期提示标记
+    authExpiredHandled = false
     return res.data
   },
   (err) => {
@@ -81,9 +86,16 @@ http.interceptors.response.use(
     if (err.response?.status === 401) {
       localStorage.removeItem('auth_token')
       localStorage.removeItem('auth_user')
-      if (window.location.hash !== '#/login') {
-        window.location.hash = '#/login'
+      // 并发请求会同时收到 401，这里只提示一次并跳转登录页
+      if (!authExpiredHandled) {
+        authExpiredHandled = true
+        const msg = err.response?.data?.detail || '登录已过期，请重新登录'
+        ElMessage.error(msg)
+        if (window.location.hash !== '#/login') {
+          window.location.hash = '#/login'
+        }
       }
+      return Promise.reject(err)
     }
     const msg = err.response?.data?.detail || err.message || '请求失败'
     ElMessage.error(msg)

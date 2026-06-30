@@ -211,6 +211,30 @@ async def _extract_post_ship_ready(page: Any) -> Dict[str, Any]:
         "method": (data.get("method") or "").strip() or None,
     }
 
+# 「待反馈」状態：発送通知済みで、メルカリ側がデータ確認中（確認後は発送通知が自動で
+# 購入者へ送信される）。出品者は何もする必要がなく、メルカリの反映待ち。
+# 交易ページの「購入者の受取をお待ちください」見出し配下に
+# 「データの確認に時間がかかる場合がございます。確認後、発送通知は自動で購入者へ送信されます。」
+# が表示される。この一文を可視テキストから検出する（i18n の JSON 文字列は body.innerText に
+# 含まれないので誤検知しない）。
+_AWAITING_FEEDBACK_JS = """
+() => {
+  const body = document.body ? (document.body.innerText || '') : '';
+  return body.includes('発送通知は自動で購入者へ送信されます');
+}
+"""
+
+async def _extract_awaiting_feedback(page: Any) -> bool:
+    """检测交易页是否处于「待反馈」状态（已发送发货通知、煤炉确认中、确认后自动通知买家）。
+
+    抓取失败时返回 False。
+    """
+    try:
+        return bool(await page.evaluate(_AWAITING_FEEDBACK_JS))
+    except Exception as exc:
+        log.debug("[shipping] 提取待反馈状态失败: %s", exc)
+        return False
+
 def _persist_post_ship_ready(
     todo_id: int,
     *,

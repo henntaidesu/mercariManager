@@ -99,6 +99,12 @@
 .cell-muted {
   color: var(--el-text-color-placeholder);
 }
+.cell-ship-days {
+  font-size: 13px;
+}
+.cell-ship-remain {
+  margin-top: 4px;
+}
 .cell-muted-sm {
   color: var(--el-text-color-placeholder);
   font-size: 11px;

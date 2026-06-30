@@ -134,6 +134,7 @@ class _QueryMixin:
         # 避免 no_bound / packaging / wait_review 子查询被重复求值。
         select_sql = f"""
             SELECT q.id, q.order_no, q.order_date, q.order_updated_at, q.purchase_time, q.customer_name, q.data_user,
+                   q.account_name,
                    q.status, q.amount,
                    q.service_fee, q.net_income, q.carrier_display_name, q.request_class_display_name,
                    q.shipping_fee, q.tracking_no, q.ship_confirm_code, q.transaction_evidence_id, q.remark, q.description,
@@ -147,6 +148,10 @@ class _QueryMixin:
                         THEN 1 ELSE 0 END AS order_needs_alert
             FROM (
                 SELECT o.id, o.order_no, o.order_date, o.order_updated_at, o.purchase_time, o.customer_name, o.data_user,
+                       (SELECT ma.account_name FROM [mercari_accounts] ma
+                        WHERE IFNULL(TRIM(o.data_user), '') != ''
+                          AND TRIM(ma.seller_id) = TRIM(o.data_user)
+                        LIMIT 1) AS account_name,
                        o.status, o.amount,
                        o.service_fee, o.net_income, o.carrier_display_name, o.request_class_display_name,
                        o.shipping_fee, o.tracking_no, o.ship_confirm_code, o.transaction_evidence_id, o.remark, o.description,
@@ -177,7 +182,8 @@ class _QueryMixin:
         )
         rows = db.execute_query(select_sql, bind)
         keys = [
-            'id', 'order_no', 'order_date', 'order_updated_at', 'purchase_time', 'customer_name', 'data_user', 'status',
+            'id', 'order_no', 'order_date', 'order_updated_at', 'purchase_time', 'customer_name', 'data_user',
+            'account_name', 'status',
             'amount',
             'service_fee', 'net_income', 'carrier_display_name', 'request_class_display_name',
             'shipping_fee', 'tracking_no', 'ship_confirm_code', 'transaction_evidence_id', 'remark', 'description',

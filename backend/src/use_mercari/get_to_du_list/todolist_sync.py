@@ -148,6 +148,8 @@ def apply_todolist_sync(account_id: int, items: List[Dict[str, Any]]) -> Dict[st
     updated = 0
     skipped = 0
     new_wait_shipping = 0
+    # 新插入的「待发货」待办的商品 ID（供同步后用空白浏览器抓取发货期限；仅新数据，不抓全部）
+    new_wait_shipping_item_ids: List[str] = []
     incoming_uuids: List[str] = []
 
     for item in items:
@@ -165,6 +167,9 @@ def apply_todolist_sync(account_id: int, items: List[Dict[str, Any]]) -> Dict[st
             # 新插入(=新出现)的待发货待办视为「新的待发货数据」，用于联动同步在售/订单
             if _row_is_wait_shipping(row):
                 new_wait_shipping += 1
+                iid = (row.get("item_id") or "").strip()
+                if iid:
+                    new_wait_shipping_item_ids.append(iid)
         elif action == "updated":
             updated += 1
         else:
@@ -194,6 +199,7 @@ def apply_todolist_sync(account_id: int, items: List[Dict[str, Any]]) -> Dict[st
         "updated": updated,
         "skipped": skipped,
         "new_wait_shipping": new_wait_shipping,
+        "new_wait_shipping_item_ids": new_wait_shipping_item_ids,
         "marked_deleted": int(marked_deleted or 0),
     }
 
@@ -298,6 +304,20 @@ async def sync_todos_with_details(
     )
     stats["detail_fetched"] = int(fetched)
     stats["detail_failed"] = int(failed)
+
+    # ── 新待发货：用空白账号浏览器访问公开商品页抓取「発送までの日数」(发货期限) ──
+    #    仅对本次**新插入**的待发货待办抓取（新数据），不是每次对全部待发货都抓。
+    new_ws_item_ids = stats.get("new_wait_shipping_item_ids") or []
+    if new_ws_item_ids and aid:
+        from .shipping_duration import fetch_and_store_shipping_durations
+
+        try:
+            stats["shipping_duration_fetched"] = await fetch_and_store_shipping_durations(
+                aid, new_ws_item_ids, progress_job_id=progress_job_id
+            )
+        except Exception as exc:  # noqa: BLE001 抓取失败不影响待办同步结果
+            log.warning("[todolist] account_id=%s 抓取发货期限失败: %s", aid, exc)
+            stats["shipping_duration_error"] = str(exc)
 
     # ── 联动同步：本次有新待发货（=有新订单成交）→ 同步一次在售列表与订单列表 ──
     #    没有新待发货则不触发，避免无谓抓取。

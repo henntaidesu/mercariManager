@@ -44,6 +44,19 @@ def _persist_qr_image_path(todo_id: int, path: str) -> None:
     except Exception as exc:
         log.warning("[shipping] 保存二维码路径失败 todo_id=%s: %s", todo_id, exc)
 
+def _persist_awaiting_feedback(todo_id: int, value: bool) -> None:
+    """保存「待反馈」状态到 todo_items.awaiting_feedback（供 /#/todos 列表展示绿色状态）。
+
+    每次抓到页面都按当前实际状态写入（1/0），可自动随状态变化纠正。
+    """
+    try:
+        DatabaseManager().execute_update(
+            "UPDATE [todo_items] SET [awaiting_feedback]=? WHERE [id]=?",
+            (1 if value else 0, int(todo_id)),
+        )
+    except Exception as exc:
+        log.warning("[txdetail] 保存待反馈状态失败 todo_id=%s: %s", todo_id, exc)
+
 def _clear_qr_image(todo_id: int) -> None:
     """清除已保存的发货二维码：删除本地文件 + 清空 qr_image_path + 从 detail_json 摘掉。"""
     db = DatabaseManager()

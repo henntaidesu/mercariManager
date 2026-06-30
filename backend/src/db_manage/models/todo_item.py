@@ -134,6 +134,20 @@ class TodoItemModel(BaseModel):
                 "not_null": False,
                 "default": None,
             },
+            # awaiting_feedback: 已发送发货通知、煤炉确认数据中（确认后会自动向购入者
+            # 发送发送通知），卖家无需操作、等待煤炉反馈的「待反馈」状态。1=是 0/NULL=否。
+            "awaiting_feedback": {
+                "type": "INTEGER",
+                "not_null": False,
+                "default": 0,
+            },
+            # shipping_duration: 商品页「発送までの日数」(发货期限，如「4~7日で発送」)。
+            # 仅在「从煤炉同步」检测到新待发货时，用空白账号浏览器访问公开商品页抓取并写入。
+            "shipping_duration": {
+                "type": "TEXT",
+                "not_null": False,
+                "default": None,
+            },
         }
 
     @classmethod

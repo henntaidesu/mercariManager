@@ -902,6 +902,9 @@ export default defineComponent({
       const isRow = kindOrRow && typeof kindOrRow === 'object'
       const kind = String((isRow ? kindOrRow.kind : kindOrRow) || '').trim()
       const title = isRow ? String(kindOrRow.title || '').trim() : ''
+      // 「待反馈」（发送通知已完成、煤炉确认数据中、确认后自动通知买家）优先于一切：
+      // 卖家无需操作，仅等待煤炉反馈。绿色标签（见 kindTagType）。
+      if (isRow && kindOrRow.awaiting_feedback) return t('todos.kind.awaitingFeedback')
       // Shipped（已发货 / 待买家收货）优先于标题判断：即便标题为「発送をしてください」也按待收货
       if (kind === 'Shipped') return t('todos.kind.waitReceipt')
       // 待发货：若已发行发货二维码/条形码（qr_image_path），类型显示映射为「已打包」（仅改名称）
@@ -920,6 +923,8 @@ export default defineComponent({
       const isRow = kindOrRow && typeof kindOrRow === 'object'
       const kind = String((isRow ? kindOrRow.kind : kindOrRow) || '').trim()
       const title = isRow ? String(kindOrRow.title || '').trim() : ''
+      // 「待反馈」状态用绿色（success），与 kindLabel 的优先级保持一致
+      if (isRow && kindOrRow.awaiting_feedback) return 'success'
       if (kind === 'Shipped') return KIND_TAG_TYPES.Shipped
       if (title === WAIT_SHIPPING_TITLE) return 'warning'
       return KIND_TAG_TYPES[kind] || 'info'
@@ -932,6 +937,56 @@ export default defineComponent({
       if (Number.isNaN(d.getTime())) return '-'
       const pad = (x) => String(x).padStart(2, '0')
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    }
+
+    // ─── 剩余发货时间（基于「下单时间 + 発送までの日数 最大天数」推算的发货截止时刻） ───
+    // 颜色：≥2天 绿色(success) / 12小时~2天 黄色(warning) / 不到12小时及已超时 红色(danger)。
+    // 用每分钟自增的 nowTs 让倒计时与颜色随时间刷新（无需重新请求列表）。
+    const nowTs = ref(Date.now())
+    let shipCountdownTimer = null
+
+    // 解析「4~7日で発送」「1〜2日で発送」等，取其中最大天数（卖家承诺的最迟发货天数）
+    function parseMaxShippingDays(s) {
+      const nums = String(s || '').match(/\d+/g)
+      if (!nums || !nums.length) return 0
+      return Math.max(...nums.map(Number))
+    }
+    // 发货截止时刻(ms)：下单时间(mercari_created，回落 mercari_updated) + 最大天数。无法推算返回 0
+    function shipDeadlineTs(row) {
+      const days = parseMaxShippingDays(row?.shipping_duration)
+      if (!days) return 0
+      const base = Number(row?.mercari_created || row?.mercari_updated || 0)
+      if (!base) return 0
+      return base + days * 24 * 3600 * 1000
+    }
+    // 剩余毫秒（可为负=已超时）；无法推算返回 null
+    function shipRemainingMs(row) {
+      const dl = shipDeadlineTs(row)
+      if (!dl) return null
+      return dl - nowTs.value
+    }
+    function shipRemainingText(row) {
+      const ms = shipRemainingMs(row)
+      if (ms == null) return ''
+      if (ms <= 0) return t('todos.shipOverdue')
+      const totalMin = Math.floor(ms / 60000)
+      const d = Math.floor(totalMin / 1440)
+      const h = Math.floor((totalMin % 1440) / 60)
+      const m = totalMin % 60
+      const parts = []
+      if (d > 0) parts.push(d + t('todos.timeUnit.day'))
+      if (h > 0) parts.push(h + t('todos.timeUnit.hour'))
+      if (d === 0 && m > 0) parts.push(m + t('todos.timeUnit.min'))
+      if (!parts.length) parts.push(m + t('todos.timeUnit.min'))
+      return `${t('todos.remainPrefix')} ${parts.join(' ')}`
+    }
+    // 标签颜色：<12h（含已超时）红 / <48h 黄 / 其余绿；无法推算返回 info
+    function shipRemainingTagType(row) {
+      const ms = shipRemainingMs(row)
+      if (ms == null) return 'info'
+      if (ms < 12 * 3600 * 1000) return 'danger'
+      if (ms < 48 * 3600 * 1000) return 'warning'
+      return 'success'
     }
 
     function mercariItemUrl(itemId) {
@@ -1604,12 +1659,18 @@ export default defineComponent({
       syncLockStore.subscribe()
       loadKindOptions()
       load()
+      // 每分钟推进 nowTs，让列表里的「剩余发货时间」倒计时与颜色随时间刷新
+      shipCountdownTimer = setInterval(() => { nowTs.value = Date.now() }, 60000)
     })
 
     onBeforeUnmount(() => {
       if (syncProgressTimer != null) {
         clearInterval(syncProgressTimer)
         syncProgressTimer = null
+      }
+      if (shipCountdownTimer != null) {
+        clearInterval(shipCountdownTimer)
+        shipCountdownTimer = null
       }
       syncLockStore.unsubscribe()
       stopQrScanMirror()
@@ -1724,6 +1785,8 @@ export default defineComponent({
       runBulkReview,
       kindLabel,
       kindTagType,
+      shipRemainingText,
+      shipRemainingTagType,
       displayTs,
       mercariItemUrl,
       onProcess,

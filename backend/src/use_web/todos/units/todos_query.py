@@ -29,6 +29,8 @@ _LIST_COLS = (
     "is_delete",
     "synced_at",
     "qr_image_path",
+    "awaiting_feedback",
+    "shipping_duration",
 )
 
 

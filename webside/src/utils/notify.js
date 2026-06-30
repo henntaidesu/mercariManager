@@ -85,16 +85,25 @@ function reportLog({ level = 'info', message = '', detail = null, category = 'op
   }
 }
 
+// 同一条提示（type + message）在展示期间去重：并发请求失败时只弹一次。
+const activeNotifyKeys = new Set()
+
 function show(defaultType, arg) {
   const isObj = arg && typeof arg === 'object'
   const type = (isObj && arg.type) || defaultType
   const message = extractText(arg)
+  const duration = isObj && arg.duration != null ? arg.duration : 3000
+  const key = `${type}|${message}`
+  // 屏幕上已有同一条提示时，忽略重复（含重复的操作日志上报）
+  if (activeNotifyKeys.has(key)) return
+  activeNotifyKeys.add(key)
   ElNotification({
     type,
     title: (isObj && arg.title) || levelTitle(type),
     message,
     position: 'top-right',
-    duration: isObj && arg.duration != null ? arg.duration : 3000
+    duration,
+    onClose: () => activeNotifyKeys.delete(key)
   })
   logOperation(type, message)
 }

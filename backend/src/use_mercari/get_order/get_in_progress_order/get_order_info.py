@@ -34,6 +34,15 @@ from ...sync.sync_progress import make_sync_reporter
 
 _TRANSACTION_EVIDENCE_GET_PATH = "https://api.mercari.jp/transaction_evidences/get"
 
+# 取引页被取消后，打开 transaction/m{id} 不再触发 transaction_evidences/get，
+# 而是渲染「この取引画面を閲覧することはできません」拦截页（见 test_json/已出售/订单取消/订单取消.html）。
+# 该提示是页面真实可见文案（非脚本内 i18n 词典），用 inner_text 命中即判定订单已取消。
+_TRANSACTION_BLOCKED_MARKER = "この取引画面を閲覧することはできません"
+
+
+class TransactionCanceledSignal(Exception):
+    """取引页显示「閲覧できません」拦截页：订单已被取消（不会再截获 transaction_evidences/get）。"""
+
 
 def build_transaction_evidence_url(item_id: str) -> str:
     qid = quote(str(item_id).strip(), safe="")
@@ -48,8 +57,24 @@ def mercari_transaction_page_url(item_id: str) -> str:
     return f"https://jp.mercari.com/transaction/{cid}"
 
 
+async def _page_shows_transaction_blocked(mgr: Any, auto_key: str) -> bool:
+    """当前活动标签是否为「閲覧できません」拦截页（订单已取消）。
+
+    只看渲染后的可见文本（``inner_text``，不含 ``<script>`` 内的 i18n 词典），
+    避免词典里同样的文案造成误判。读取失败按未命中处理（不误判取消）。
+    """
+    try:
+        page = await mgr.active_tab_page(auto_key)
+        text = await page.inner_text("body", timeout=1500)
+    except Exception:
+        return False
+    return _TRANSACTION_BLOCKED_MARKER in (text or "")
+
+
 async def _wait_transaction_evidence_mitm(
     *,
+    mgr: Any,
+    auto_key: str,
     item_id: str,
     since_ms: int,
     wait_seconds: int,
@@ -58,10 +83,16 @@ async def _wait_transaction_evidence_mitm(
     if not cid:
         raise RuntimeError("item_id 不能为空")
     deadline = time.monotonic() + wait_seconds
+    # 给页面留出渲染时间后再周期性判断是否为「订单取消」拦截页
+    next_block_check = time.monotonic() + 2.0
     while time.monotonic() < deadline:
         data = read_transaction_evidence_response(cid)
         if data and int(data.get("ts") or 0) >= since_ms:
             return data
+        if time.monotonic() >= next_block_check:
+            next_block_check += 2.0
+            if await _page_shows_transaction_blocked(mgr, auto_key):
+                raise TransactionCanceledSignal(cid)
         await asyncio.sleep(0.35)
     raise RuntimeError(
         f"{wait_seconds}s 内未截获 transaction_evidences/get（请确认 MITM 已启动、"
@@ -86,8 +117,10 @@ async def _fetch_item_info_via_browser_impl(
     async with mitm_automation_browser(
         account_id,
         start_url=page_url,
-    ):
+    ) as (mgr, auto_key):
         await _wait_transaction_evidence_mitm(
+            mgr=mgr,
+            auto_key=auto_key,
             item_id=cid,
             since_ms=since_ms,
             wait_seconds=timeout,
@@ -317,6 +350,31 @@ def apply_post_ship_codes_to_order(
     return None
 
 
+def _mark_order_cancelled(item_id: str, report: Any) -> Optional[str]:
+    """把订单（order_no == item_id）置为 ``cancelled``，并回吐已占用库存。
+
+    与「编辑订单」手动置 cancelled 的口径一致（见 orders_crud.update_order）：
+    旧状态非 cancelled 时，先回吐已预扣/已出库占用的库存，再刷新待出库数量。
+    """
+    rows = OrderModel.find_all(where="[order_no] = ?", params=(item_id,), limit=1)
+    if not rows:
+        return "order_not_found"
+    o = rows[0]
+    old_status = str(o.status or "").strip()
+    if old_status != "cancelled":
+        o.status = "cancelled"
+        if not o.save():
+            return "save_failed"
+        from ....use_web.orders.units.orders_outbound.lines import restock_order_holding_lines
+        from ....use_web.orders.units.orders_helpers import _inventory_ids_for_order
+        from ..description_mgmt_ids import refresh_inventory_pending_outbound_qty
+
+        restock_order_holding_lines(o.order_no, reason=f"订单取消回吐 {o.order_no}")
+        refresh_inventory_pending_outbound_qty(_inventory_ids_for_order(o.order_no))
+    report("done", f"订单已取消（订单号 {item_id}）")
+    return None
+
+
 async def apply_item_info_to_order(
     item_id: str,
     account_id: Optional[int] = None,
@@ -341,6 +399,8 @@ async def apply_item_info_to_order(
     report("open_browser", f"正在打开取引页并截获详情（{item_id}）…")
     try:
         resp = await fetch_item_info(item_id, account_id=account_id, timeout=int(timeout))
+    except TransactionCanceledSignal:
+        return _mark_order_cancelled(item_id, report)
     except Exception as exc:
         return f"request:{exc}"
 

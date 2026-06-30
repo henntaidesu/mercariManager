@@ -86,6 +86,7 @@ export default defineComponent({
     const kindOptions = ref([])
     const syncLoading = ref(false)
     const markReadLoadingIds = ref(new Set())
+    const markAllReadLoading = ref(false)
 
     /** 「从煤炉同步」全屏等待与步骤文案（与后端 progress_job_id 轮询同步） */
     const syncOverlayVisible = ref(false)
@@ -364,6 +365,34 @@ export default defineComponent({
       }
     }
 
+    async function onMarkAllRead() {
+      if (markAllReadLoading.value) return
+      const ids = list.value.filter((r) => r?.id && !r.is_read).map((r) => r.id)
+      if (!ids.length) {
+        ElMessage.info(t('notifications.markAllReadEmpty'))
+        return
+      }
+      markAllReadLoading.value = true
+      try {
+        await notificationsApi.markRead(ids, true)
+        // 仅未读筛选时本页整体移除已读项;否则就地更新已读状态
+        if (filters.value.only_unread) {
+          const idSet = new Set(ids)
+          list.value = list.value.filter((r) => !idSet.has(r.id))
+          total.value = Math.max(0, total.value - ids.length)
+        } else {
+          list.value.forEach((r) => {
+            if (ids.includes(r.id)) r.is_read = 1
+          })
+        }
+        ElMessage.success(t('notifications.markAllReadDone', { count: ids.length }))
+      } catch (e) {
+        ElMessage.error(e?.message || t('notifications.markReadFailed'))
+      } finally {
+        markAllReadLoading.value = false
+      }
+    }
+
     async function onMarkUnread(row) {
       if (!row?.id || !row.is_read) return
       if (markReadLoadingIds.value.has(row.id)) return
@@ -477,6 +506,7 @@ export default defineComponent({
       kindOptions,
       syncLoading,
       markReadLoadingIds,
+      markAllReadLoading,
       syncOverlayVisible,
       syncOverlayTitle,
       syncOverlayFailed,
@@ -510,6 +540,7 @@ export default defineComponent({
       autoMarkRead,
       onViewDetail,
       onMarkRead,
+      onMarkAllRead,
       onMarkUnread,
       onOpenTarget,
       kindLabel,

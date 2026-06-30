@@ -97,6 +97,16 @@ def _normalize_notification_row(
 
     activity = str(intent_obj.get("activity") or "").strip() or None
 
+    # 点赞识别:只要标题(message)包含「にいいね！しました」一律视为点赞(kind=Like),
+    # 不依赖煤炉返回的 kind(部分点赞通知 kind 字段并非 Like)。
+    kind_val = str(item.get("kind") or "").strip() or None
+    message_val = item.get("message") or None
+    if message_val and "にいいね！しました" in str(message_val):
+        kind_val = "Like"
+    # 事务局消息识别:煤炉 kind=Custom 的通知一律归为事务局消息(PrivateMessage)。
+    elif kind_val == "Custom":
+        kind_val = "PrivateMessage"
+
     # item_id 优先取 args.item_id;部分 kind(如 DesiredPriceOfferCreated) args 中没有
     # 这个字段,真实 id 放在 intent.extra.id 里(activity=ItemDetailActivity)
     item_id_val = str(args_obj.get("item_id") or "").strip()
@@ -116,8 +126,8 @@ def _normalize_notification_row(
     return {
         "account_id": int(account_id),
         "uuid": str(item.get("uuid") or "").strip(),
-        "kind": (str(item.get("kind") or "").strip() or None),
-        "message": (item.get("message") or None),
+        "kind": kind_val,
+        "message": message_val,
         "action_url": (item.get("actionUrl") or None),
         "photo_url": (item.get("photoUrl") or None),
         "photo_type": (item.get("photoType") or None),

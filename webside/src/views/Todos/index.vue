@@ -96,6 +96,24 @@
           </template>
         </el-table-column>
 
+        <el-table-column :label="t('todos.colShippingDuration')" width="150" align="center" header-align="center">
+          <template #default="{ row }">
+            <template v-if="row.shipping_duration">
+              <div class="cell-ship-days">{{ row.shipping_duration }}</div>
+              <el-tag
+                v-if="shipRemainingText(row)"
+                :type="shipRemainingTagType(row)"
+                size="small"
+                effect="light"
+                class="cell-ship-remain"
+              >
+                {{ shipRemainingText(row) }}
+              </el-tag>
+            </template>
+            <span v-else class="cell-muted">-</span>
+          </template>
+        </el-table-column>
+
         <el-table-column :label="t('common.time')" width="170" align="center" header-align="center">
           <template #default="{ row }">
             <div>{{ displayTs(row.mercari_updated || row.mercari_created) }}</div>

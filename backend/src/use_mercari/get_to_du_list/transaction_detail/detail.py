@@ -12,13 +12,13 @@ from ....ssl_mitm_proxy.capture_config import clear_shipping_info_response_file,
 from ....web_drive.core.mitm_session import mitm_automation_browser
 from ....web_drive.core.paths import mercari_todo_key
 from ...sync.sync_progress import make_sync_reporter
-from ._cache import _clear_qr_image, _persist_transaction_detail
+from ._cache import _clear_qr_image, _persist_awaiting_feedback, _persist_transaction_detail
 from ._captures import _wait_for_both_captures
 from ._common import _WAIT_REPLY_KINDS, _is_wait_shipping_todo, _parse_messages, _parse_shipping_info
 from ._messages_media import cache_message_images
 from ._messages_store import load_order_messages, replace_order_messages
 from ._translate import translate_buyer_messages
-from ._qr_facility import _extract_delivery_address, _extract_post_ship_ready, _extract_shipping_facility, _qr_code_exists, _save_qr_code_image
+from ._qr_facility import _extract_awaiting_feedback, _extract_delivery_address, _extract_post_ship_ready, _extract_shipping_facility, _qr_code_exists, _save_qr_code_image
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +101,7 @@ async def fetch_transaction_detail(
         synced_facility: Dict[str, str] = {}
         synced_recipient: Optional[str] = None
         post_ship: Dict[str, Any] = {"ready": False, "confirm_code": None, "tracking_no": None}
+        awaiting_feedback = False
         qr_checked = False
         qr_present = False
         try:
@@ -118,6 +119,8 @@ async def fetch_transaction_detail(
             # 待发送通知状态（ゆうパケットポスト等：シール読み取り済みで发送通知待ち）
             if not qr_present:
                 post_ship = await _extract_post_ship_ready(qr_page)
+            # 「待反馈」状态：发送通知已完成，煤炉确认数据中（确认后自动通知买家）
+            awaiting_feedback = await _extract_awaiting_feedback(qr_page)
         except Exception as exc:
             log.debug("[txdetail] 同步发货二维码/お届け先/发送通知状态失败 todo_id=%s: %s", todo_id, exc)
 
@@ -216,6 +219,14 @@ async def fetch_transaction_detail(
     # 发送方法标签（通过什么发送，展示用）：优先页面抓到的「サイズ/配送の方法」，
     # 回落到 shipping/get_info 解析出的 shipping_method_name。
     result["ship_method_label"] = post_ship.get("method") or result.get("shipping_method_name") or None
+    # 「待反馈」状态（前端 /#/todos 列表据此显示绿色「待反馈」标签）：发送通知已完成、
+    # 煤炉确认数据中，确认后会自动通知买家——卖家无需操作，仅等待煤炉反馈。
+    result["awaiting_feedback"] = bool(awaiting_feedback)
+    # 单独写入 awaiting_feedback 列（列表查询读列、不解析 detail_json）。该状态直接读自
+    # 渲染后的 DOM（qr_checked=已成功访问页面 DOM），即便此场景未截获 shipping/messages
+    # 接口（page_loaded=False）也能写入；按当前实际状态置 1/0，随状态变化自动纠正。
+    if qr_checked or page_loaded:
+        _persist_awaiting_feedback(int(todo_id), bool(awaiting_feedback))
     # 缓存有效性判定：只有真正截获到「该类型关键数据」时才写缓存并置 detail_synced_at；
     # 否则跳过——若仍标记为已缓存，则该待办会被永久当作「已缓存的空详情」：前端一直显示
     # 「待抓取」，且 list_uncached_detail_todo_ids 不再返回它，后续「从煤炉同步」批量预缓存
@@ -239,6 +250,7 @@ async def fetch_transaction_detail(
             or bool(result.get("recipient_address"))
             or bool(result.get("qr_image_url"))
             or bool(result.get("post_ship_ready"))
+            or bool(result.get("awaiting_feedback"))
         )
     else:
         capture_ok = page_loaded

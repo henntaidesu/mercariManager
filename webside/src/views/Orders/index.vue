@@ -354,6 +354,13 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column :label="t('orders.accountCol')" width="130" show-overflow-tooltip align="center" header-align="center">
+          <template #default="{ row }">
+            <span v-if="row.account_name">{{ row.account_name }}</span>
+            <span v-else-if="row.data_user">{{ row.data_user }}</span>
+            <span v-else class="cell-dash">-</span>
+          </template>
+        </el-table-column>
         <el-table-column :label="t('common.amount')" width="120" align="center" header-align="center">
           <template #default="{ row }">
             <span class="amount">{{ Math.round(Number(row.amount || 0)) }}</span>
