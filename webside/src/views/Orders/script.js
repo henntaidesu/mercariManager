@@ -22,7 +22,7 @@ import {
   localYmdToDayStartTs,
   localYmdToDayEndTs,
 } from '@/utils/orderStatsTime.js'
-import { decodeMgmtIdCipher, parseMgmtIdsFromDescription } from '@/utils/mgmtIdCipher.js'
+import { decodeMgmtIdCipher } from '@/utils/mgmtIdCipher.js'
 import { mercariImageUrl, mercariImageUrlList } from '@/utils/mercariImage.js'
 
 export default defineComponent({
@@ -348,19 +348,6 @@ export default defineComponent({
 
     const filters = ref({ keyword: '', status: '', owner_user_id: null })
 
-    /** 与后端 routes.orders ORDER_STATUSES 一致（煤炉） */
-    const ORDER_STATUS_KEYS = [
-      'pending',
-      'trading',
-      'wait_payment',
-      'wait_shipping',
-      'wait_review',
-      'done',
-      'sold_out',
-      'cancelled',
-      'cancel_request',
-    ]
-
     /** 展示用标签：value 与数据库/API 一致 */
     const statusMap = computed(() => ({
       pending:        { label: t('orders.statusPendingHandle'), tag: 'info' },
@@ -383,23 +370,6 @@ export default defineComponent({
         label: statusMap.value[value].label,
       }))
     )
-
-    const orderStatusOptions = computed(() =>
-      ORDER_STATUS_KEYS.filter((k) => statusMap.value[k]).map((value) => ({
-        value,
-        label: statusMap.value[value].label,
-      }))
-    )
-
-    /** 编辑弹窗：若库里为旧版手工状态等未在 statusMap 中的值，补一项便于查看与改选 */
-    const formOrderStatusOptions = computed(() => {
-      const base = orderStatusOptions.value
-      const cur = form.value?.status
-      if (cur && !statusMap.value[cur]) {
-        return [...base, { value: cur, label: t('orders.legacyStatusLabel', { status: cur }) }]
-      }
-      return base
-    })
 
     // ---- 同步订单（更新列表 / 更新状态 共用，账号选择见工具栏全局下拉）----
     const syncLoading = ref(false)
@@ -851,12 +821,6 @@ export default defineComponent({
       delete next[ono]
       expandState.value = next
     }
-
-    const orderDescriptionMgmtHint = computed(() => {
-      const ids = parseMgmtIdsFromDescription(form.value.description)
-      if (!ids.length) return ''
-      return t('orders.mgmtIdsParsedHint', { ids: ids.join('、') })
-    })
 
     /** 出库明细「标识」列：mgmt_id 行展示数字；暗号 token 尝试解码 */
     function formatOutboundManagementId(line) {
@@ -1616,22 +1580,6 @@ export default defineComponent({
       }
     }
 
-    async function remove(id) {
-      await orderApi.remove(id)
-      ElMessage.success(t('inventory.deleteSuccess'))
-      expandState.value = {}
-      if (list.value.length === 1 && page.value > 1) page.value -= 1
-      load()
-      loadStats()
-    }
-
-    async function removeFromDialog() {
-      const id = form.value.id
-      if (!id) return
-      await remove(id)
-      dialogVisible.value = false
-    }
-
     watch(isMobile, (mobile) => {
       if (!mobile) loadStats()
     })
@@ -1689,7 +1637,6 @@ export default defineComponent({
       localYmdToDayStartTs,
       localYmdToDayEndTs,
       decodeMgmtIdCipher,
-      parseMgmtIdsFromDescription,
       mercariImageUrlList,
       t,
       mercariAccountStore,
@@ -1756,12 +1703,9 @@ export default defineComponent({
       sendOrderReply,
       mercariImageUrl,
       filters,
-      ORDER_STATUS_KEYS,
       statusMap,
       LIST_FILTER_STATUS_KEYS,
       orderListStatusFilterOptions,
-      orderStatusOptions,
-      formOrderStatusOptions,
       syncLoading,
       syncMode,
       syncOverlayVisible,
@@ -1802,7 +1746,6 @@ export default defineComponent({
       onFilterChange,
       resetFilters,
       clearOutboundExpandCache,
-      orderDescriptionMgmtHint,
       formatOutboundManagementId,
       outboundLineKindLabel,
       outboundLineShowsRatioPricing,
@@ -1851,8 +1794,6 @@ export default defineComponent({
       openEdit,
       refreshOrder,
       submit,
-      remove,
-      removeFromDialog,
     }
   },
 })

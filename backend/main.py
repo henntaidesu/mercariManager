@@ -7,6 +7,18 @@ if _os.environ.get("MERCARI_RUN_MITMDUMP") == "1":
 
     run_mitmdump()
 
+# 打包为 windowed（无 CMD 黑框）后默认没有 stdout/stderr：尽早分配一个隐藏的日志控制台，
+# 让后续所有日志/print 有真实控制台可写（托盘可显示/隐藏该窗口）。仅 Windows 冻结态生效。
+import sys as _sys
+
+if getattr(_sys, "frozen", False) and _sys.platform == "win32":
+    try:
+        from src.console_win import setup_hidden_console
+
+        setup_hidden_console()
+    except Exception:  # noqa: BLE001
+        pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

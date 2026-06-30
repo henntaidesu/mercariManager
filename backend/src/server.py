@@ -118,7 +118,7 @@ def run(app: FastAPI) -> None:
             "(如需后端直连 HTTPS，设置 MERCARI_SSL_CERT_DIR 或 MERCARI_SSL_CERTFILE/MERCARI_SSL_KEYFILE)"
         )
 
-    uvicorn.run(
+    config = uvicorn.Config(
         app,
         host=host,
         port=port,
@@ -126,3 +126,19 @@ def run(app: FastAPI) -> None:
         forwarded_allow_ips=forwarded_allow_ips,
         **ssl_kwargs,
     )
+    server = uvicorn.Server(config)
+
+    # 打包态（windowed）启动系统托盘：点托盘「退出程序」→ 触发 uvicorn 优雅停机。
+    if getattr(sys, "frozen", False) and sys.platform == "win32":
+        try:
+            from .tray import start_tray
+
+            start_tray(on_quit=lambda: setattr(server, "should_exit", True))
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning("系统托盘启动失败，程序继续运行", exc_info=True)
+
+    server.run()
+
+    # 冻结态：优雅停机后可能有后台线程/子进程残留，直接退出确保进程结束。
+    if getattr(sys, "frozen", False):
+        os._exit(0)

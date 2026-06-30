@@ -12,3 +12,4 @@ easyocr
 playwright>=1.48.0
 mitmproxy>=10.4.0
 requests
+pystray>=0.19.5

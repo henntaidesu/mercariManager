@@ -210,10 +210,10 @@
 .order-edit-form--tiled :deep(.el-form-item) {
   margin-bottom: 6px;
 }
-/* 每行最多排列 5 个字段（各占 20%），更紧凑 */
+/* 每行最多排列 4 个字段（各占 25%） */
 .order-edit-form--tiled :deep(.order-edit-row5) > .el-col {
-  flex: 0 0 20%;
-  max-width: 20%;
+  flex: 0 0 25%;
+  max-width: 25%;
 }
 .order-edit-form--tiled :deep(.el-form-item__label) {
   padding-bottom: 2px;
@@ -243,6 +243,25 @@
 .order-edit-form--main {
   flex: 1;
   min-width: 0;
+}
+/* 所有数据左对齐（el-input-number 默认居中，统一改为靠左） */
+.order-edit-form--main :deep(.el-input-number .el-input__inner) {
+  text-align: left;
+}
+/* 基本信息 / 时间 / 交易双方：数据以纯文本呈现，去掉禁用态底色与边框 */
+.order-edit-form--main :deep(.order-row-plain .el-input.is-disabled .el-input__wrapper) {
+  background-color: transparent;
+  box-shadow: none;
+  padding-left: 0;
+}
+.order-edit-form--main :deep(.order-row-plain .el-input.is-disabled .el-input__inner) {
+  color: var(--el-text-color-primary);
+  -webkit-text-fill-color: var(--el-text-color-primary);
+  cursor: default;
+}
+/* 时间字段：去掉输入框左侧的时钟/日历前缀图标 */
+.order-edit-form--main :deep(.order-row-plain--date .el-input__prefix) {
+  display: none;
 }
 .order-conversation {
   flex: 0 0 360px;

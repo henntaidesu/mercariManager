@@ -32,6 +32,13 @@ if %errorlevel% neq 0 (
     python -m pip install pyinstaller
 )
 
+rem ===== Ensure pystray is available (system tray icon) =====
+python -c "import pystray" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo pystray not found, installing...
+    python -m pip install pystray
+)
+
 rem ===== Prepare release directory =====
 echo.
 echo [1/3] Cleaning and creating release dir %RELEASE% ...
@@ -63,19 +70,19 @@ if not exist "%ROOT%webside\dist\index.html" (
     exit /b 1
 )
 
-rem ===== Build main program backend.exe =====
+rem ===== Build main program mercariManager.exe =====
 echo.
-echo [3/3] Building backend.exe (frontend bundled in) ...
+echo [3/3] Building mercariManager.exe (windowed, system tray; frontend bundled in) ...
 python -m PyInstaller --clean --noconfirm "%ROOT%mercari.spec" ^
     --distpath "%RELEASE%" --workpath "%ROOT%build\backend"
 if %errorlevel% neq 0 (
-    echo ERROR: backend.exe build failed
+    echo ERROR: mercariManager.exe build failed
     pause
     exit /b 1
 )
 
-rem Frontend webside/dist is bundled INTO backend.exe (see mercari.spec); no external webside folder.
-rem (To hot-swap the frontend without rebuilding, drop a "webside" folder next to backend.exe.)
+rem Frontend webside/dist is bundled INTO mercariManager.exe (see mercari.spec); no external webside folder.
+rem (To hot-swap the frontend without rebuilding, drop a "webside" folder next to mercariManager.exe.)
 
 rem Note: Playwright uses the system-installed Microsoft Edge (channel=msedge); target machine must have Edge (bundled with Win11).
 rem Note: MITM capture (Scripts\mitmdump.exe) is NOT bundled in this package; other features unaffected.
@@ -89,7 +96,9 @@ echo   Build complete! Output dir: %RELEASE%
 echo ========================================
 dir /b "%RELEASE%"
 echo ----------------------------------------
-echo   Put mercariDB.db next to backend.exe, then run backend.exe
+echo   Put mercariDB.db next to mercariManager.exe, then run mercariManager.exe
+echo   Runs in background with a system-tray icon (bottom-right). Right-click the
+echo   tray icon to show the log window / hide / exit.
 echo   Then open https://localhost:9600 in your browser (self-signed cert auto-generated)
 echo ========================================
 pause
