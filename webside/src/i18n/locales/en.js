@@ -245,6 +245,11 @@ export default {
       sendSuccess: "Comment sent",
       sendFailed: "Failed to send comment",
       syncFailed: "Failed to sync comments",
+      translate: "Translate",
+      translating: "Translating…",
+      showOriginal: "Original",
+      showTranslation: "Translation",
+      translateUnavailable: "Translation unavailable",
       status: {
         onSale: "On Sale",
         trading: "Trading",

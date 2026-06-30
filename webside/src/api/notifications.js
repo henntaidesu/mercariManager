@@ -70,4 +70,10 @@ export const notificationsApi = {
       timeout: 0,
       ...axiosConfig,
     }),
+  /** 单条留言日译中(不入库),返回 { ok, text_zh } */
+  itemCommentTranslate: (payload, axiosConfig = {}) =>
+    http.post('/use_web/notifications/item-comment/translate', payload, {
+      timeout: 20000,
+      ...axiosConfig,
+    }),
 }

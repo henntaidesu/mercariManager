@@ -46,6 +46,14 @@
             @click="toggleFilterChip('show_private_messages')"
             @keyup.enter="toggleFilterChip('show_private_messages')"
           >{{ t('notifications.showPrivateMessages') }}</div>
+          <div
+            class="search-filter-chip"
+            :class="{ 'search-filter-chip--active': filters.show_liked_item_comments }"
+            role="button"
+            tabindex="0"
+            @click="toggleFilterChip('show_liked_item_comments')"
+            @keyup.enter="toggleFilterChip('show_liked_item_comments')"
+          >{{ t('notifications.showLikedItemComments') }}</div>
         </el-col>
         <el-col :xs="24" :md="8" class="search-actions">
           <el-button type="success" plain :loading="markAllReadLoading" :disabled="!list.length" @click="onMarkAllRead">

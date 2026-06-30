@@ -60,7 +60,22 @@
                 <span class="comment-user">{{ c.user_name || c.user_id || '-' }}</span>
                 <span class="comment-time">{{ displayTs(c.created_ms) }}</span>
               </div>
-              <div class="comment-text">{{ c.message }}</div>
+              <div class="comment-text">{{ commentDisplayText(c) }}</div>
+              <div v-if="!isOwn(c) && c.message" class="comment-trans">
+                <button
+                  v-if="c.message_zh"
+                  type="button"
+                  class="comment-trans-toggle"
+                  @click="toggleOriginal(c)"
+                >{{ isShowingOriginal(c) ? t('dialogs.itemComment.showTranslation') : t('dialogs.itemComment.showOriginal') }}</button>
+                <button
+                  v-else
+                  type="button"
+                  class="comment-trans-toggle"
+                  :disabled="isTranslating(c)"
+                  @click="onTranslate(c)"
+                >{{ isTranslating(c) ? t('dialogs.itemComment.translating') : t('dialogs.itemComment.translate') }}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -107,7 +122,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from '@/utils/notify'
 import { useI18n } from 'vue-i18n'
 import { notificationsApi } from '@/api'
@@ -167,6 +182,45 @@ function isOwn(c) {
   return sellerId.value && Number(c.user_id) === Number(sellerId.value)
 }
 
+// 按需翻译：仅对方(买家)留言可译，译文存到 c.message_zh(不入库)，可切换原文/译文
+const msgOriginalKeys = reactive(new Set())
+const msgTranslatingKeys = reactive(new Set())
+function commentKey(c) {
+  return c && c.id ? `id:${c.id}` : `t:${c?.created_ms || ''}`
+}
+function isShowingOriginal(c) {
+  return msgOriginalKeys.has(commentKey(c))
+}
+function toggleOriginal(c) {
+  const k = commentKey(c)
+  if (msgOriginalKeys.has(k)) msgOriginalKeys.delete(k)
+  else msgOriginalKeys.add(k)
+}
+function commentDisplayText(c) {
+  if (c && c.message_zh && !isShowingOriginal(c)) return c.message_zh
+  return (c && c.message) || ''
+}
+function isTranslating(c) {
+  return msgTranslatingKeys.has(commentKey(c))
+}
+async function onTranslate(c) {
+  if (!c || !c.message || isTranslating(c)) return
+  const k = commentKey(c)
+  msgTranslatingKeys.add(k)
+  try {
+    const res = await notificationsApi.itemCommentTranslate({ text: c.message })
+    if (res && res.text_zh) {
+      c.message_zh = res.text_zh // 反应式：按钮切换为「原文/译文」并默认显示中文
+    } else {
+      ElMessage.info(t('dialogs.itemComment.translateUnavailable'))
+    }
+  } catch {
+    ElMessage.info(t('dialogs.itemComment.translateUnavailable'))
+  } finally {
+    msgTranslatingKeys.delete(k)
+  }
+}
+
 function itemStatusLabel(s) {
   const m = {
     on_sale: t('dialogs.itemComment.status.onSale'),
@@ -197,6 +251,8 @@ function resetState() {
   comments.value = []
   sellerId.value = null
   replyText.value = ''
+  msgOriginalKeys.clear()
+  msgTranslatingKeys.clear()
 }
 
 function applyResponse(res) {
@@ -412,6 +468,22 @@ watch(
 }
 .comment-own .comment-text {
   background: var(--el-color-primary-light-8);
+}
+.comment-trans {
+  margin-top: 2px;
+}
+.comment-trans-toggle {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  color: var(--el-color-primary);
+  cursor: pointer;
+  line-height: 1.4;
+}
+.comment-trans-toggle:disabled {
+  color: var(--el-text-color-placeholder);
+  cursor: default;
 }
 .dialog-footer {
   display: flex;

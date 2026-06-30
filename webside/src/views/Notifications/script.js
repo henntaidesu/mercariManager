@@ -27,7 +27,10 @@ export default defineComponent({
       Comment: 'notifications.kindComment',
       LikedItemReceiveComment: 'notifications.kindLikedItemReceiveComment',
       DesiredPriceOfferCreated: 'notifications.kindDesiredPriceOfferCreated',
+      DesiredPriceAcceptOffer: 'notifications.kindDesiredPriceAcceptOffer',
+      PriceDropMessageV2: 'notifications.kindPriceDropMessageV2',
       AuctionBidCreated: 'notifications.kindAuctionBidCreated',
+      AuctionConcludedSeller: 'notifications.kindAuctionConcludedSeller',
       BundleRequestCreated: 'notifications.kindBundleRequestCreated',
       WaitPayment: 'notifications.kindWaitPayment',
       PrivateMessage: 'notifications.kindPrivateMessage',
@@ -40,7 +43,10 @@ export default defineComponent({
       Comment: 'primary',
       LikedItemReceiveComment: 'primary',
       DesiredPriceOfferCreated: 'warning',
+      DesiredPriceAcceptOffer: 'success',
+      PriceDropMessageV2: 'primary',
       AuctionBidCreated: 'warning',
+      AuctionConcludedSeller: 'success',
       BundleRequestCreated: 'warning',
       WaitPayment: 'success',
       PrivateMessage: 'info',
@@ -81,6 +87,8 @@ export default defineComponent({
       show_likes: false,
       // 默认不显示「事务局消息」类型；用户勾选后或主动按 kind=PrivateMessage 过滤时才显示
       show_private_messages: false,
+      // 默认不显示「关注商品留言」类型；用户勾选后或主动按 kind=LikedItemReceiveComment 过滤时才显示
+      show_liked_item_comments: false,
     })
 
     const kindOptions = ref([])
@@ -108,6 +116,9 @@ export default defineComponent({
       }
       if (!filters.value.show_private_messages && filters.value.kind !== 'PrivateMessage') {
         excludeKinds.push('PrivateMessage')
+      }
+      if (!filters.value.show_liked_item_comments && filters.value.kind !== 'LikedItemReceiveComment') {
+        excludeKinds.push('LikedItemReceiveComment')
       }
       if (excludeKinds.length) p.exclude_kinds = excludeKinds.join(',')
       return p

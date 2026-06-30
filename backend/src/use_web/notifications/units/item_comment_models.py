@@ -20,3 +20,7 @@ class ItemCommentPostRequest(PydanticModel):
 
 class ItemCommentCloseRequest(PydanticModel):
     account_id: Optional[int] = None
+
+
+class ItemCommentTranslateRequest(PydanticModel):
+    text: str

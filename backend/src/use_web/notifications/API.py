@@ -44,6 +44,7 @@ from ...use_mercari.get_notifications.item_comment.item_comment_post import post
 from ...use_mercari.get_notifications.item_comment.item_comment_sync import (
     sync_item_comments_from_mercari,
 )
+from ...use_mercari.get_to_du_list.transaction_detail import translate_text
 from ...use_mercari.sync.sync_progress import clear_sync_progress, get_sync_progress
 from .units.bundle_purchase_models import (
     BundlePurchaseDecideRequest,
@@ -62,6 +63,7 @@ from .units.item_comment_models import (
     ItemCommentCloseRequest,
     ItemCommentPostRequest,
     ItemCommentSyncRequest,
+    ItemCommentTranslateRequest,
 )
 from .units.notifications_models import MarkReadRequest, SyncNotificationsRequest
 from .units.notifications_query import (
@@ -280,6 +282,20 @@ async def _item_comment_close_endpoint(req: ItemCommentCloseRequest) -> Dict[str
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+def _item_comment_translate_endpoint(req: ItemCommentTranslateRequest) -> Dict[str, Any]:
+    """把单条留言日译中。仅一次谷歌免费端点请求,不入库。
+
+    翻译失败静默回落(返回 ok=False, text_zh=None),前端保持原文不报错。
+    """
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="文本为空")
+    zh = translate_text(text)
+    if not zh:
+        return {"ok": False, "text_zh": None}
+    return {"ok": True, "text_zh": zh}
+
+
 router.add_api_route("", _list_notifications_endpoint, methods=["GET"])
 router.add_api_route("/kinds", _list_kinds_endpoint, methods=["GET"])
 router.add_api_route("/sync", _sync_endpoint, methods=["POST"])
@@ -324,4 +340,7 @@ router.add_api_route(
 )
 router.add_api_route(
     "/item-comment/close", _item_comment_close_endpoint, methods=["POST"]
+)
+router.add_api_route(
+    "/item-comment/translate", _item_comment_translate_endpoint, methods=["POST"]
 )

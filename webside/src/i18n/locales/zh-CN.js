@@ -245,6 +245,11 @@ export default {
       sendSuccess: "已发送评论",
       sendFailed: "发送评论失败",
       syncFailed: "同步评论失败",
+      translate: "翻译",
+      translating: "翻译中…",
+      showOriginal: "原文",
+      showTranslation: "译文",
+      translateUnavailable: "翻译暂不可用",
       status: {
         onSale: "在售",
         trading: "交易中",

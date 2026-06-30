@@ -245,6 +245,11 @@ export default {
       sendSuccess: "コメントを送信しました",
       sendFailed: "コメントの送信に失敗しました",
       syncFailed: "コメントの同期に失敗しました",
+      translate: "翻訳",
+      translating: "翻訳中…",
+      showOriginal: "原文",
+      showTranslation: "訳文",
+      translateUnavailable: "翻訳は現在利用できません",
       status: {
         onSale: "販売中",
         trading: "取引中",

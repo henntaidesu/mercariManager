@@ -103,8 +103,8 @@ def _normalize_notification_row(
     message_val = item.get("message") or None
     if message_val and "にいいね！しました" in str(message_val):
         kind_val = "Like"
-    # 事务局消息识别:煤炉 kind=Custom 的通知一律归为事务局消息(PrivateMessage)。
-    elif kind_val == "Custom":
+    # 事务局消息识别:煤炉这些 kind 一律归为事务局消息(PrivateMessage)。
+    elif kind_val in ("Custom", "PrivateMessageCustomTitle", "ContactCreated"):
         kind_val = "PrivateMessage"
 
     # item_id 优先取 args.item_id;部分 kind(如 DesiredPriceOfferCreated) args 中没有
