@@ -23,6 +23,8 @@ class PostToMarketBody(PydanticModel):
     name: str = ""
     description: str = ""
     image_urls: List[str] = []
+    # 是否为图片添加水印（出品账号名 + 日期）后再上传
+    watermark: bool = False
     # 商品类型：mapping_id 用于从 DB 查出各级 position
     category_mapping_id: Optional[str] = None
     # 商品状態
@@ -133,6 +135,7 @@ async def post_to_market(body: PostToMarketBody, *, background_caller: bool = Fa
                 name=body.name,
                 description=body.description,
                 image_urls=body.image_urls,
+                watermark=body.watermark,
                 category_level1_pos=cat_pos.get("category_level1_pos"),
                 category_level2_pos=cat_pos.get("category_level2_pos"),
                 category_level3_pos=cat_pos.get("category_level3_pos"),

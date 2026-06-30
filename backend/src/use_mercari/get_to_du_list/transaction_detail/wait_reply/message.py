@@ -25,30 +25,12 @@ _REPLY_SEND_BUTTON_TEXT = "取引メッセージを送る"
 # 发送按钮的结构化兜底：容器 data-partner-id="send-chat" 内的 submit 按钮（不依赖文案）。
 _REPLY_SEND_BUTTON_SELECTOR = '[data-partner-id="send-chat"] button'
 
-async def send_transaction_message(
-    todo_id: int,
-    text: str,
-    *,
-    progress_job_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """在主 profile 浏览器内填回复并点击「取引メッセージを送る」。
+async def _send_chat_message(aid: int, item_id: str, body: str, *, report) -> None:
+    """填回复并点击「取引メッセージを送る」的核心流程（按 account_id + item_id 通用）。
 
-    若对应账号的浏览器尚未打开（如待回复面板走缓存、未开浏览器），会自动打开交易页再发送；
-    已打开（如刚点过「处理/刷新抓取」）则直接复用。待回复（IncomingMessage）发送成功后软删待办并关浏览器。
+    浏览器未打开时自动打开交易页再发送，已打开则直接复用；不负责发送后的收尾（软删/关浏览器），
+    由各调用方按场景处理。``report`` 为进度回报函数。
     """
-    report = make_sync_reporter(progress_job_id)
-    report("resolve_todo", "正在准备发送消息…")
-    todo = TodoItemModel.find_by_id(id=int(todo_id))
-    if not todo:
-        raise ValueError(f"待办事项 id={todo_id} 不存在")
-    item_id = (todo.item_id or "").strip()
-    if not item_id:
-        raise ValueError("该待办无关联 item_id")
-    body = (text or "").strip()
-    if not body:
-        raise ValueError("消息内容不能为空")
-
-    aid = int(todo.account_id)
     mgr = get_web_drive_manager()
     auto_key = mercari_todo_key(aid)
 
@@ -112,6 +94,35 @@ async def send_transaction_message(
         len(body),
     )
 
+
+async def send_transaction_message(
+    todo_id: int,
+    text: str,
+    *,
+    progress_job_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """在主 profile 浏览器内填回复并点击「取引メッセージを送る」。
+
+    若对应账号的浏览器尚未打开（如待回复面板走缓存、未开浏览器），会自动打开交易页再发送；
+    已打开（如刚点过「处理/刷新抓取」）则直接复用。待回复（IncomingMessage）发送成功后软删待办并关浏览器。
+    """
+    report = make_sync_reporter(progress_job_id)
+    report("resolve_todo", "正在准备发送消息…")
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise ValueError(f"待办事项 id={todo_id} 不存在")
+    item_id = (todo.item_id or "").strip()
+    if not item_id:
+        raise ValueError("该待办无关联 item_id")
+    body = (text or "").strip()
+    if not body:
+        raise ValueError("消息内容不能为空")
+
+    aid = int(todo.account_id)
+    mgr = get_web_drive_manager()
+    auto_key = mercari_todo_key(aid)
+    await _send_chat_message(aid, item_id, body, report=report)
+
     # 待回复（IncomingMessage）类型：发送即视为待办完成
     # → 等 1.5s 让 send API 落地 → 软删 todo + 关浏览器（不再次刷新）
     kind = (todo.kind or "").strip()
@@ -140,5 +151,38 @@ async def send_transaction_message(
         "item_id": item_id,
         "sent": True,
         "completed": completed,
+        "text_len": len(body),
+    }
+
+
+async def send_order_transaction_message(
+    account_id: int,
+    order_no: str,
+    text: str,
+    *,
+    progress_job_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """订单管理「编辑订单」面板回复消息：按 account_id + order_no(=item_id) 发送。
+
+    与待办的 send_transaction_message 共用同一核心流程，但不软删待办、不关闭浏览器
+    （订单回复无待办生命周期，浏览器保持打开供后续操作复用）。
+    """
+    report = make_sync_reporter(progress_job_id)
+    report("resolve_order", "正在准备发送消息…")
+    item_id = (order_no or "").strip()
+    if not item_id:
+        raise ValueError("订单号不能为空")
+    body = (text or "").strip()
+    if not body:
+        raise ValueError("消息内容不能为空")
+
+    aid = int(account_id)
+    await _send_chat_message(aid, item_id, body, report=report)
+    report("done", "回复已发送")
+    return {
+        "order_no": item_id,
+        "account_id": aid,
+        "item_id": item_id,
+        "sent": True,
         "text_len": len(body),
     }

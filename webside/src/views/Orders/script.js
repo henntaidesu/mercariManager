@@ -23,7 +23,7 @@ import {
   localYmdToDayEndTs,
 } from '@/utils/orderStatsTime.js'
 import { decodeMgmtIdCipher, parseMgmtIdsFromDescription } from '@/utils/mgmtIdCipher.js'
-import { mercariImageUrlList } from '@/utils/mercariImage.js'
+import { mercariImageUrl, mercariImageUrlList } from '@/utils/mercariImage.js'
 
 export default defineComponent({
   setup() {
@@ -264,6 +264,87 @@ export default defineComponent({
     const dateRange = ref([])
     const dialogVisible = ref(false)
     const formRef = ref()
+
+    // 编辑订单表单右侧：对话消息（来源同待办「处理」面板，按 order_no 读交易消息缓存）
+    const orderMessages = ref([])
+    const orderMessagesLoading = ref(false)
+    // 译文/原文切换：默认显示中文译文（仅买家消息且有 text_zh），点「原文」切回日文
+    const orderMsgOriginalKeys = ref(new Set())
+    function orderMsgKeyOf(m, i) {
+      return m && m.id ? `id:${m.id}` : `i:${i}`
+    }
+    function isShowingOriginal(m, i) {
+      return orderMsgOriginalKeys.value.has(orderMsgKeyOf(m, i))
+    }
+    function toggleMsgOriginal(m, i) {
+      const k = orderMsgKeyOf(m, i)
+      const next = new Set(orderMsgOriginalKeys.value)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      orderMsgOriginalKeys.value = next
+    }
+    function msgDisplayText(m, i) {
+      if (m && m.is_buyer && m.text_zh && !isShowingOriginal(m, i)) return m.text_zh
+      return (m && m.text) || ''
+    }
+
+    async function loadOrderMessages(orderNo) {
+      const ono = String(orderNo || '').trim()
+      orderMsgOriginalKeys.value = new Set()
+      orderMessages.value = []
+      if (!ono) return
+      orderMessagesLoading.value = true
+      try {
+        const res = await orderApi.messages(ono)
+        orderMessages.value = Array.isArray(res?.messages) ? res.messages : []
+      } catch (e) {
+        console.error('[订单对话]', e?.response?.data?.detail || e?.message || e)
+      } finally {
+        orderMessagesLoading.value = false
+      }
+    }
+
+    /** 「刷新对话」按钮：重新读取当前订单的对话消息缓存 */
+    function refreshOrderMessages() {
+      loadOrderMessages(form.value.order_no)
+    }
+
+    // 回复消息：仅在订单非「已完成(done)/已取消(cancelled)」时允许
+    const replyDraft = ref('')
+    const replySending = ref(false)
+    const canReplyMessage = computed(() => {
+      const st = String(form.value.status || '').trim()
+      return st !== 'done' && st !== 'cancelled'
+    })
+
+    async function sendOrderReply() {
+      const orderNo = String(form.value.order_no || '').trim()
+      const text = replyDraft.value.trim()
+      if (!orderNo) {
+        ElMessage.warning(t('orders.missingOrderNo'))
+        return
+      }
+      if (!text) return
+      replySending.value = true
+      try {
+        await orderApi.sendMessage({
+          order_no: orderNo,
+          text,
+          data_user: form.value.data_user || '',
+        })
+        replyDraft.value = ''
+        ElMessage.success(t('orders.replySent'))
+        // 乐观追加自己发出的消息（缓存需待办再抓取才更新，先本地呈现）
+        orderMessages.value = [
+          ...orderMessages.value,
+          { id: null, from: null, text, text_zh: null, at: null, is_buyer: false, images: [] },
+        ]
+      } catch (e) {
+        if (!e?.response) ElMessage.error(e?.message || t('orders.replyFailed'))
+      } finally {
+        replySending.value = false
+      }
+    }
 
     const filters = ref({ keyword: '', status: '', owner_user_id: null })
 
@@ -1406,6 +1487,9 @@ export default defineComponent({
       }
       // 加载该订单的包材合计金额用于展示
       loadPackagingExpenses(row.order_no)
+      // 加载该订单的对话消息（表单右侧展示）
+      replyDraft.value = ''
+      loadOrderMessages(row.order_no)
       dialogVisible.value = true
     }
 
@@ -1660,6 +1744,17 @@ export default defineComponent({
       dateRange,
       dialogVisible,
       formRef,
+      orderMessages,
+      orderMessagesLoading,
+      isShowingOriginal,
+      toggleMsgOriginal,
+      msgDisplayText,
+      refreshOrderMessages,
+      replyDraft,
+      replySending,
+      canReplyMessage,
+      sendOrderReply,
+      mercariImageUrl,
       filters,
       ORDER_STATUS_KEYS,
       statusMap,

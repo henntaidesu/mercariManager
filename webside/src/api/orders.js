@@ -6,6 +6,12 @@ export const orderApi = {
   stats: (params) => http.get('/use_web/orders/stats', { params }),
   /** 订单展开：从说明解析的待出库明细（管理 ID、仓库等） */
   outboundLines: (params) => http.get('/use_web/orders/outbound-lines', { params }),
+  /** 订单对话消息：按 order_no 读取交易消息缓存（同待办「处理」面板的对话流） */
+  messages: (orderNo, axiosConfig = {}) =>
+    http.get('/use_web/orders/messages', { params: { order_no: orderNo }, ...axiosConfig }),
+  /** 订单对话回复：打开/复用交易页填回复并点煤炉发送按钮（不设超时，进度走 sync-progress） */
+  sendMessage: (data, axiosConfig = {}) =>
+    http.post('/use_web/orders/messages/send', data, { timeout: 0, ...axiosConfig }),
   /** 订单二级列表：明细行手动关联或重新绑定 inventory_id（已出库的会自动回退旧库存并扣减新库存） */
   bindOutboundLineInventory: (lineId, data) =>
     http.patch(`/use_web/orders/outbound-lines/${lineId}/bind-inventory`, data),

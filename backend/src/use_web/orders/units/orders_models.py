@@ -38,6 +38,15 @@ class OrderPackagingWaiveBody(PydanticModel):
     order_no: str
 
 
+class SendOrderMessageBody(PydanticModel):
+    """订单「编辑订单」面板回复消息：order_no(=item_id) + 文本，data_user 用于回退解析账号。"""
+
+    order_no: str
+    text: str
+    data_user: Optional[str] = None
+    progress_job_id: Optional[str] = None
+
+
 class OrderUpdate(PydanticModel):
     order_no: Optional[str] = None
     order_date: Optional[int] = None

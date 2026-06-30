@@ -234,6 +234,129 @@
 .order-edit-form--tiled :deep(.order-edit-section:first-child) {
   margin-top: 0;
 }
+/* 编辑订单：左表单 + 右对话两栏布局 */
+.order-edit-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.order-edit-form--main {
+  flex: 1;
+  min-width: 0;
+}
+.order-conversation {
+  flex: 0 0 360px;
+  width: 360px;
+  align-self: stretch;
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--el-border-color-lighter);
+  padding-left: 16px;
+  min-height: 0;
+}
+.order-conversation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.order-conversation-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.order-conversation-body {
+  flex: 1;
+  min-height: 120px;
+  max-height: 64vh;
+  overflow-y: auto;
+}
+/* 对话消息气泡（与待办「处理」面板一致） */
+.order-conversation .detail-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+.order-conversation .detail-msg {
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.order-conversation .detail-msg-buyer {
+  background: var(--el-fill-color);
+}
+.order-conversation .detail-msg-self {
+  background: var(--el-color-primary-light-9);
+}
+.order-conversation .detail-msg-tag-self {
+  color: var(--el-color-primary);
+  font-size: 11px;
+  margin-left: 4px;
+}
+.order-conversation .detail-msg-from {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 4px;
+}
+.order-conversation .detail-msg-text {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.order-conversation .detail-msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.order-conversation .detail-msg-image {
+  width: 88px;
+  height: 88px;
+  border-radius: 6px;
+  border: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-blank);
+  cursor: pointer;
+}
+.order-conversation .detail-msg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+  min-height: 16px;
+}
+.order-conversation .detail-msg-at {
+  font-size: 10px;
+  color: var(--el-text-color-placeholder);
+}
+.order-conversation .detail-msg-trans-toggle {
+  margin-right: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--el-color-primary);
+}
+.order-conversation .detail-msg-trans-toggle:hover {
+  text-decoration: underline;
+}
+.order-conversation-reply {
+  margin-top: 10px;
+  border-top: 1px dashed var(--el-border-color-lighter);
+  padding-top: 10px;
+  flex-shrink: 0;
+}
+.order-conversation-reply-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
 .order-dialog-footer {
   display: flex;
   align-items: center;

@@ -161,6 +161,31 @@ def set_message_translation(
     return False
 
 
+def load_order_account_id(order_no: str) -> Optional[int]:
+    """按订单读取抓取该对话时使用的煤炉账号 id（用于回复消息时定位账号）。
+
+    取该订单消息行中最近一条非空 account_id（同一订单的消息应属同一账号）。无则返回 None。
+    """
+    ono = (order_no or "").strip()
+    if not ono:
+        return None
+    try:
+        rows = DatabaseManager().execute_query(
+            "SELECT [account_id] FROM [transaction_messages] "
+            "WHERE TRIM([order_no])=TRIM(?) AND [account_id] IS NOT NULL "
+            "ORDER BY [synced_at] DESC, [id] DESC LIMIT 1",
+            (ono,),
+        )
+    except Exception:
+        return None
+    if rows and rows[0] and rows[0][0] is not None:
+        try:
+            return int(rows[0][0])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def load_order_buyer_name(order_no: str) -> Optional[str]:
     """按订单推断买家名：优先首条买家消息的发信名，回退首条非空发信名（与解析逻辑一致）。"""
     ono = (order_no or "").strip()

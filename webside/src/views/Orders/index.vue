@@ -410,11 +410,12 @@
     <el-dialog
       v-model="dialogVisible"
       :title="t('orders.editOrder')"
-      width="1080px"
+      width="1320px"
       destroy-on-close
       class="order-edit-dialog"
     >
-      <el-form :model="form" :rules="rules" ref="formRef" label-position="top" size="small" class="order-edit-form order-edit-form--tiled" disabled>
+      <div class="order-edit-layout">
+      <el-form :model="form" :rules="rules" ref="formRef" label-position="top" size="small" class="order-edit-form order-edit-form--tiled order-edit-form--main" disabled>
         <!-- 基本信息 -->
         <el-divider content-position="left" class="order-edit-section">{{ t('orders.sectionBasic') }}</el-divider>
         <el-row :gutter="16" class="order-edit-row5">
@@ -550,11 +551,6 @@
             </el-form-item>
           </el-col>
           <el-col :xs="24" :sm="12" :md="6">
-            <el-form-item :label="t('orders.shippingMethod')">
-              <el-input v-model="form.request_class_display_name" clearable placeholder="request_class_display_name" />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :sm="12" :md="6">
             <el-form-item :label="t('orders.shippingFeeJpy')">
               <el-input-number
                 v-model="form.shipping_fee"
@@ -590,7 +586,7 @@
               <el-input
                 v-model="form.description"
                 type="textarea"
-                :rows="3"
+                :rows="10"
                 maxlength="4000"
                 show-word-limit
                 placeholder="description（transaction_evidences/get）"
@@ -598,19 +594,78 @@
               <div v-if="orderDescriptionMgmtHint" class="form-hint">{{ orderDescriptionMgmtHint }}</div>
             </el-form-item>
           </el-col>
-          <el-col :span="24">
-            <el-form-item :label="t('orders.thumbnailsJson')">
-              <el-input
-                v-model="form.thumbnails_text"
-                type="textarea"
-                :rows="4"
-                :placeholder="t('orders.thumbnailsJsonPlaceholder')"
-              />
-              <div class="form-hint">{{ t('orders.thumbnailsJsonHint') }}</div>
-            </el-form-item>
-          </el-col>
         </el-row>
       </el-form>
+
+      <!-- 右侧：对话消息（来源同待办「处理」面板，按 order_no 读交易消息缓存） -->
+      <aside class="order-conversation">
+        <div class="order-conversation-head">
+          <span class="order-conversation-title">{{ t('orders.conversation') }}</span>
+          <el-button
+            size="small"
+            :icon="Refresh"
+            :loading="orderMessagesLoading"
+            @click="refreshOrderMessages"
+          >{{ t('orders.refreshConversation') }}</el-button>
+        </div>
+        <div class="order-conversation-body" v-loading="orderMessagesLoading">
+          <div v-if="orderMessages.length" class="detail-messages">
+            <div
+              v-for="(m, i) in orderMessages"
+              :key="m.id || `idx-${i}`"
+              :class="['detail-msg', m.is_buyer ? 'detail-msg-buyer' : 'detail-msg-self']"
+            >
+              <div v-if="m.from" class="detail-msg-from">{{ m.from }}<span v-if="!m.is_buyer" class="detail-msg-tag-self">{{ t('orders.sellerTag') }}</span></div>
+              <div v-if="m.images && m.images.length" class="detail-msg-images">
+                <el-image
+                  v-for="(img, ii) in m.images"
+                  :key="ii"
+                  :src="mercariImageUrl(img)"
+                  :preview-src-list="mercariImageUrlList(m.images)"
+                  :initial-index="ii"
+                  :preview-teleported="true"
+                  fit="cover"
+                  referrerpolicy="no-referrer"
+                  class="detail-msg-image"
+                >
+                  <template #error><span class="thumb-fallback">-</span></template>
+                </el-image>
+              </div>
+              <div v-if="m.text" class="detail-msg-text">{{ msgDisplayText(m, i) }}</div>
+              <div class="detail-msg-footer">
+                <button
+                  v-if="m.is_buyer && m.text_zh"
+                  type="button"
+                  class="detail-msg-trans-toggle"
+                  @click="toggleMsgOriginal(m, i)"
+                >{{ isShowingOriginal(m, i) ? t('orders.showTranslation') : t('orders.showOriginal') }}</button>
+                <span v-if="m.at" class="detail-msg-at">{{ m.at }}</span>
+              </div>
+            </div>
+          </div>
+          <el-empty v-else-if="!orderMessagesLoading" :description="t('orders.noMessages')" :image-size="60" />
+        </div>
+        <div v-if="canReplyMessage" class="order-conversation-reply">
+          <el-input
+            v-model="replyDraft"
+            type="textarea"
+            :rows="3"
+            :placeholder="t('orders.replyPlaceholder')"
+            maxlength="1000"
+            resize="none"
+          />
+          <div class="order-conversation-reply-actions">
+            <el-button
+              type="primary"
+              size="small"
+              :loading="replySending"
+              :disabled="!replyDraft.trim()"
+              @click="sendOrderReply"
+            >{{ t('orders.sendReply') }}</el-button>
+          </div>
+        </div>
+      </aside>
+      </div>
       <template #footer>
         <div class="order-dialog-footer">
           <el-popconfirm

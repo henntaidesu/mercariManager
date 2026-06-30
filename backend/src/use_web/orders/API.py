@@ -8,6 +8,7 @@
 from fastapi import APIRouter
 
 from .units.orders_crud import create_order, delete_order, update_order
+from .units.orders_messages import send_order_message
 from .units.orders_outbound import (
     bind_outbound_line_inventory,
     convert_outbound_line_owner,
@@ -18,12 +19,19 @@ from .units.orders_outbound import (
     stock_out_order_outbound_line,
     waive_order_packaging,
 )
-from .units.orders_query import list_order_outbound_lines, list_orders, order_stats
+from .units.orders_query import (
+    list_order_messages,
+    list_order_outbound_lines,
+    list_orders,
+    order_stats,
+)
 
 router = APIRouter()
 
 router.add_api_route("/stats", order_stats, methods=["GET"])
 router.add_api_route("/outbound-lines", list_order_outbound_lines, methods=["GET"])
+router.add_api_route("/messages", list_order_messages, methods=["GET"])
+router.add_api_route("/messages/send", send_order_message, methods=["POST"])
 router.add_api_route("/outbound-lines/{line_id}/bind-inventory", bind_outbound_line_inventory, methods=["PATCH"])
 router.add_api_route("/outbound-lines/{line_id}/convert-owner", convert_outbound_line_owner, methods=["POST"])
 router.add_api_route("/outbound-lines/{line_id}/stock-out", stock_out_order_outbound_line, methods=["POST"])

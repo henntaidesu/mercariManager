@@ -6,6 +6,9 @@ from fastapi import HTTPException
 
 from ....db_manage.models.order import OrderModel
 from ....db_manage.models.order_outbound_line import OrderOutboundLineModel
+from ....use_mercari.get_to_du_list.transaction_detail._messages_store import (
+    load_order_messages,
+)
 from .order_goods_ratio import _ensure_order_ratio_stored
 from .orders_helpers import _validate_status_query
 
@@ -105,6 +108,18 @@ def list_order_outbound_lines(
 
     OrderOutboundLineModel.sort_owner_unmatched_first(items)
     return {"order_no": ono, "items": items}
+
+
+def list_order_messages(order_no: str):
+    """某订单的对话消息（买家/卖家交流流），来源同待办「处理」面板的交易消息缓存。
+
+    按 order_no 关联读取 transaction_messages 表（= 待办抓取交易详情时写入的对话），
+    供订单编辑表单右侧展示。返回展示态列表，结构与待办面板 detail.messages 一致。
+    """
+    ono = (order_no or "").strip()
+    if not ono:
+        raise HTTPException(status_code=400, detail="order_no 不能为空")
+    return {"order_no": ono, "messages": load_order_messages(ono)}
 
 
 def list_orders(

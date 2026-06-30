@@ -2904,6 +2904,7 @@ export default defineComponent({
           name: listing_title,
           description: listing_body,
           image_urls: imageUrls,
+          watermark: data.watermark === true,
           category_mapping_id: data.category_mapping_id != null
             ? String(data.category_mapping_id)
             : null,
@@ -3192,8 +3193,29 @@ export default defineComponent({
       }
       const fullDescription = foot ? (body ? `${body}\n\n${foot}` : foot) : body
 
+      // ── 出品方式确认：水印出品（图片右下角叠加账号名+日期）/ 原图出品 ── //
+      // 水印出品暂时屏蔽，统一走原图出品；恢复时取消下方注释即可。
+      const watermark = false
+      // try {
+      //   await ElMessageBox.confirm(
+      //     t('inventory.watermarkConfirmMessage'),
+      //     t('inventory.watermarkConfirmTitle'),
+      //     {
+      //       type: 'info',
+      //       distinguishCancelAndClose: true,
+      //       confirmButtonText: t('inventory.watermarkListing'),
+      //       cancelButtonText: t('inventory.originalListing')
+      //     }
+      //   )
+      //   watermark = true
+      // } catch (action) {
+      //   if (action !== 'cancel') return // 关闭/ESC → 取消出品
+      //   watermark = false // 「原图出品」
+      // }
+
       const data = {
         inventory_ids: ids,
+        watermark,
         listing_title: listingTitle,
         description: fullDescription,
         price,

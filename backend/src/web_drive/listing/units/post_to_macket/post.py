@@ -40,6 +40,8 @@ async def post_to_market(
     # 发货
     shipping_days: str = "2_3_days",  # "1_2_days" | "2_3_days" | "4_7_days"
     shipping_from_area_id: str = "",  # "1"~"47","99"
+    # 是否为图片右下角叠加「出品账号名 + 日期」水印后再上传
+    watermark: bool = False,
     # 代理 / 超时（proxy_server 保留为 API 兼容；实际由 listing_automation_browser 统一配置）
     proxy_server: Optional[str] = None,  # noqa: ARG001
     page_load_timeout_ms: int = DEFAULT_PAGE_LOAD_TIMEOUT_MS,
@@ -80,6 +82,15 @@ async def post_to_market(
     if account_id is None:
         raise ValueError(f"无效的 account_key: {account_key}")
     main_key = mercari_account_key(account_id)
+
+    # ── 可选：为图片右下角叠加「出品账号名 + 日期」水印（每次出品按需生成） ── #
+    if watermark and local_images:
+        from ._watermark import apply_watermark_to_images, build_watermark_text
+
+        wm_text = build_watermark_text(account_id)
+        if wm_text:
+            report("watermark", f"正在为 {len(local_images)} 张图片添加水印…")
+            local_images = apply_watermark_to_images(local_images, wm_text)
 
     report("open_session", "正在初始化独立无头出品浏览器并进入出品页…")
 
