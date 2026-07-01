@@ -498,12 +498,13 @@
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item :label="t('onSaleItems.shippingPayerLabel')">
+        <!-- 运费负担 / 发货地区：暂时屏蔽（保留代码，仅隐藏 UI 选项） -->
+        <el-form-item v-if="false" :label="t('onSaleItems.shippingPayerLabel')">
           <el-select v-model="reviseForm.shipping_payer" :placeholder="t('onSaleItems.keepUnchanged')" clearable style="width: 100%">
             <el-option v-for="o in shippingPayerEditOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
         </el-form-item>
-        <el-form-item :label="t('onSaleItems.shippingFromAreaLabel')">
+        <el-form-item v-if="false" :label="t('onSaleItems.shippingFromAreaLabel')">
           <el-select v-model="reviseForm.shipping_from_area_id" :placeholder="t('onSaleItems.keepUnchanged')" clearable filterable style="width: 100%">
             <el-option v-for="o in shippingFromAreaOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
@@ -533,7 +534,7 @@
       destroy-on-close
     >
       <div class="batch-price-tip">{{ t('onSaleItems.batchSelectedCount', { count: batchSelectedCount }) }}</div>
-      <el-form label-width="110px">
+      <el-form label-width="110px" class="on-sale-batch-form">
         <el-form-item :label="t('onSaleItems.priceLabel')">
           <el-input-number
             v-model="batchForm.price"

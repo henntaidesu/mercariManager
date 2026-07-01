@@ -499,6 +499,8 @@ export default defineComponent({
     })
     /** 商品说明末行的「暗码」（管理番号暗号）；编辑时锁定不可改，保存时原样回拼 */
     const reviseDescCipher = ref('')
+    /** 打开修改弹窗时的原始值快照；提交时只下发与快照不同的字段 */
+    const reviseOriginal = ref(null)
 
     /** 批量改价：开启后点击商品行选中（无前置勾选框），选中后弹出表单输入价格逐个改价 */
     const batchMode = ref(false)
@@ -693,10 +695,20 @@ export default defineComponent({
       const { body, cipher } = splitListingCipher(detailListingBodyText.value || '')
       reviseForm.listing_description = body
       reviseDescCipher.value = cipher
-      // 配送について：发货时效 / 发货地区按当前值预填；配送料の負担本地无存储，默认留空（不修改）
+      // 配送について：发货时效 / 发货地区 / 配送料の負担按当前值预填（运费负担 / 发货地区在表单中已屏蔽，
+      // 因与快照相等而永不下发；发货时效仍可改）。
       reviseForm.shipping_duration = base.shipping_duration_id ? String(base.shipping_duration_id) : ''
       reviseForm.shipping_from_area_id = base.shipping_from_area_id ? String(base.shipping_from_area_id) : ''
       reviseForm.shipping_payer = base.shipping_payer_id ? String(base.shipping_payer_id) : ''
+      // 快照打开时的原始值：提交时只下发用户实际改动的字段，避免误动其它数据（如重选下拉清空「配送の方法」）
+      reviseOriginal.value = {
+        name: reviseForm.name,
+        price: Number(reviseForm.price),
+        description: composeReviseDescription(),
+        shipping_duration: reviseForm.shipping_duration,
+        shipping_from_area_id: reviseForm.shipping_from_area_id,
+        shipping_payer: reviseForm.shipping_payer,
+      }
       reviseDialogVisible.value = true
     }
 
@@ -728,6 +740,23 @@ export default defineComponent({
         return
       }
       if (reviseSaving.value) return
+
+      // 只下发用户实际改动的字段（与打开弹窗时的快照比较）
+      const orig = reviseOriginal.value || {}
+      const changed = {}
+      if (name !== String(orig.name || '')) changed.name = name
+      if (Math.floor(price) !== Math.floor(Number(orig.price) || 0)) changed.price = Math.floor(price)
+      if (description !== String(orig.description || '')) changed.description = description
+      const payer = String(reviseForm.shipping_payer || '').trim()
+      if (payer !== String(orig.shipping_payer || '').trim()) changed.shipping_payer = payer || undefined
+      const duration = String(reviseForm.shipping_duration || '').trim()
+      if (duration !== String(orig.shipping_duration || '').trim()) changed.shipping_duration = duration || undefined
+      const area = String(reviseForm.shipping_from_area_id || '').trim()
+      if (area !== String(orig.shipping_from_area_id || '').trim()) changed.shipping_from_area_id = area || undefined
+      if (Object.keys(changed).length === 0) {
+        ElMessage.warning(t('onSaleItems.reviseNoChange'))
+        return
+      }
 
       const progressJobId =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -765,12 +794,7 @@ export default defineComponent({
         await webDriveApi.reviseMercariItem({
           account_key: resolved.accountKey,
           item_id: iid,
-          name,
-          price: Math.floor(price),
-          description,
-          shipping_payer: String(reviseForm.shipping_payer || '').trim() || undefined,
-          shipping_duration: String(reviseForm.shipping_duration || '').trim() || undefined,
-          shipping_from_area_id: String(reviseForm.shipping_from_area_id || '').trim() || undefined,
+          ...changed,
           use_mitm_proxy: true,
           progress_job_id: progressJobId,
         })

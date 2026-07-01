@@ -29,7 +29,10 @@ from ....use_mercari.sync.sync_progress import make_sync_reporter
 log = logging.getLogger(__name__)
 
 NAME_INPUT_SELECTOR = 'input[name="name"]'
+# 定价商品的价格输入框
 PRICE_INPUT_SELECTOR = 'input[name="price"]'
+# オークション形式（拍卖）的开始价格输入框，name 为 auctionPrice
+AUCTION_PRICE_INPUT_SELECTOR = 'input[name="auctionPrice"]'
 # 可见的说明输入框（排除自动高度镜像用的只读 textarea）
 DESC_TEXTAREA_SELECTOR = 'textarea[name="description"]:not([readonly])'
 # 配送について 三个下拉框（编辑页 <select> 均带稳定 name 属性）
@@ -69,13 +72,40 @@ async def _fill_value(page: Any, selector: str, value: str, *, element_timeout_m
     await loc.fill(value)
 
 
+async def _fill_price_value(page: Any, value: str, *, element_timeout_ms: int) -> None:
+    """填价格：优先定价商品 input[name=price]，不存在则回退拍卖开始价 input[name=auctionPrice]。"""
+    price_loc = page.locator(PRICE_INPUT_SELECTOR).first
+    if await price_loc.count() > 0:
+        await price_loc.wait_for(state="visible", timeout=element_timeout_ms)
+        await price_loc.scroll_into_view_if_needed()
+        await price_loc.fill("")
+        await price_loc.fill(value)
+        return
+
+    auction_loc = page.locator(AUCTION_PRICE_INPUT_SELECTOR).first
+    await auction_loc.wait_for(state="visible", timeout=element_timeout_ms)
+    await auction_loc.scroll_into_view_if_needed()
+    await auction_loc.fill("")
+    await auction_loc.fill(value)
+
+
 async def _select_option_value(
     page: Any, selector: str, value: str, *, element_timeout_ms: int
 ) -> None:
-    """选择 <select> 的指定 option value；原生 select_option 失败时回退到原生 setter+change 事件。"""
+    """选择 <select> 的指定 option value；原生 select_option 失败时回退到原生 setter+change 事件。
+
+    若 <select> 当前值已等于目标值则直接跳过：避免对「配送料の負担」等下拉重复派发 change 事件——
+    在煤炉编辑页，重新选择「配送料の負担」会连带清空「配送の方法（配送方法）」，导致提交被
+    「配送の方法を選択してください」拦截。
+    """
     loc = page.locator(selector).first
     await loc.wait_for(state="visible", timeout=element_timeout_ms)
     await loc.scroll_into_view_if_needed()
+    try:
+        if (await loc.input_value()) == value:
+            return
+    except Exception:
+        pass
     try:
         await loc.select_option(value=value, timeout=element_timeout_ms)
         return
@@ -260,8 +290,8 @@ async def revise_mercari_item(
             )
             result["filled"].append("name")
         if price_val is not None:
-            await _fill_value(
-                page, PRICE_INPUT_SELECTOR, str(price_val), element_timeout_ms=element_timeout_ms
+            await _fill_price_value(
+                page, str(price_val), element_timeout_ms=element_timeout_ms
             )
             result["filled"].append("price")
         if desc_val is not None:

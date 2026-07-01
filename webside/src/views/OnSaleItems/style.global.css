@@ -97,6 +97,12 @@
   width: 100%;
 }
 
+/* 价格用 el-input-number，默认文字居中；改为居左显示（修改弹窗 + 批量改价弹窗） */
+.on-sale-revise-form .el-input-number .el-input__inner,
+.on-sale-batch-form .el-input-number .el-input__inner {
+  text-align: left;
+}
+
 /* 批量改价「点击行选择」模式（参考库存组合商品选择） */
 .batch-pick-count {
   font-size: 13px;
