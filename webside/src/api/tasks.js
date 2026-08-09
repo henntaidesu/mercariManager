@@ -4,7 +4,7 @@ import http from './http'
  * 任务队列 → /mercariV2/src/use_web/tasks/*
  *
  * 出品 / 订单更新列表·更新状态·单行刷新 / 在售同步·全量更新·修改 /
- * 待办一键好评·一键处理·确认签收 / 账号同步数据，
+ * 待办一键好评·一键处理·确认签收·发送回复·发送反应表情 / 账号同步数据，
  * 统一经 submit 提交后由后端全局单 worker 串行执行，提交即返回，不阻塞前台。
  */
 
@@ -25,6 +25,8 @@ export const TASK_TYPES = {
   TODOS_SYNC: 'todos.sync',
   TODOS_SHIPPING_QR: 'todos.shipping_qr',
   TODOS_CONFIRM_CANCELLATION: 'todos.confirm_cancellation',
+  TODOS_SEND_MESSAGE: 'todos.send_message',
+  TODOS_SEND_REACTION: 'todos.send_reaction',
   ACCOUNT_SYNC_DATA: 'account.sync_data',
   SYSTEM_HOMECOMING: 'system.homecoming'
 }

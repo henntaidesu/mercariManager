@@ -3,7 +3,8 @@
 
 源自 github.com/Gosoki/mercari-proxy，改造为后端托管的子进程，随系统启停。
 - 独立 HTTPS 端口、根挂载（与原项目设计一致，SPA 导航/刷新/前进后退均正常）；
-- 默认仅监听 127.0.0.1:<MERCARI_PROXY_PORT>（默认 9610），仅本机可访问；
+- 默认监听 0.0.0.0:<MERCARI_PROXY_PORT>（默认 9610），但 server.js 只放行环回 +
+  私有网段（``MERCARI_PROXY_ALLOW_LAN=0`` 可收回成仅本机），公网来源一律 403；
 - 自签证书使浏览器处于安全上下文（DPoP 所需），用户首次访问点「继续」即可；
 - ``register_injection`` 把账号 Cookie 以一次性 token 推送到 Node 进程内存，
   用户随后访问 ``/__boot?token=...`` 时写入本地浏览器。
@@ -34,8 +35,10 @@ def proxy_port() -> int:
 
 
 def bind_host() -> str:
-    # 仅本机可访问（Cookie 注入含登录态，限制为环回地址）。
-    return os.environ.get("MERCARI_PROXY_BIND_HOST", "127.0.0.1")
+    # 用户常从局域网另一台机器访问管理系统，前端按 window.location.hostname 拼 boot 地址，
+    # 只绑 127.0.0.1 时那个地址根本连不上。访问控制交给 server.js 的 isAllowedClient
+    # （环回 + 私有网段放行，公网拒绝），这里放开监听。
+    return os.environ.get("MERCARI_PROXY_BIND_HOST", "0.0.0.0")
 
 
 def proxy_scheme() -> str:
@@ -176,16 +179,24 @@ def stop_proxy() -> None:
     _proc = None
 
 
-def register_injection(token: str, cookies: List[Dict[str, Any]], ttl_sec: int = 120) -> None:
+def register_injection(
+    token: str,
+    cookies: List[Dict[str, Any]],
+    ttl_sec: int = 120,
+    *,
+    site: str = "mercari",
+) -> None:
     """把一次性 token + Cookie 列表推送到 Node 进程内存（用户随后访问 /__boot 时写入浏览器）。
 
     cookies: [{"name": str, "value": str, "httpOnly": bool}, ...]
-    抛出异常表示推送失败（Node 未运行 / 网络错误）。
+    site: 目标市集（``mercari`` / ``yahoo``，见 server.js 的 SITES）——决定 /__boot 之后
+    这个代理端口把根相对请求发往哪个上游。未知值由 Node 端 400 拒绝，不会静默退回煤炉。
+    抛出异常表示推送失败（Node 未运行 / 网络错误 / 站点未知）。
     """
     url = f"{proxy_scheme()}://127.0.0.1:{proxy_port()}/__inject"
     resp = requests.post(
         url,
-        json={"token": token, "cookies": cookies, "ttl_sec": ttl_sec},
+        json={"token": token, "cookies": cookies, "ttl_sec": ttl_sec, "site": site},
         headers={"x-internal-secret": _ensure_secret()},
         timeout=5,
         verify=False,  # 自签证书

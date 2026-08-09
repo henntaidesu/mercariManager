@@ -27,6 +27,8 @@ TODOS_BULK_CONFIRM_SHIP = "todos.bulk_confirm_ship"
 TODOS_SHIPPING_QR = "todos.shipping_qr"
 TODOS_SYNC = "todos.sync"
 TODOS_CONFIRM_CANCELLATION = "todos.confirm_cancellation"
+TODOS_SEND_MESSAGE = "todos.send_message"
+TODOS_SEND_REACTION = "todos.send_reaction"
 ACCOUNT_SYNC_DATA = "account.sync_data"
 SYSTEM_HOMECOMING = "system.homecoming"
 
@@ -145,6 +147,24 @@ _SPECS: Dict[str, TaskSpec] = {
         title=lambda p: "确认签收退回商品："
         + (str(p.get("item_id") or "").strip() or f"待办#{p.get('todo_id')}"),
     ),
+    TODOS_SEND_MESSAGE: TaskSpec(
+        task_type=TODOS_SEND_MESSAGE,
+        label_zh="发送回复",
+        # 同一笔待办同时只允许排一条：消息发出去就收不回来，重复排队等于重复发给买家
+        dedup_key=lambda p: f"{TODOS_SEND_MESSAGE}:{p.get('todo_id')}",
+        title=lambda p: "发送回复："
+        + (str(p.get("item_id") or "").strip() or f"待办#{p.get('todo_id')}"),
+    ),
+    TODOS_SEND_REACTION: TaskSpec(
+        task_type=TODOS_SEND_REACTION,
+        label_zh="发送反应表情",
+        # 同一笔待办同时只允许排一条，而且这条去重是**正确性**要求不只是防重复点击：
+        # reaction_index 数的是「买家消息里尚无反应的第 N 条」，前一条排队中的反应一旦落地
+        # 就会把后一条的下标整体前移，点到别的消息上去。
+        dedup_key=lambda p: f"{TODOS_SEND_REACTION}:{p.get('todo_id')}",
+        title=lambda p: f"发送反应表情（{p.get('reaction') or ''}）："
+        + (str(p.get("item_id") or "").strip() or f"待办#{p.get('todo_id')}"),
+    ),
     TODOS_BULK_CONFIRM_SHIP: TaskSpec(
         task_type=TODOS_BULK_CONFIRM_SHIP,
         label_zh="一键确认发送",
@@ -228,6 +248,12 @@ def resolve_handler(task_type: str) -> Callable:
     if tt == TODOS_CONFIRM_CANCELLATION:
         from .handlers.todos import handle_confirm_cancellation
         return handle_confirm_cancellation
+    if tt == TODOS_SEND_MESSAGE:
+        from .handlers.todos import handle_send_message
+        return handle_send_message
+    if tt == TODOS_SEND_REACTION:
+        from .handlers.todos import handle_send_reaction
+        return handle_send_reaction
     if tt == ACCOUNT_SYNC_DATA:
         from .handlers.account import handle_sync_account_data
         return handle_sync_account_data

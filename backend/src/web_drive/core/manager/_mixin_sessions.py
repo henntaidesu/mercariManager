@@ -250,12 +250,18 @@ class _SessionsMixin:
         return out
 
 
-    async def export_cookies(self, account_key: str) -> List[Dict[str, Any]]:
-        """读取账号 profile 当前登录态的煤炉 Cookie（复用已开会话；无则临时开无头会话读取）。
+    async def export_cookies(
+        self,
+        account_key: str,
+        *,
+        domains: Sequence[str] = ("mercari",),
+    ) -> List[Dict[str, Any]]:
+        """读取账号 profile 当前登录态的 Cookie（复用已开会话；无则临时开无头会话读取）。
 
-        返回 [{"name","value","httpOnly"}, ...]，仅含 mercari 相关域名。
+        返回 [{"name","value","httpOnly"}, ...]。``domains`` 同 ``export_cookies_full``：
+        默认煤炉，雅虎账号传 ``("yahoo", "paypay")``。
         """
-        full = await self.export_cookies_full(account_key)
+        full = await self.export_cookies_full(account_key, domains=domains)
         return [
             {"name": c["name"], "value": c["value"], "httpOnly": bool(c.get("httpOnly"))}
             for c in full

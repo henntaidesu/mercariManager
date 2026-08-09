@@ -2570,6 +2570,10 @@ export default defineComponent({
       detail.reply_draft = replyDefaultText.value
     }
 
+    /** 发送回复：提交到任务队列，后台开浏览器发消息，进度在 /#/tasks 看。
+     *  两个平台走同一个任务类型，由后端按待办的 platform 分派。
+     *  发送成功后待回复会被后端软删，所以这里入队即关弹窗 + 刷列表——列表要等任务
+     *  真正跑完才会少一行，这点与其它队列化操作一致。 */
     async function onSendReply() {
       if (!currentRow.value?.id) return
       const text = (detail.reply_draft || '').trim()
@@ -2577,53 +2581,22 @@ export default defineComponent({
         ElMessage.warning(t('todos.replyEmpty'))
         return
       }
-      // 雅虎：交易页直接发取引メッセージ，没有煤炉那套 progress_job_id 进度回报
-      if (isYahoo.value) {
-        replyLoading.value = true
-        try {
-          const data = await todosApi.yahooSendMessage(currentRow.value.id, { text })
-          if (data?.completed) {
-            // 待回复：后端已软删，与煤炉一致——关 dialog + 刷列表，别再开一次浏览器抓详情。
-            // 不复用煤炉的 repliedDone：雅虎的会话交给队列空闲关闭，这里没有「浏览器已关闭」
-            ElMessage.success(t('todos.yahoo.messageSentDone'))
-            detail.reply_draft = ''
-            detailDialogVisible.value = false
-            load({ inPlace: true })
-          } else if (data?.sent) {
-            ElMessage.success(t('todos.yahoo.messageSent'))
-            detail.reply_draft = ''
-            await refreshYahooDetail()
-          } else {
-            ElMessage.warning(t('todos.yahoo.messageUncertain'))
-          }
-        } catch (e) {
-          if (!e?.response) ElMessage.error(e?.message || t('todos.yahoo.messageFailed'))
-        } finally {
-          replyLoading.value = false
-        }
-        return
-      }
       replyLoading.value = true
       try {
-        const result = await txOverlay.run({
-          title: t('todos.sendingMessage'),
-          consoleTag: '[发送回复]',
-          pollFn: (jobId) => todosApi.getSyncProgress(jobId),
-          actionFn: (jobId) =>
-            todosApi.sendTransactionMessage(currentRow.value.id, text, { progress_job_id: jobId }),
-        })
-        if (result?.completed) {
-          // 待回复（IncomingMessage）：后端已软删 + 关浏览器，前端关 dialog + 刷列表
-          ElMessage.success(t('todos.repliedDone'))
-          detailDialogVisible.value = false
-          load({ inPlace: true })
-        } else {
-          ElMessage.success(t('todos.sendButtonClicked'))
-          // 普通发送：刷新一次抓取让消息流更新
-          onDetailRefresh()
-        }
-      } catch (e) {
-        if (!e?.response) ElMessage.error(e?.message || t('todos.sendFailed'))
+        const task = await submitTask(
+          TASK_TYPES.TODOS_SEND_MESSAGE,
+          {
+            todo_id: currentRow.value.id,
+            account_id: currentRow.value.account_id ?? null,
+            item_id: currentRow.value.item_id || '',
+            text,
+          },
+          { t, successMessage: t('todos.replyEnqueued') },
+        )
+        if (!task) return
+        detail.reply_draft = ''
+        detailDialogVisible.value = false
+        load({ inPlace: true })
       } finally {
         replyLoading.value = false
       }
@@ -2719,28 +2692,23 @@ export default defineComponent({
       }
       reactionLoading.value = true
       try {
-        const result = await txOverlay.run({
-          title: t('todos.sendingReaction'),
-          consoleTag: '[发送反应]',
-          pollFn: (jobId) => todosApi.getSyncProgress(jobId),
-          actionFn: (jobId) =>
-            todosApi.sendMessageReaction(currentRow.value.id, {
-              message_id: message.id || null,
-              reaction_index: reactionIndex,
-              reaction: reactionKey,
-              progress_job_id: jobId,
-            }),
-        })
-        // 本地立即把反应贴到对应消息上,避免再抓一次煤炉
-        message.reaction = reactionKey
-        ElMessage.success(t('todos.reactionSent', { emoji: REACTION_EMOJI_BY_KEY[reactionKey] || reactionKey }))
-        if (result?.completed) {
-          // 待回复（IncomingMessage）：后端已软删 + 关浏览器，前端关 dialog + 刷列表
-          detailDialogVisible.value = false
-          load({ inPlace: true })
-        }
-      } catch (e) {
-        if (!e?.response) ElMessage.error(e?.message || t('todos.reactionFailed'))
+        const task = await submitTask(
+          TASK_TYPES.TODOS_SEND_REACTION,
+          {
+            todo_id: currentRow.value.id,
+            account_id: currentRow.value.account_id ?? null,
+            item_id: currentRow.value.item_id || '',
+            message_id: message.id || null,
+            reaction_index: reactionIndex,
+            reaction: reactionKey,
+          },
+          { t, successMessage: t('todos.reactionEnqueued') },
+        )
+        if (!task) return
+        // 反应按钮只在待回复（IncomingMessage）上渲染，发了反应即视为处理完毕：
+        // 后端跑完会软删该待办，所以入队即关弹窗 + 刷列表。
+        detailDialogVisible.value = false
+        load({ inPlace: true })
       } finally {
         reactionLoading.value = false
       }

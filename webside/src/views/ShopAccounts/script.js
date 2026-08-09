@@ -590,7 +590,8 @@ export default defineComponent({
 
     /**
      * Cookie 注入：读取服务端该账号登录态 Cookie → 注入 mercari-proxy →
-     * 在用户本地浏览器打开已登录的煤炉（经独立 HTTPS 端口的 mercari-proxy 反代）。
+     * 在用户本地浏览器打开已登录的市集（经独立 HTTPS 端口的 mercari-proxy 反代）。
+     * 煤炉/雅虎共用一条链路，平台由后端按账号查库决定（前端不传，也不该传）。
      */
     async function injectCookieForAccount(row) {
       const key = browserKeyFor(row.id)
@@ -611,7 +612,10 @@ export default defineComponent({
           const bootUrl = `${scheme}://${host}:${d.port}${d.boot_path}`
           if (win) win.location.href = bootUrl
           else window.open(bootUrl, '_blank')
-          ElMessage.success(t('mercariAccounts.cookieInjectDone', { count: d.count || 0 }))
+          ElMessage.success(t('mercariAccounts.cookieInjectDone', {
+            count: d.count || 0,
+            platform: platformName(d.platform || row.platform),
+          }))
         } else if (win) {
           win.close()
         }

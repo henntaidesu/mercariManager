@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """待办页后台操作的任务处理器：一键好评 / 已打包一键处理（确认发送）/ 发货扫码 /
-从煤炉同步 / 退货确认签收。
+从煤炉同步 / 退货确认签收 / 待回复的发送回复与反应表情。
 
 这些操作本就按账号逐个进串行队列执行（``suppress_idle_close=True`` 复用同一 ``__todo``
 浏览器会话），不占全局同步锁，因此处理器只需桥接进度后直接调用既有端点函数。
@@ -117,6 +117,106 @@ async def handle_confirm_cancellation(task: Dict[str, Any]) -> Dict[str, Any]:
             "已点击「キャンセルを完了する」，但未检测到「キャンセルが完了」。"
             "请到煤炉核对该交易当前状态，避免重复操作。"
         )
+    return result
+
+
+async def _close_todo_browser(account_id: int) -> None:
+    """收尾关掉该账号的 ``__todo`` 浏览器会话。
+
+    发回复 / 发反应的端点都带 ``suppress_idle_close=True``——HTTP 时代靠「用户关处理弹窗时
+    前端那次 close-detail-browser」收尾。改走队列后那次关闭必然被 ``_BROWSER_HOLDING_TASKS``
+    守卫挡掉（不挡就会把会话从正在跑的任务脚下抽走），所以收尾只能落在这里，否则这个会话
+    再没人关。全局 worker 严格串行，此刻不会有别的任务在用它。
+
+    待回复（IncomingMessage）成功后业务函数自己已经关过一次，这里再关一次是空操作。
+    """
+    if account_id <= 0:
+        return
+    from ...web_drive.core.manager import get_web_drive_manager
+    from ...web_drive.core.paths import mercari_todo_key
+
+    try:
+        await get_web_drive_manager().close_session(mercari_todo_key(account_id), force=True)
+    except Exception as exc:  # noqa: BLE001 收尾失败不该让「消息已发出」变成任务失败
+        log.warning("[task_queue] 关闭 __todo 浏览器失败 account_id=%s：%s", account_id, exc)
+
+
+async def handle_send_message(task: Dict[str, Any]) -> Dict[str, Any]:
+    """待办「发送回复」：按待办所属平台分派到煤炉 / 雅虎的交易留言。
+
+    待回复（``IncomingMessage`` / ``YahooIncomingMessage``）发送成功后由业务函数软删待办，
+    与原来走 HTTP 时同一套逻辑，这里只负责搬到后台执行。
+    """
+    from ...db_manage.models.todos.todo_item import TodoItemModel
+
+    payload = task.get("payload") or {}
+    todo_id = int(payload.get("todo_id") or 0)
+    text = str(payload.get("text") or "").strip()
+    if not todo_id:
+        raise ValueError("发送回复任务缺少 todo_id")
+    if not text:
+        raise ValueError("发送回复任务缺少回复内容")
+
+    # 平台以库里的待办行为准，不信 payload：入队与执行之间隔着队列，payload 只是当时的快照
+    todo = TodoItemModel.find_by_id(id=todo_id)
+    if not todo:
+        raise RuntimeError(f"待办事项 id={todo_id} 不存在")
+    platform = (getattr(todo, "platform", "") or "mercari").strip().lower()
+
+    try:
+        if platform == "yahoo":
+            from ...use_web.todos.units.todos_models import YahooTradeMessageRequest
+            from ...use_web.todos.units.todos_sync import yahoo_trade_message_endpoint
+
+            # 雅虎交易页发留言没有 progress_job_id 那套进度回报，不桥接
+            result = await yahoo_trade_message_endpoint(
+                todo_id, YahooTradeMessageRequest(text=text)
+            )
+        else:
+            from ...use_web.todos.units.todos_models import SendTransactionMessageRequest
+            from ...use_web.todos.units.todos_sync import send_transaction_message_endpoint
+
+            async with progress.bridge(task["id"], "sync") as jid:
+                result = await send_transaction_message_endpoint(
+                    todo_id, SendTransactionMessageRequest(text=text, progress_job_id=jid)
+                )
+            await _close_todo_browser(int(getattr(todo, "account_id", 0) or 0))
+    except HTTPException as exc:
+        # 端点与 HTTP 入口共用，前置校验抛的是 HTTPException；直接冒泡会让任务行的
+        # 错误显示成「400: …」，这里剥出 detail
+        raise RuntimeError(str(exc.detail)) from exc
+
+    # 煤炉侧发不出去会在业务函数里直接抛错，这里兜的是雅虎：``sent=False`` 表示点了发送
+    # 但页面没确认消息已发出，落成绿色「成功」会让这条来信再没人回头看。
+    if not result.get("sent"):
+        raise RuntimeError("已点击发送，但未确认消息已发出。请打开交易页核对后再重试。")
+    return result
+
+
+async def handle_send_reaction(task: Dict[str, Any]) -> Dict[str, Any]:
+    """待办「发送反应表情」：对买家某条消息点 emoji（仅煤炉，雅虎没有这个功能）。"""
+    from ...use_web.todos.units.todos_models import SendMessageReactionRequest
+    from ...use_web.todos.units.todos_sync import send_message_reaction_endpoint
+
+    payload = task.get("payload") or {}
+    todo_id = int(payload.get("todo_id") or 0)
+    if not todo_id:
+        raise ValueError("发送反应表情任务缺少 todo_id")
+
+    try:
+        async with progress.bridge(task["id"], "sync") as jid:
+            result = await send_message_reaction_endpoint(
+                todo_id,
+                SendMessageReactionRequest(
+                    message_id=payload.get("message_id") or None,
+                    reaction_index=int(payload.get("reaction_index") or 0),
+                    reaction=str(payload.get("reaction") or ""),
+                    progress_job_id=jid,
+                ),
+            )
+        await _close_todo_browser(int(task.get("account_id") or 0))
+    except HTTPException as exc:
+        raise RuntimeError(str(exc.detail)) from exc
     return result
 
 

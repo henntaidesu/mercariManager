@@ -346,7 +346,7 @@ header, not cookies, so the dangerous wildcard+credentials combination never occ
 `shop_accounts.platform` (`mercari` default / `yahoo`) selects the marketplace. Implemented for
 Yahoo: **listing, on-sale list+detail sync, revise/suspend/resume/delete, sold-order sync +
 single-order refresh + order-status batch refresh + fee backfill, auto-relist, todo sync,
-notification sync, and the todo 处理 flow (trade detail / 发货 / 交易留言)** — 发货 covers
+notification sync, Cookie 注入, and the todo 处理 flow (trade detail / 发货 / 交易留言)** — 发货 covers
 ゆうパケットポスト / mini too, via the App API (see `use_yahoo/app_api/` below). Still Mercari-only:
 受取評価, the bulk todo operations (一键好评 / 一键确认发送), QR/扫码 (Yahoo has no equivalent —
 its 配送コード is issued server-side, nothing to scan), and every *notification* action
@@ -355,9 +355,11 @@ its 配送コード is issued server-side, nothing to scan), and every *notifica
 **Every account-driven entry point dispatches on `shop_accounts.platform`** — the auto-fetch
 loop, the account page's 同步数据, on-sale sync / full-update / fetch-detail (single + batch),
 order sync + single-row refresh + batch status refresh, todo sync, todo 处理, and
-listing/revise/suspend/delete. Unsupported
+listing/revise/suspend/delete, and Cookie 注入. Unsupported
 combinations skip with a note or return a clear 400; nothing falls through to a Mercari
-implementation with a Yahoo account.
+implementation with a Yahoo account. Note the profile key is **not** a platform hint — a Yahoo
+account's main profile is also named `mercari_{id}` — so anything keyed on an `account_key` has to
+resolve the platform from `shop_accounts` (see `proxy_inject.py::_platform_of`), never from the key.
 
 Yahoo has no usable list/detail API — every page is server-rendered, so `use_yahoo/` parses pages
 with the automation browser. Two things make that tolerable: item cards carry a structured
@@ -610,6 +612,16 @@ soft-delete, inventory counters and order upsert semantics stay identical across
   **full tree**, so `select_category` always clicks 「他のカテゴリから選ぶ」 first (the sheet opens on a
   「カテゴリはこちらですか」 recommendation list whose length varies with the 商品名). Missing positions →
   the listing is rejected up front with a clear 400.
+  **The sheet's `li` list is not the option list.** Each level is preceded by a breadcrumb trail
+  (「カテゴリ一覧」 + every level already chosen), rendered as `li` just like the categories, so a
+  naive `querySelectorAll('li')[pos-1]` is off by *depth* — and the offset grows one row per level,
+  which is why a position array counted off the visible buttons walks correctly for a level or two
+  and then silently lands on a breadcrumb row. `el.click()` on a breadcrumb `li` is a no-op (its
+  handler sits on an inner element), so the level doesn't even change and the error surfaces only
+  at the last position. `_CATEGORY_NTH_JS` drops the leading rows matching
+  `CATEGORY_NON_OPTION_TEXTS` + the walked path — a *prefix* scan, not a global filter, so a child
+  sharing an ancestor's name survives. Enumeration and clicking go through that same function, so
+  the 「当前可选（按位置顺序）」 list in an error **is** the position numbering.
 - **Category catalog**: a hand-maintained catalog of Yahoo leaf categories lives in table
   `yahoo_category_mappings` (id + 3 levels + leaf name + full path), served by
   `use_web/system/yahoo_category_mappings/` with server-side pagination/search because the tree is
@@ -631,10 +643,21 @@ The frontend submits and returns immediately; progress is watched on `/#/tasks`.
 
 Queued operations (see `registry.py` for the authoritative list): inventory listing; orders
 update-list / update-status / single-row refresh; on-sale sync / full-update / revise / delist /
-suspend / resume; todos sync / bulk-review / bulk-confirm-ship / shipping-QR; the account
+suspend / resume; todos sync / bulk-review / bulk-confirm-ship / shipping-QR /
+confirm-cancellation / send-message / send-reaction; the account
 card's 同步数据 (`account.sync_data`); and 回国模式 (`system.homecoming`, see below).
 **Batch revise is not a separate type** — the frontend
 submits N `on_sale.revise` tasks, so closing the page no longer aborts halfway.
+
+**Anything that runs inside the todo 处理 dialog's `__todo` browser session must be registered
+in `_BROWSER_HOLDING_TASKS`** (`todos_sync/actions.py::close_detail_browser`) — the frontend
+closes that dialog right after enqueueing, and the close call would otherwise pull the session out
+from under the pending task. The flip side: those endpoints all pass `suppress_idle_close=True`
+(they were written for a multi-request HTTP flow), so with the frontend's close suppressed the
+handler has to close the session itself once it's done — see `handlers/todos.py::_close_todo_browser`.
+`todos.send_reaction` additionally dedups per `todo_id` for **correctness**, not just anti-double-click:
+`reaction_index` counts "buyer messages with no reaction yet", so a second queued reaction would be
+computed against a list the first one is about to shift.
 
 `account.sync_data` dedups **per account** (`account.sync_data:{id}`), so different accounts can
 each hold a queued sync while one account can't be double-queued. Its handler waits on the global
@@ -708,10 +731,33 @@ Three self-contained features that are easy to miss because nothing else depends
   vars. The default `deepseek-chat` is text-only; sending the main product image requires switching
   to a vision-capable model in the system settings page.
 - **mercari-proxy** (`mercari_proxy/`) — a **Node** reverse proxy (`server.js`, derived from
-  github.com/Gosoki/mercari-proxy) run as a managed subprocess on its own HTTPS port (default 9610,
-  bound to 127.0.0.1). Its purpose is a genuine secure context, which Mercari's DPoP requires.
+  github.com/Gosoki/mercari-proxy) run as a managed subprocess on its own HTTPS port (default 9610).
+  Its purpose is a genuine secure context, which Mercari's DPoP requires.
   `register_injection` pushes an account's cookies into the Node process's memory behind a one-shot
   token; the user then hits `/__boot?token=…` to have them written into their own browser.
+  **It serves both marketplaces, so the upstream is per-request state, not a process constant.**
+  A browser cannot be handed a cookie for a domain we don't own, so Yahoo has to land through the
+  same same-origin reverse proxy as Mercari — only the upstream and the domain-rewrite regex differ.
+  `server.js::SITES` holds one entry per marketplace (`host` + `reSrc`); `/__boot` writes the chosen
+  key into the `__mp_site` cookie and every later request reads it back via `siteOf(req)`, because a
+  root-relative `/item/xxx` carries nothing else to say which marketplace it belongs to. An unknown
+  `site` on `/__inject` is a **400, never a fallback** — silently defaulting would post Yahoo cookies
+  at Mercari and surface as "injected N cookies" with no login and no error. `/__boot` also expires
+  every cookie already in the browser before writing the new set: leftovers from the previous account
+  or marketplace otherwise compose a half-old session, and would ride along to the other upstream.
+  `Secure` is attached iff the proxy is on https — without it the browser silently discards
+  `__Secure-`/`__Host-` prefixed cookies, and with it (on an http fallback) it discards all of them.
+  **Binding and access control are two separate things, and they must stay consistent** — the Cookie
+  注入 button builds its boot URL from `window.location.hostname`, so a user browsing the SPA from
+  another machine hits the proxy at the server's LAN IP. It therefore binds `0.0.0.0` and does the
+  filtering in `server.js::isAllowedClient`: loopback + RFC1918/link-local/IPv6-ULA pass, **public
+  sources 403** (`MERCARI_PROXY_ALLOW_LAN=0` narrows it back to this machine only). `/__inject` stays
+  loopback-only on top of its `x-internal-secret`. Binding to loopback while the frontend points at a
+  LAN IP was the original bug: the tab just failed to connect, with nothing in any log.
+  The self-signed cert already carries every local IPv4 in its SAN (`cert.py::_local_ips`), but it is
+  generated **once** — if the host's IP later changes the browser shows a name-mismatch interstitial
+  that has to be clicked through, or delete `backend/data/mercari_proxy/cert.pem`+`key.pem` to
+  regenerate. Accessing over a **public** hostname (nginx/domain) is not supported by this feature.
 
 ## Environment Variables
 
@@ -735,7 +781,7 @@ lets the user choose SQLite/MySQL, test the MySQL connection, and switch backend
   with `proxy_headers=True` and **never serves TLS itself** — HTTPS is nginx's job. There are no
   `MERCARI_SSL_*` / `MERCARI_FORCE_HTTP` variables; the frozen build no longer generates a self-signed cert.
 - `MERCARI_AUTO_FETCH` / `MERCARI_AUTO_FETCH_TICK_SEC` / `MERCARI_AUTO_FETCH_INITIAL_DELAY_SEC`: Background sync loop toggle & cadence (first run is deliberately delayed ~180s to avoid contending with startup).
-- `MERCARI_PROXY_AUTO_START` / `MERCARI_PROXY_PORT` / `MERCARI_PROXY_BIND_HOST` / `MERCARI_PROXY_UPSTREAM` / `MERCARI_PROXY_CERT_DIR`: Node reverse proxy (see Auxiliary Subsystems).
+- `MERCARI_PROXY_AUTO_START` / `MERCARI_PROXY_PORT` / `MERCARI_PROXY_BIND_HOST` (default `0.0.0.0`) / `MERCARI_PROXY_ALLOW_LAN` (set `0` = this machine only) / `MERCARI_PROXY_UPSTREAM` / `MERCARI_PROXY_CERT_DIR`: Node reverse proxy (see Auxiliary Subsystems).
 - `IMAGE_SEARCH_AUTO_INDEX` / `IMAGE_SEARCH_MODEL_URL` / `IMAGE_SEARCH_THREADS`: CLIP image-search indexing.
 - `MEMORY_RECYCLE_AUTO` / `MEMORY_RECYCLE_INTERVAL_SEC` / `MEMORY_RECYCLE_MIN_RSS_MB` / `MEMORY_RECYCLE_INITIAL_DELAY_SEC`: Periodic RSS trimming (`memory_recycle.py`) — this app runs for days with a browser attached.
 - `PUBLIC_RATE_LIMIT` / `PUBLIC_RATE_LIMIT_BURST` (120) / `PUBLIC_RATE_LIMIT_RPS` (20): per-IP token

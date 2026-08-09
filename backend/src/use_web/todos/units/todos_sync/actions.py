@@ -292,12 +292,19 @@ async def close_detail_browser(account_id: int) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="account_id 无效")
 
     from .....task_queue import has_active_account_task
-    from .....task_queue.registry import TODOS_CONFIRM_CANCELLATION, TODOS_SHIPPING_QR
+    from .....task_queue.registry import (
+        TODOS_CONFIRM_CANCELLATION,
+        TODOS_SEND_MESSAGE,
+        TODOS_SEND_REACTION,
+        TODOS_SHIPPING_QR,
+    )
 
     # 每加一个「占用 __todo 会话」的任务类型都要登记到这里，否则关弹窗会掐断它
     _BROWSER_HOLDING_TASKS = (
         (TODOS_SHIPPING_QR, "发货扫码"),
         (TODOS_CONFIRM_CANCELLATION, "退货确认签收"),
+        (TODOS_SEND_MESSAGE, "发送回复"),
+        (TODOS_SEND_REACTION, "发送反应表情"),
     )
     for task_type, what in _BROWSER_HOLDING_TASKS:
         if has_active_account_task(task_type, aid):

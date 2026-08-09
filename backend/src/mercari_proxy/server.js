@@ -1,14 +1,16 @@
 // ============================================================
-// Node 反代煤炉 (Mercari) —— 零依赖单文件 (Node 18+，建议 20/24)
+// Node 反代（煤炉 / 雅虎）—— 零依赖单文件 (Node 18+，建议 20/24)
 //   node server.js           # 由后端 runner 托管，独立 HTTPS 端口、根挂载（默认 9610）
 //
 // 基础改造（融入 mercari 系统，源自 github.com/Gosoki/mercari-proxy）：
-//   1) /__inject（内部）：后端把账号 Cookie 以一次性 token 暂存到本进程内存，
+//   1) /__inject（内部）：后端把账号 Cookie + 目标站点以一次性 token 暂存到本进程内存，
 //      需 x-internal-secret 头匹配 MERCARI_PROXY_INTERNAL_SECRET。
 //   2) <BASE>/__boot?token=xxx：用户本地浏览器打开此地址，本服务把对应 Cookie
 //      通过 Set-Cookie 写到代理域名下，然后 302 跳到 <BASE>/ ——于是已登录态注入完成。
 //   3) BASE_PATH：可选子路径前缀（默认空=根挂载）。根挂载时 SPA 导航/刷新/前进后退
 //      均正常，是该项目的原始设计与本系统采用的部署方式。
+//   4) 多站点：上游**不是**进程级常量。/__boot 把选中的站点写进 __mp_site Cookie，
+//      之后每个请求按该 Cookie 决定上游与域名改写规则（见 SITES）。
 // ============================================================
 const http = require("http");
 const tls = require("tls");
@@ -23,12 +25,36 @@ const BASE = (process.env.BASE_PATH || "").replace(/\/+$/, "");
 // 内部注入密钥（后端调用 /__inject 时校验）；为空则不校验（仅本机可达时可接受）。
 const INTERNAL_SECRET = process.env.MERCARI_PROXY_INTERNAL_SECRET || "";
 
-// 默认上游（日本站 jp.mercari.com / 美区 www.mercari.com）
-const DEFAULT_UPSTREAM = process.env.UPSTREAM || "jp.mercari.com";
+// ---------------- 站点注册表 ----------------
+// 反代存在的意义是「用我们自己的源，写别人域名的登录态」——浏览器不可能从 9600 端口给
+// jp.mercari.com 或 yahoo.co.jp 写 Cookie。所以雅虎必须和煤炉走同一条路，只是上游不同。
+//   host  : 根相对路径（非 /__p/）的默认上游
+//   reSrc : 哪些域名要被改写成走代理（含各自 CDN）；同时下发给页面内的运行时劫持脚本
+const SITES = {
+  // 日本站 jp.mercari.com / 美区 www.mercari.com，由 UPSTREAM 覆盖
+  mercari: {
+    host: process.env.UPSTREAM || "jp.mercari.com",
+    reSrc: "(^|\\.)(mercari\\.com|mercari\\.jp|mercdn\\.net|mercari-shops\\.com)$",
+  },
+  // 公开页 paypayfleamarket / 登录态 sec 域 / login.yahoo.co.jp / 静态资源 s.yimg.jp
+  yahoo: {
+    host: "paypayfleamarket.yahoo.co.jp",
+    reSrc: "(^|\\.)(yahoo\\.co\\.jp|yimg\\.jp|yahooapis\\.jp|paypay\\.ne\\.jp)$",
+  },
+};
+for (const [key, s] of Object.entries(SITES)) {
+  s.key = key;
+  s.re = new RegExp(s.reSrc, "i");
+}
 
-// 需要代理的上游域名（按 hostname 匹配）；要加 CDN 就往这里加
-const UPSTREAM_RE = /(^|\.)(mercari\.com|mercari\.jp|mercdn\.net|mercari-shops\.com)$/i;
-const UPSTREAM_RE_SRC = "(^|\\.)(mercari\\.com|mercari\\.jp|mercdn\\.net|mercari-shops\\.com)$";
+const DEFAULT_SITE = "mercari";
+//: 记录本次注入选中的站点。必须是 Cookie 而不是进程常量——同一个代理端口要轮流服务
+//: 煤炉和雅虎，而根相对请求（/item/xxx）里没有任何信息能推断出该发给哪个上游。
+const SITE_COOKIE = "__mp_site";
+
+function siteOf(req) {
+  return SITES[parseCookies(req)[SITE_COOKIE]] || SITES[DEFAULT_SITE];
+}
 
 // 针对性 JS 文本替换：干掉硬编码 host 检查 / 强制跳转等。默认空，按需补。
 const JS_PATCHES = [];
@@ -42,14 +68,44 @@ const DROP_RESP_HEADERS = new Set([
   "content-encoding", "content-length", "transfer-encoding", "connection",
 ]);
 
-// 仅允许环回地址访问（含登录态注入，限制为本机）。
-function isLoopback(req) {
+// ---------------- 访问控制 ----------------
+// 本服务转发的是账号登录态，绝不能对公网开放；但用户常从局域网另一台机器访问管理系统，
+// 此时浏览器的 boot 请求来自内网 IP 而非环回地址，只认 loopback 会直接 403。
+// 因此：环回 + 私有网段放行，公网地址一律拒绝。MERCARI_PROXY_ALLOW_LAN=0 收回成仅本机。
+const ALLOW_LAN = process.env.MERCARI_PROXY_ALLOW_LAN !== "0";
+
+function remoteAddr(req) {
   const a = (req.socket && req.socket.remoteAddress) || "";
-  return a === "127.0.0.1" || a === "::1" || a === "::ffff:127.0.0.1";
+  // Node 在双栈监听下把 IPv4 报成 IPv4-mapped IPv6（::ffff:192.168.1.5）
+  return a.startsWith("::ffff:") ? a.slice(7) : a;
+}
+
+function isLoopbackAddr(a) {
+  return a === "::1" || /^127\./.test(a);
+}
+
+// RFC1918 + 链路本地；IPv6 取 ULA(fc00::/7) 与链路本地(fe80::/10)。
+function isPrivateAddr(a) {
+  if (a.includes(":")) return /^(f[cd]|fe[89ab])/i.test(a);
+  const p = a.split(".");
+  if (p.length !== 4) return false;
+  const n = p.map(Number);
+  if (n.some((x) => !Number.isInteger(x) || x < 0 || x > 255)) return false;
+  if (n[0] === 10) return true;
+  if (n[0] === 172 && n[1] >= 16 && n[1] <= 31) return true;
+  if (n[0] === 192 && n[1] === 168) return true;
+  if (n[0] === 169 && n[1] === 254) return true;
+  return false;
+}
+
+function isAllowedClient(req) {
+  const a = remoteAddr(req);
+  if (isLoopbackAddr(a)) return true;
+  return ALLOW_LAN && isPrivateAddr(a);
 }
 
 // ---------------- Cookie 注入暂存（一次性 token） ----------------
-const injectionStore = new Map(); // token -> { cookies: [{name,value,httpOnly}], expires: ms }
+const injectionStore = new Map(); // token -> { cookies: [{name,value,httpOnly}], site, expires: ms }
 
 function pruneInjections() {
   const now = Date.now();
@@ -60,9 +116,11 @@ function pruneInjections() {
 
 const handler = async (req, res) => {
   try {
-    if (!isLoopback(req)) {
+    if (!isAllowedClient(req)) {
       res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
-      return res.end("forbidden: loopback only");
+      return res.end(
+        `forbidden: 仅允许本机与局域网访问（来源 ${remoteAddr(req) || "unknown"}）`
+      );
     }
     const PROXY_HOST = req.headers.host || `localhost:${PORT}`;
     const reqUrl = new URL(req.url, `http://${PROXY_HOST}`);
@@ -80,10 +138,11 @@ const handler = async (req, res) => {
     // 3) Cookie 注入引导页：写 Cookie 后跳转进代理站
     if (path === `${BASE}/__boot`) return handleBoot(req, res, reqUrl, PROXY_HOST);
 
-    // 4) 解析上游目标（先剥离 BASE 前缀）
+    // 4) 解析上游目标（先剥离 BASE 前缀）；上游站点由 __mp_site Cookie 决定
+    const site = siteOf(req);
     let rel = BASE && path.startsWith(BASE) ? path.slice(BASE.length) : path;
     if (rel === "") rel = "/";
-    const { upstreamHost, upstreamPath } = resolveTarget(rel);
+    const { upstreamHost, upstreamPath } = resolveTarget(rel, site);
     const upstreamUrl = `https://${upstreamHost}${upstreamPath}${reqUrl.search}`;
 
     // 5) 组装转发请求头（DPoP / Authorization / Cookie 原样透传）
@@ -94,12 +153,11 @@ const handler = async (req, res) => {
       if (lk.startsWith("cf-") || lk.startsWith("x-forwarded-") || lk === "x-real-ip") continue;
       fwd[k] = v;
     }
-    const SITE = `https://${DEFAULT_UPSTREAM}`;
-    if (fwd["origin"]) fwd["origin"] = SITE;
+    if (fwd["origin"]) fwd["origin"] = `https://${site.host}`;
     if (fwd["referer"]) {
       fwd["referer"] = fwd["referer"]
-        .split(PROXY_HOST).join(DEFAULT_UPSTREAM)
-        .replace(new RegExp(`^https?://${DEFAULT_UPSTREAM}${escapeReg(BASE)}/__p/[^/]+/`), "https://" + DEFAULT_UPSTREAM + "/");
+        .split(PROXY_HOST).join(site.host)
+        .replace(new RegExp(`^https?://${escapeReg(site.host)}${escapeReg(BASE)}/__p/[^/]+/`), "https://" + site.host + "/");
     }
 
     // 6) body
@@ -124,14 +182,14 @@ const handler = async (req, res) => {
     applyCors(outHeaders, req);
     const cookies = rewriteSetCookie(resp);
     if (cookies.length) outHeaders["set-cookie"] = cookies;
-    rewriteLocation(outHeaders, upstreamHost, PROXY_HOST);
+    rewriteLocation(outHeaders, upstreamHost, PROXY_HOST, site);
 
     const ctype = (resp.headers.get("content-type") || "").toLowerCase();
 
     // 8) HTML：注入运行时劫持脚本 + 改写绝对 URL 属性
     if (ctype.includes("text/html")) {
       let html = await resp.text();
-      html = injectAndRewriteHtml(html, PROXY_HOST);
+      html = injectAndRewriteHtml(html, PROXY_HOST, site);
       res.writeHead(resp.status, outHeaders);
       return res.end(html);
     }
@@ -157,6 +215,11 @@ const handler = async (req, res) => {
 
 // ---------------- 内部注入 / 引导 ----------------
 async function handleInject(req, res) {
+  // 端口现在对局域网可达，但这个端点只由后端从 127.0.0.1 调用，没有任何理由跟着暴露出去。
+  if (!isLoopbackAddr(remoteAddr(req))) {
+    res.writeHead(403, { "content-type": "text/plain" });
+    return res.end("forbidden: loopback only");
+  }
   if (req.method !== "POST") {
     res.writeHead(405, { "content-type": "text/plain" });
     return res.end("method not allowed");
@@ -181,12 +244,23 @@ async function handleInject(req, res) {
   const token = String(payload.token || "");
   const cookies = Array.isArray(payload.cookies) ? payload.cookies : [];
   const ttlSec = Number(payload.ttl_sec) > 0 ? Number(payload.ttl_sec) : 120;
+  const site = String(payload.site || "");
   if (!token || !cookies.length) {
     res.writeHead(400, { "content-type": "text/plain" });
     return res.end("missing token or cookies");
   }
+  // 站点未知就直接拒绝，不要退回默认：那会把雅虎账号的 Cookie 注到煤炉上游去，
+  // 用户只看到「注入成功但没登录」，而两边都没有任何报错。
+  if (site && !SITES[site]) {
+    res.writeHead(400, { "content-type": "text/plain" });
+    return res.end(`unknown site: ${site}`);
+  }
   pruneInjections();
-  injectionStore.set(token, { cookies, expires: Date.now() + ttlSec * 1000 });
+  injectionStore.set(token, {
+    cookies,
+    site: site || DEFAULT_SITE,
+    expires: Date.now() + ttlSec * 1000,
+  });
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true, count: cookies.length }));
 }
@@ -201,11 +275,26 @@ function handleBoot(req, res, reqUrl, proxyHost) {
   }
   injectionStore.delete(token); // 一次性
   const cookiePath = BASE || "/";
-  const setCookies = entry.cookies.map((c) => {
-    let s = `${c.name}=${c.value}; Path=${cookiePath}; SameSite=Lax`;
+  const siteKey = SITES[entry.site] ? entry.site : DEFAULT_SITE;
+  // https 下必须带 Secure：__Secure- / __Host- 前缀的 Cookie 缺了它会被浏览器整条丢弃，
+  // 于是「注入了 N 条」但关键那条根本没落地。http 回退时不能加，否则一条都写不进去。
+  const secure = SCHEME === "https" ? "; Secure" : "";
+  const fresh = new Set(entry.cookies.map((c) => c.name));
+
+  // 先清掉浏览器里残留的旧 Cookie。它们属于上一次注入的账号（甚至上一个市集），
+  // 留着只会拼出一个半新半旧的会话——换账号注入后仍显示旧账号就是这么来的，
+  // 也避免把煤炉的登录态随请求发到雅虎上游去。
+  const setCookies = [];
+  for (const name of Object.keys(parseCookies(req))) {
+    if (fresh.has(name) || name === SITE_COOKIE) continue;
+    setCookies.push(`${name}=; Path=${cookiePath}; Max-Age=0`);
+  }
+  setCookies.push(`${SITE_COOKIE}=${siteKey}; Path=${cookiePath}; SameSite=Lax${secure}`);
+  for (const c of entry.cookies) {
+    let s = `${c.name}=${c.value}; Path=${cookiePath}; SameSite=Lax${secure}`;
     if (c.httpOnly) s += "; HttpOnly";
-    return s;
-  });
+    setCookies.push(s);
+  }
   res.writeHead(302, {
     "set-cookie": setCookies,
     location: `${BASE}/`,
@@ -237,7 +326,7 @@ if (SCHEME === "https") {
 
 // ---------------- WebSocket 代理：<BASE>/__pws__/<host>/<path> ----------------
 server.on("upgrade", (req, clientSock, head) => {
-  if (!isLoopback(req)) return clientSock.destroy();
+  if (!isAllowedClient(req)) return clientSock.destroy();
   const wsPath = BASE && req.url.startsWith(BASE) ? req.url.slice(BASE.length) : req.url;
   const m = wsPath.match(/^\/__pws__\/([^/]+)(\/.*)?$/);
   if (!m) return clientSock.destroy();
@@ -248,7 +337,7 @@ server.on("upgrade", (req, clientSock, head) => {
     for (const [k, v] of Object.entries(req.headers)) {
       const lk = k.toLowerCase();
       if (lk === "host") continue;
-      if (lk === "origin") { lines.push(`Origin: https://${DEFAULT_UPSTREAM}`); continue; }
+      if (lk === "origin") { lines.push(`Origin: https://${siteOf(req).host}`); continue; }
       lines.push(`${k}: ${v}`);
     }
     upstream.write(lines.join("\r\n") + "\r\n\r\n");
@@ -261,18 +350,18 @@ server.on("upgrade", (req, clientSock, head) => {
 });
 
 // ---------------- 路由 ----------------
-// /__p/<host>/<path...> => https://<host>/<path...>；其它走默认上游（rel 已剥离 BASE）
-function resolveTarget(rel) {
+// /__p/<host>/<path...> => https://<host>/<path...>；其它走当前站点上游（rel 已剥离 BASE）
+function resolveTarget(rel, site) {
   const m = rel.match(/^\/__p\/([^/]+)(\/.*)?$/);
   if (m) return { upstreamHost: m[1], upstreamPath: m[2] || "/" };
-  return { upstreamHost: DEFAULT_UPSTREAM, upstreamPath: rel };
+  return { upstreamHost: site.host, upstreamPath: rel };
 }
 
-function toProxyUrl(absUrl, proxyHost) {
+function toProxyUrl(absUrl, proxyHost, site) {
   try {
     const u = new URL(absUrl);
     if (u.hostname === proxyHost) return absUrl;
-    if (!UPSTREAM_RE.test(u.hostname)) return absUrl;
+    if (!site.re.test(u.hostname)) return absUrl;
     // 协议相对 //host<BASE>/__p/...，让浏览器按当前页面协议解析，避免 mixed-content。
     return `//${proxyHost}${BASE}/__p/${u.hostname}${u.pathname}${u.search}`;
   } catch {
@@ -307,14 +396,15 @@ function applyCors(h, req) {
   h["access-control-expose-headers"] = "*";
 }
 
-// 去掉 Domain，下放 Secure/SameSite；BASE 非空时把 Path 收敛到 BASE，避免 Cookie 外溢到 SPA。
+// 去掉 Domain，下放 SameSite；BASE 非空时把 Path 收敛到 BASE，避免 Cookie 外溢到 SPA。
 function rewriteSetCookie(resp) {
   const cookies = typeof resp.headers.getSetCookie === "function" ? resp.headers.getSetCookie() : [];
   return cookies.map((c) => {
-    let out = c
-      .replace(/;\s*Domain=[^;]+/i, "")
-      .replace(/;\s*Secure/i, "")
-      .replace(/;\s*SameSite=None/i, "; SameSite=Lax");
+    let out = c.replace(/;\s*Domain=[^;]+/i, "");
+    // 只有代理退回 http 时才需要摘掉 Secure；https 下摘了反而会让浏览器整条丢弃
+    // __Secure- / __Host- 前缀的 Cookie（前缀语义强制要求 Secure），登录态随即失效。
+    if (SCHEME !== "https") out = out.replace(/;\s*Secure/i, "");
+    out = out.replace(/;\s*SameSite=None/i, "; SameSite=Lax");
     if (BASE) {
       if (/;\s*Path=[^;]*/i.test(out)) out = out.replace(/;\s*Path=[^;]*/i, `; Path=${BASE}`);
       else out += `; Path=${BASE}`;
@@ -323,22 +413,22 @@ function rewriteSetCookie(resp) {
   });
 }
 
-function rewriteLocation(h, upstreamHost, proxyHost) {
+function rewriteLocation(h, upstreamHost, proxyHost, site) {
   const key = Object.keys(h).find((k) => k.toLowerCase() === "location");
   if (!key) return;
   const loc = h[key];
   let abs = loc;
   if (loc.startsWith("//")) abs = "https:" + loc;
   else if (loc.startsWith("/")) abs = `https://${upstreamHost}${loc}`;
-  h[key] = toProxyUrl(abs, proxyHost);
+  h[key] = toProxyUrl(abs, proxyHost, site);
 }
 
 // ---------------- HTML 注入 + 属性改写 ----------------
-function injectAndRewriteHtml(html, proxyHost) {
+function injectAndRewriteHtml(html, proxyHost, site) {
   html = html.replace(/\b(src|href)\s*=\s*("|')(.*?)\2/gi, (full, attr, q, val) => {
     let nv = val;
-    if (/^https?:\/\//i.test(val)) nv = toProxyUrl(val, proxyHost);
-    else if (val.startsWith("//")) nv = toProxyUrl("https:" + val, proxyHost);
+    if (/^https?:\/\//i.test(val)) nv = toProxyUrl(val, proxyHost, site);
+    else if (val.startsWith("//")) nv = toProxyUrl("https:" + val, proxyHost, site);
     return `${attr}=${q}${nv}${q}`;
   });
   html = html.replace(/\bsrcset\s*=\s*("|')(.*?)\1/gi, (full, q, val) => {
@@ -348,13 +438,13 @@ function injectAndRewriteHtml(html, proxyHost) {
       const url = sp === -1 ? seg : seg.slice(0, sp);
       const desc = sp === -1 ? "" : seg.slice(sp);
       let nu = url;
-      if (/^https?:\/\//i.test(url)) nu = toProxyUrl(url, proxyHost);
-      else if (url.startsWith("//")) nu = toProxyUrl("https:" + url, proxyHost);
+      if (/^https?:\/\//i.test(url)) nu = toProxyUrl(url, proxyHost, site);
+      else if (url.startsWith("//")) nu = toProxyUrl("https:" + url, proxyHost, site);
       return nu + desc;
     }).join(", ");
     return `srcset=${q}${nv}${q}`;
   });
-  const tag = `<script>${buildClientScript(proxyHost)}</script>`;
+  const tag = `<script>${buildClientScript(proxyHost, site)}</script>`;
   const m = html.match(/<head[^>]*>/i);
   if (m) {
     const idx = m.index + m[0].length;
@@ -364,12 +454,12 @@ function injectAndRewriteHtml(html, proxyHost) {
 }
 
 // ---------------- 注入页面的运行时劫持脚本 ----------------
-function buildClientScript(proxyHost) {
+function buildClientScript(proxyHost, site) {
   return `
 (function(){
   var PROXY=${JSON.stringify(proxyHost)};
   var BASE=${JSON.stringify(BASE)};
-  var RE=new RegExp(${JSON.stringify(UPSTREAM_RE_SRC)},"i");
+  var RE=new RegExp(${JSON.stringify(site.reSrc)},"i");
   function toProxy(input){
     try{
       var u=new URL(input, location.href);
@@ -417,6 +507,16 @@ function escapeReg(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function parseCookies(req) {
+  const out = {};
+  for (const part of (((req.headers && req.headers.cookie) || "").split(";"))) {
+    const i = part.indexOf("=");
+    if (i === -1) continue;
+    out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return out;
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -428,5 +528,6 @@ function readBody(req) {
 
 server.listen(PORT, BIND_HOST, () => {
   console.log(`mercari-proxy (node) → ${SCHEME}://${BIND_HOST}:${PORT}${BASE || ""}`);
-  console.log(`默认上游: ${DEFAULT_UPSTREAM}  BASE_PATH: ${BASE || "(none)"}`);
+  const sites = Object.values(SITES).map((s) => `${s.key}=${s.host}`).join("  ");
+  console.log(`站点: ${sites}  默认: ${DEFAULT_SITE}  BASE_PATH: ${BASE || "(none)"}`);
 });

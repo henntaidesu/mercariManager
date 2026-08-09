@@ -252,7 +252,7 @@
               @click="fetchHistoryFromForm"
             >{{ t('mercariAccounts.fetchHistory') }}</el-button>
             <el-button
-              v-if="form.id && form.platform === 'mercari'"
+              v-if="form.id"
               type="warning"
               plain
               :loading="cookieInjectKeys.has(browserKeyFor(form.id))"

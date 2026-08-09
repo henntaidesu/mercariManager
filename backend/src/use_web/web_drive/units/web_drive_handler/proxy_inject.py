@@ -1,15 +1,20 @@
 # -*- coding: utf-8 -*-
 """Cookie 注入端点：把账号登录态注入 mercari-proxy，供用户本地浏览器访问。
 
-流程：读取服务端 profile 的煤炉 Cookie → 暂存到 Node 反代（一次性 token）→
+流程：读取服务端 profile 的登录 Cookie → 暂存到 Node 反代（一次性 token）→
 返回引导地址（<base>/__boot?token=...）。前端用 window.open 在用户本地浏览器打开。
+
+煤炉与雅虎共用这一条链路——浏览器不可能从本系统的源给 jp.mercari.com 或 yahoo.co.jp
+写 Cookie，只能经同源反代落地，区别仅在于导出哪些域名的 Cookie、以及反代发往哪个上游。
 """
+import logging
 import secrets
 
 from fastapi import HTTPException
 from pydantic import BaseModel as PydanticModel, Field
 
 from .....web_drive import get_web_drive_manager
+from .....web_drive.core.paths import mercari_id_from_account_key
 from .....mercari_proxy import (
     boot_path,
     is_running,
@@ -18,6 +23,14 @@ from .....mercari_proxy import (
     register_injection,
     start_proxy,
 )
+
+log = logging.getLogger(__name__)
+
+#: 平台 → (反代站点 key（server.js 的 SITES）, 要导出的 Cookie 域名, 登录提示域名)
+_PLATFORM_SITES = {
+    "mercari": ("mercari", ("mercari",), "jp.mercari.com"),
+    "yahoo": ("yahoo", ("yahoo", "paypay"), "paypayfleamarket.yahoo.co.jp"),
+}
 
 
 class InjectCookiesBody(PydanticModel):
@@ -29,6 +42,25 @@ class InjectCookiesBody(PydanticModel):
     )
 
 
+def _platform_of(account_key: str) -> str:
+    """按 ``mercari_{id}`` 反查账号平台。
+
+    profile key 对两个市集是同一套命名（雅虎账号的主 profile 也叫 ``mercari_{id}``），
+    所以平台只能查库得到——不能从 key 里猜，也不接受前端传，避免拿雅虎的 Cookie 去开煤炉。
+    """
+    account_id = mercari_id_from_account_key(account_key)
+    if account_id is None:
+        return "mercari"
+    try:
+        from .....db_manage.models.shop_accounts.shop_account import ShopAccountModel
+
+        acc = ShopAccountModel.find_by_id(id=int(account_id))
+        return (str(getattr(acc, "platform", "") or "").strip() or "mercari") if acc else "mercari"
+    except Exception as exc:  # noqa: BLE001
+        log.warning("查询账号平台失败（按煤炉处理）: %s", exc)
+        return "mercari"
+
+
 async def inject_cookies(body: InjectCookiesBody):
     if not is_running():
         r = start_proxy()
@@ -37,8 +69,13 @@ async def inject_cookies(body: InjectCookiesBody):
                 status_code=500,
                 detail=r.get("error") or "mercari-proxy 未启动",
             )
+    platform = _platform_of(body.account_key)
+    site, domains, login_hint = _PLATFORM_SITES.get(platform, _PLATFORM_SITES["mercari"])
+
     try:
-        cookies = await get_web_drive_manager().export_cookies(body.account_key)
+        cookies = await get_web_drive_manager().export_cookies(
+            body.account_key, domains=domains
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -47,12 +84,12 @@ async def inject_cookies(body: InjectCookiesBody):
     if not cookies:
         raise HTTPException(
             status_code=400,
-            detail="未读取到该账号的登录 Cookie，请先打开浏览器登录 jp.mercari.com。",
+            detail=f"未读取到该账号的登录 Cookie，请先打开浏览器登录 {login_hint}。",
         )
 
     token = secrets.token_urlsafe(24)
     try:
-        register_injection(token, cookies)
+        register_injection(token, cookies, site=site)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Cookie 注入失败: {exc}") from exc
 
@@ -63,5 +100,6 @@ async def inject_cookies(body: InjectCookiesBody):
             "scheme": proxy_scheme(),
             "port": proxy_port(),
             "count": len(cookies),
+            "platform": platform,
         },
     }
