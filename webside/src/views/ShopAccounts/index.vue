@@ -132,6 +132,43 @@
             @click="fetchBasicInfo"
           >{{ t('mercariAccounts.fetchBasicInfo') }}</el-button>
         </el-form-item>
+        <!-- 雅虎 App 令牌：ゆうパケットポスト / mini 网页端不下发，只能走 App 的 sparkle 接口。
+             令牌从手机 App 抓包得到；填了 refresh_token 之后由后端自动续期，不用再管。
+             只写不读——后端不回传明文，输入框始终是空的。 -->
+        <template v-if="form.id && form.platform === 'yahoo'">
+          <el-divider content-position="left">{{ t('mercariAccounts.sectionYahooAppToken') }}</el-divider>
+          <el-form-item :label="t('mercariAccounts.appTokenStatus')">
+            <div class="app-token-status">
+              <el-tag :type="appTokenStatus?.configured ? 'success' : 'info'" size="small" effect="light">
+                {{ appTokenStatus?.configured ? t('mercariAccounts.appTokenSet') : t('mercariAccounts.appTokenUnset') }}
+              </el-tag>
+              <el-tag
+                v-if="appTokenStatus?.configured && !appTokenStatus?.has_refresh_token"
+                type="warning"
+                size="small"
+                effect="light"
+              >{{ t('mercariAccounts.appTokenNoRefresh') }}</el-tag>
+              <span v-if="appTokenExpiresText" class="app-token-expires">
+                {{ t('mercariAccounts.appTokenExpiresAt', { at: appTokenExpiresText }) }}
+              </span>
+              <el-button
+                v-if="appTokenStatus?.configured"
+                link
+                type="danger"
+                @click="clearYahooAppToken"
+              >{{ t('mercariAccounts.appTokenClear') }}</el-button>
+            </div>
+          </el-form-item>
+          <!-- 取得令牌只有这一条路：雅虎没有账密接口，登录页只能由雅虎自己渲染，
+               所以开一个独立 profile 的浏览器窗口让用户登录一次，之后靠 refresh_token 续期。 -->
+          <el-form-item label-width="120px">
+            <el-button
+              type="primary"
+              :loading="appLoginLoading"
+              @click="loginYahooApp"
+            >{{ t('mercariAccounts.appLogin') }}</el-button>
+          </el-form-item>
+        </template>
         <el-divider content-position="left">{{ t('mercariAccounts.sectionAutoFetch') }}</el-divider>
         <el-form-item :label="t('mercariAccounts.syncItems')">
           <div class="af-task-list">
@@ -221,13 +258,7 @@
               :loading="cookieInjectKeys.has(browserKeyFor(form.id))"
               @click="injectCookieForAccount(form)"
             >{{ t('mercariAccounts.cookieInject') }}</el-button>
-            <!-- 编辑态实时保存：没有「保存」按钮，改动即写库 -->
-            <span v-if="form.id" class="auto-save-state" :class="`is-${autoSaveState}`">
-              <template v-if="autoSaveState === 'saving'">{{ t('mercariAccounts.autoSaveSaving') }}</template>
-              <template v-else-if="autoSaveState === 'saved'">{{ t('mercariAccounts.autoSaveSaved') }}</template>
-              <template v-else-if="autoSaveState === 'failed'">{{ t('mercariAccounts.autoSaveFailed') }}</template>
-              <template v-else>{{ t('mercariAccounts.autoSaveHint') }}</template>
-            </span>
+            <!-- 编辑态实时保存：没有「保存」按钮，改动即写库（不提示保存状态，失败由拦截器报错） -->
             <el-button @click="dialogVisible = false">{{ form.id ? t('common.close') : t('common.cancel') }}</el-button>
             <el-button v-if="!form.id" type="primary" :loading="submitting" @click="submit">{{ t('common.save') }}</el-button>
           </div>

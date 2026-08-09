@@ -157,17 +157,6 @@
   gap: 8px;
   margin-left: auto;
 }
-.auto-save-state {
-  font-size: 12px;
-  color: #7d8da6;
-  margin-right: 4px;
-}
-.auto-save-state.is-saved {
-  color: #67c23a;
-}
-.auto-save-state.is-failed {
-  color: #f56c6c;
-}
 .form-intro-tip {
   margin: 0 0 12px;
   font-size: 13px;
@@ -280,4 +269,17 @@
   max-height: calc(70 * var(--app-vh));
   overflow-y: auto;
   padding-right: 8px;
+}
+
+/* 雅虎 App 令牌配置块：状态标签与说明文字同一行排开 */
+.app-token-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.app-token-expires {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }

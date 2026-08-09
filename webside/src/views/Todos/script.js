@@ -291,23 +291,156 @@ export default defineComponent({
     // ── 雅虎待办：走同一个处理弹窗（同一套布局），只有「发货」这一段换成雅虎的三项表单 ──
     const isYahoo = computed(() => platformOf(currentRow.value) === 'yahoo')
     // 用户在弹窗里填的发货信息（尺寸/发货场所的候选项由后端从交易页读回，不写死）
-    const yahooForm = reactive({ item_name: '', size: '', location: '' })
+    /** 雅虎各发货尺寸的卡片内容。**规格全部照搬雅虎 App 自己的 `ShipMethod` 枚举**
+     *  （sizeDescription / sizeTags，见 apk_code/yahoo 反编译产物），不从交易页推断——
+     *  页面只给一个尺寸名，推不出这些。
+     *
+     *  **刻意没有「送料」行**：截图里煤炉那套 ¥230/¥215/¥455 是**煤炉的**费率，雅虎的与之不同；
+     *  雅虎的价格只在 `/v1/deliveries` 里按品类下发，App 的 ShipMethod 不带价。宁可不显示，
+     *  也不能摆一个会让人按错价寄件的数字。
+     *
+     *  img 对应 public/static/post_hukuro/<文件名>.png（与煤炉共用同一套插图）。
+     */
+    /** 雅虎各发货尺寸的卡片内容。**行文与排列顺序一律对齐煤炉的 SHIPPING_OPTIONS**
+     *  （3辺合計/…以内、専用箱(¥65) 这类措辞），两个平台看起来才是同一张表。
+     *  资材价格（専用箱¥65 / 専用封筒¥20 / 発送用シール）是日本郵便自己的定价，两边相同，
+     *  照抄安全；**差异只在送料**——那是平台各自的费率，所以这里一行都不显示，见下。
+     *
+     *  尺寸事实本身取自雅虎 App 的 `ShipMethod` 枚举（apk_code/yahoo 反编译产物），
+     *  不从交易页推断：页面只给一个尺寸名。
+     *
+     *  **刻意没有「送料」行**：煤炉那套 ¥230/¥215/¥455 是煤炉的费率，雅虎不同；雅虎的价格只在
+     *  `/v1/deliveries` 按品类下发，App 的 ShipMethod 不带价。宁可不显示，也不能摆一个会让人
+     *  按错价寄件的数字。
+     *
+     *  order 决定卡片排列顺序（与煤炉同序）；img 对应 public/static/post_hukuro/<文件名>.png。
+     */
+    const YAHOO_SIZE_SPECS = {
+      // ── 日本郵便：顺序同煤炉的ゆうゆうメルカリ便 ──
+      'ゆうパケット': {
+        order: 1,
+        img: 'ゆうパケット',
+        rows: [['サイズ', '3辺合計60cm以内'], ['厚さ', '3cm以内'], ['重さ', '1kg以内']],
+      },
+      'ゆうパケットポストmini': {
+        order: 2,
+        img: 'ゆうパケットポストmini',
+        rows: [
+          ['サイズ', '専用封筒 (21cm×17cm)'],
+          ['重さ', '2kg以内'],
+          ['発送', '郵便ポストから発送'],
+        ],
+        caveats: ['※専用封筒(¥20)の購入が必要です'],
+      },
+      'ゆうパケットポスト': {
+        order: 3,
+        img: 'ゆうパケットポスト',
+        rows: [
+          ['サイズ', '郵便ポストに投函可能なもの'],
+          ['重さ', '2kg以内'],
+          ['発送', '郵便ポストから発送'],
+        ],
+        caveats: ['※専用箱(¥65)、または発送用シール(20枚入り¥100)の購入が必要です。'],
+      },
+      'ゆうパケットプラス': {
+        order: 4,
+        img: 'ゆうパケットプラス',
+        rows: [['サイズ', '専用箱 (17cm×24cm×7cm)'], ['重さ', '2kg以内']],
+        caveats: ['※専用箱(¥65)の購入が必要です'],
+      },
+      'ゆうパック': {
+        // 雅虎只有一档ゆうパック（三辺合計170cm以内），对应煤炉的 120 - 170 那张
+        order: 5,
+        img: 'ゆうパック120 - 170',
+        rows: [['サイズ', '3辺合計170cm以内'], ['重さ', '25kg以内']],
+      },
+      // ── ヤマト運輸：顺序同煤炉的らくらくメルカリ便（出品时选了ヤマト的交易会走到这套） ──
+      'ネコポス': {
+        order: 11,
+        img: 'ネコポス',
+        rows: [
+          ['サイズ', '3辺合計60cm以内'],
+          ['長辺', '34cm以内'],
+          ['厚さ', '3cm以内'],
+          ['重さ', '1kg以内'],
+        ],
+      },
+      '宅急便コンパクト（EAZY）': {
+        order: 12,
+        img: '宅急便コンパクト',
+        rows: [['サイズ', '専用BOX'], ['厚さ', '5cm以内']],
+        caveats: ['※専用BOX(¥70〜)の購入が必要です'],
+      },
+      '宅急便（EAZY）': {
+        order: 13,
+        img: '宅急便60 - 160',
+        rows: [['サイズ', '3辺合計200cm以内'], ['重さ', '30kg以内']],
+      },
+    }
+
+    const yahooForm = reactive({ item_name: '', size: '', location: '', material_code: '' })
     const yahooShipLoading = ref(false)
-    const yahooSizeOptions = computed(() => detail.yahoo_ship_form?.size_options || [])
+    const yahooNotifyLoading = ref(false)
+
+    // ── 投函型：与煤炉一样用本机摄像头拍一张二维码照片，后端解码成材料码并当场校验 ──
+    // 取景/拍照/重拍复用煤炉那套（qrVideoEl / qrShot / openQrCamera / takeQrShot），
+    // 只有「提交」这一步不同：煤炉把图喂给自己的扫描器，雅虎解出来的文本就是材料码。
+    const yahooQrScanning = ref(false)
+    const yahooQrResult = ref(null)   // { ok, status, message, material_code }
+
+    function resetYahooQrScan() {
+      yahooQrScanning.value = false
+      yahooQrResult.value = null
+      yahooForm.material_code = ''
+    }
+
+    // 网页端的尺寸 + 只能走 App API 的投函型（ゆうパケットポスト / mini，配了令牌才出现）
+    const yahooAppSizeOptions = computed(() => detail.yahoo_app?.extra_size_options || [])
+    const yahooSizeOptions = computed(() => [
+      ...(detail.yahoo_ship_form?.size_options || []),
+      ...yahooAppSizeOptions.value,
+    ])
+    // 尺寸卡片：**能选哪些**仍以交易页/App 实际提供的为准（配送会社不同选项完全不同），
+    // **怎么显示和怎么排序**才走上面的文本表。
+    // 表里没有的名字照样出卡片（只是没有插图和规格行）并排在最后，保持页面原序——
+    // 雅虎哪天加一档新尺寸，至少还能选，不会凭空消失。
+    const yahooSizeCards = computed(() =>
+      yahooSizeOptions.value
+        .map((name, idx) => ({ name, ...(YAHOO_SIZE_SPECS[name] || {}), _idx: idx }))
+        .sort((a, b) => (a.order ?? 900 + a._idx) - (b.order ?? 900 + b._idx)),
+    )
     const yahooLocationOptions = computed(() => detail.yahoo_ship_form?.location_options || [])
-    const yahooItemNameMax = computed(() => Number(detail.yahoo_ship_form?.item_name_max || 17))
-    // 读到过交易页且提交按钮已不在 → 发货信息已提交（配送码已发行）
+    // 选中的是投函型：没有発送場所可选（投进邮筒），但必须先扫专用箱/シール 的二维码
+    const isYahooPostBoxSize = computed(() => yahooAppSizeOptions.value.includes(yahooForm.size))
+    // 读到过交易页且提交按钮已不在 → 发货信息已提交（配送码已发行）。
+    // App 那条路发行的配送码网页页面上不一定读得出来，所以 is_ship_code_created 也算数。
     const yahooShipped = computed(
-      () => isYahoo.value && !!detail.yahoo_loaded && !detail.yahoo_ship_form?.pending,
+      () =>
+        isYahoo.value &&
+        !!detail.yahoo_loaded &&
+        (!detail.yahoo_ship_form?.pending || !!detail.yahoo_app?.is_ship_code_created),
     )
-    const canSubmitYahooShip = computed(
-      () => !!yahooForm.item_name.trim() && !!yahooForm.size && !!yahooForm.location,
+    // 投函型发完配送码还差一步「投函したので発送通知」——没通知买家就不算发出去了
+    const yahooNeedsShipNotify = computed(
+      () =>
+        isYahoo.value &&
+        !!detail.yahoo_app?.is_ship_code_created &&
+        !detail.yahoo_app?.ship_notified,
     )
+    const canSubmitYahooShip = computed(() => {
+      if (!yahooForm.item_name.trim() || !yahooForm.size) return false
+      return isYahooPostBoxSize.value
+        ? !!yahooForm.material_code.trim()
+        : !!yahooForm.location
+    })
     function resetYahooShipForm() {
       yahooForm.item_name = ''
       yahooForm.size = ''
       yahooForm.location = ''
+      yahooForm.material_code = ''
       yahooShipLoading.value = false
+      yahooNotifyLoading.value = false
+      resetYahooQrScan() // 换一条待办必须清掉，否则上一单的码会跟过来
     }
 
     // 「発送をしてください」反查到的本地库存（图片）与关联订单号
@@ -680,6 +813,10 @@ export default defineComponent({
         yahoo_can_send_message: false,
         yahoo_message_quota: null,
         yahoo_app_only_note: '',    // 雅虎原文：ゆうパケットポスト系 只能在 App 内发货
+        // App API 视角的发货状态（配了 App 令牌才有）：
+        // { token_configured, vendor, shippable, is_ship_code_created, ship_notified,
+        //   confirm_code, extra_size_options, error }
+        yahoo_app: null,
         // 上次从煤炉抓取的时间戳（缓存命中时显示）
         detail_synced_at: null,
         messages: [], // [{ from, text, at, is_buyer, user_id }]
@@ -801,7 +938,17 @@ export default defineComponent({
       if (shipFlowScanOnly.value) return [{ key: 'qrscan', label: t('todos.qrScanTitle') }]
       const steps = []
       if (shipFlowHasPackaging.value) steps.push({ key: 'packaging', label: t('todos.pickPackagingTitle') })
-      if (shipFlowTarget.value === 'yahoo') return steps
+      if (shipFlowTarget.value === 'yahoo') {
+        // 雅虎与煤炉步骤形态一致但取值/提交方式完全不同（投函型走 App API，其余走网页模拟），
+        // 所以用独立的 step key，别去复用煤炉那套只认煤炉尺寸表的分支
+        steps.push({ key: 'ysize', label: t('todos.pickShippingSize') })
+        steps.push(
+          isYahooPostBoxSize.value
+            ? { key: 'yqr', label: t('todos.yahoo.stepQr') }
+            : { key: 'ylocation', label: t('todos.yahoo.stepLocation') },
+        )
+        return steps
+      }
       steps.push({ key: 'size', label: t('todos.pickShippingSize') })
       steps.push(
         shippingPickedIdx.value != null && !shippingNeedsFacility.value
@@ -819,8 +966,11 @@ export default defineComponent({
       if (key === shippingStep.value || key === 'qrscan') return
       if (key === 'size' && !hasPackagingSelected.value) return
       if (key === 'facility' && (shippingPickedIdx.value == null || !shippingNeedsFacility.value)) return
+      // 雅虎：包材没选完不许跳到尺寸页；尺寸没选不许跳到最后一页
+      if (key === 'ysize' && shipFlowHasPackaging.value && !hasPackagingSelected.value) return
+      if ((key === 'ylocation' || key === 'yqr') && !yahooForm.size) return
       // 离开拍照页要把摄像头关掉，否则相机灯一直亮着
-      if (shippingStep.value === 'qrscan') resetQrScanState()
+      if (shippingStep.value === 'qrscan' || shippingStep.value === 'yqr') resetQrScanState()
       shippingStep.value = key
     }
 
@@ -864,6 +1014,42 @@ export default defineComponent({
       if (m.includes('らくらく') || m.includes('ヤマト') || m.includes('ネコ') || m.includes('宅急便')) return 'yamato'
       if (m.includes('ゆうゆう') || m.includes('ゆうパケット') || m.includes('ゆうパック') || m.includes('ポスト') || m.includes('郵便')) return 'post-box'
       return ''
+    })
+
+    // 煤炉的「ゆうゆうメルカリ便 / らくらくメルカリ便」是产品名，实际承运商是日本郵便 / ヤマト。
+    // **只换显示**：shipping_method_name 本身仍要原样参与尺寸表筛选与提交，动它会连带改错发货流程。
+    function localizeCarrier(text) {
+      const m = (text || '').trim()
+      if (!m) return ''
+      if (m.includes('ゆうゆう')) return t('todos.yahoo.carrierJapanPost')
+      if (m.includes('らくらく')) return t('todos.yahoo.carrierYamato')
+      return m // 认不出来就原样显示，别硬套一个可能是错的公司名
+    }
+    const mercariCarrierName = computed(() => localizeCarrier(detail.shipping_method_name))
+    // 待发送通知卡片：ship_method_label 是具体尺寸（ゆうパケットポスト 等），比公司名信息更多，
+    // 有就用它；没有才回落到被本地化过的产品名。
+    const postShipMethodName = computed(
+      () => detail.ship_method_label || mercariCarrierName.value,
+    )
+
+    // 雅虎的配送公司：交易页给的是「おてがる配送（日本郵便）」这类原文，
+    // 展示成与煤炉同一形态的「图标 + 公司名」卡片，图标也与煤炉用同一套
+    // （post-box / yamato），两个平台的同一家承运商看起来才是同一家。
+    const yahooCarrierKind = computed(() => {
+      const m = (detail.yahoo_ship_form?.carrier || '').trim()
+      if (!m) return ''
+      if (m.includes('ヤマト') || m.includes('ネコ') || m.includes('宅急便')) return 'yamato'
+      if (m.includes('郵便') || m.includes('ゆうパケット') || m.includes('ゆうパック') || m.includes('ポスト')) return 'jp'
+      return ''
+    })
+    const yahooCarrierImg = computed(() =>
+      yahooCarrierKind.value === 'yamato' ? 'yamato' : yahooCarrierKind.value === 'jp' ? 'post-box' : '',
+    )
+    // 认不出来时原样显示雅虎的措辞，别硬套一个可能是错的公司名
+    const yahooCarrierName = computed(() => {
+      if (yahooCarrierKind.value === 'yamato') return t('todos.yahoo.carrierYamato')
+      if (yahooCarrierKind.value === 'jp') return t('todos.yahoo.carrierJapanPost')
+      return detail.yahoo_ship_form?.carrier || ''
     })
 
     // 图片缺失时隐藏 <img>，避免显示破图占位
@@ -1589,6 +1775,8 @@ export default defineComponent({
       detail.yahoo_can_send_message = !!d.can_send_message
       detail.yahoo_message_quota = d.message_quota ?? null
       detail.yahoo_app_only_note = form?.app_only_note || ''
+      // 发货成功的返回体里没有 app 段（那次只做了发行配送コード），保留上一次读到的状态
+      if (d.app && typeof d.app === 'object') detail.yahoo_app = d.app
       detail.ship_tracking_no = d.tracking_no || ''
       if (d.detail_synced_at != null) detail.detail_synced_at = d.detail_synced_at
       if (buyerName) detail.buyer_name = buyerName
@@ -1606,6 +1794,32 @@ export default defineComponent({
         .slice(0, Number(form?.item_name_max || 17))
       yahooForm.size = form?.size || ''
       yahooForm.location = form?.location || ''
+    }
+
+    /** 投函型第二步：确认已投进邮筒 → 通知买家发货（买家的受取期限从这一刻起算） */
+    async function onNotifyYahooShipped() {
+      const row = currentRow.value
+      if (!row?.id || yahooNotifyLoading.value) return
+      try {
+        await ElMessageBox.confirm(
+          t('todos.yahoo.confirmNotify'),
+          t('todos.yahoo.confirmTitle'),
+          { type: 'warning' },
+        )
+      } catch {
+        return
+      }
+      yahooNotifyLoading.value = true
+      try {
+        const data = await todosApi.yahooNotifyShipped(row.id)
+        if (data?.state) detail.yahoo_app = data.state
+        ElMessage.success(t('todos.yahoo.notified'))
+        load({ inPlace: true })
+      } catch (e) {
+        if (!e?.response) ElMessage.error(e?.message || t('todos.yahoo.notifyFailed'))
+      } finally {
+        yahooNotifyLoading.value = false
+      }
     }
 
     // 「申请退货」（キャンセル申請）行的操作列不是「处理」而是「确认签收」：卖家收到买家退回的
@@ -1757,15 +1971,17 @@ export default defineComponent({
       }
     }
 
-    /** 雅虎「発送情報を送信」：先弹包材选择，选完由 doSubmitYahooShip 真正提交 */
+    /** 雅虎「发货」：打开多级向导（包材 → 尺寸 → 発送場所/扫二维码），与煤炉同一形态。
+     *  品名/尺寸等都在向导里填，所以这里不再要求详情面板已经填好。 */
     function onSubmitYahooShip() {
       const row = currentRow.value
-      if (!row?.id || !canSubmitYahooShip.value || yahooShipLoading.value) return
+      if (!row?.id || yahooShipLoading.value) return
       // 与煤炉同一道闸：未关联本地库存不许发货（按钮 :disabled 之外再拦一层）
       if (!hasInventoryMatch.value) {
         ElMessage.warning(t('todos.updateOrderFirst'))
         return
       }
+      resetYahooQrScan()
       openShipFlow({ target: 'yahoo', withPackaging: true })
     }
 
@@ -1774,9 +1990,12 @@ export default defineComponent({
     async function doSubmitYahooShip() {
       const row = currentRow.value
       if (!row?.id || !canSubmitYahooShip.value || yahooShipLoading.value) return false
+      const viaApp = isYahooPostBoxSize.value
       try {
         await ElMessageBox.confirm(
-          t('todos.yahoo.confirmShip', { size: yahooForm.size, location: yahooForm.location }),
+          viaApp
+            ? t('todos.yahoo.confirmShipPostBox', { size: yahooForm.size })
+            : t('todos.yahoo.confirmShip', { size: yahooForm.size, location: yahooForm.location }),
           t('todos.yahoo.confirmTitle'),
           { type: 'warning' },
         )
@@ -1790,18 +2009,27 @@ export default defineComponent({
         const data = await todosApi.yahooShip(row.id, {
           item_name: yahooForm.item_name.trim(),
           size: yahooForm.size,
-          location: yahooForm.location,
+          location: viaApp ? '' : yahooForm.location,
+          material_code: viaApp ? yahooForm.material_code.trim() : '',
         })
-        // submitted 只代表「点到了发行按钮」。后端在点击后会回读页面，读不到配送コード图片时
+        // submitted 只代表「点到了发行按钮」。网页那条路后端会回读页面，读不到配送コード图片时
         // 给出 code_uncertain —— 这时不能报成功：既不知道配送码是否真的发行，也就不该顺势
         // 记包材 + 出库（下面那段是不可逆的记账）。让用户「重新抓取」确认后再走。
+        // App 那条路是接口调用，返回即确定，没有这种不确定态。
         if (!data?.submitted || data?.code_uncertain) {
           ElMessage.warning(t('todos.yahoo.shipUncertain'))
           if (data?.state) applyYahooDetail(data.state)
           return false
         }
-        ElMessage.success(t('todos.yahoo.shipped'))
-        if (data.state) applyYahooDetail(data.state)
+        ElMessage.success(viaApp ? t('todos.yahoo.shippedPostBox') : t('todos.yahoo.shipped'))
+        // App 那条路返回的 state 是 App 视角的发货状态，不是网页交易页详情，别喂给 applyYahooDetail。
+        // 发行后的回读可能失败（state_error）——那时也必须把「已发行、待通知」立起来，
+        // 否则「已投函，通知发货」按钮不出现，配送码发了却没法完成发货。
+        if (viaApp) {
+          detail.yahoo_app = data.state || { is_ship_code_created: true, ship_notified: false }
+        } else if (data.state) {
+          applyYahooDetail(data.state)
+        }
         // 与煤炉一致：发货成功即把包材记到关联订单并出库（同一待办只记一次）
         if (!shipCommittedIds.has(row.id)) {
           shipCommittedIds.add(row.id)
@@ -1832,7 +2060,8 @@ export default defineComponent({
       shipFlowScanOnly.value = scanOnly
       shippingPickedIdx.value = null
       shippingFacility.value = null
-      shippingStep.value = scanOnly ? 'qrscan' : withPackaging ? 'packaging' : 'size'
+      const firstStep = target === 'yahoo' ? 'ysize' : 'size'
+      shippingStep.value = scanOnly ? 'qrscan' : withPackaging ? 'packaging' : firstStep
       shippingDialogVisible.value = true
     }
 
@@ -1841,14 +2070,64 @@ export default defineComponent({
       resetQrScanState()
     }
 
-    /** 点中包材卡片后自动翻到下一页：煤炉进尺寸页，雅虎直接提交发货表单 */
+    /** 点中包材卡片后自动翻到下一页：两个平台都进各自的尺寸页 */
     async function proceedAfterPackaging() {
-      if (shipFlowTarget.value === 'yahoo') {
-        // 提交失败（配送码未确认 / 接口报错 / 取消确认）时留在包材页，用户可改选后重试
-        if (await doSubmitYahooShip()) shippingDialogVisible.value = false
+      shippingStep.value = shipFlowTarget.value === 'yahoo' ? 'ysize' : 'size'
+    }
+
+    /** 雅虎尺寸页：点中即选定并翻页。
+     *  ポスト系（ゆうパケットポスト / mini）网页端根本没有这两项，走 App API + 扫二维码；
+     *  其余三种仍是网页模拟，需要选発送場所。 */
+    async function onPickYahooSize(size) {
+      if (yahooForm.size !== size) {
+        resetYahooQrScan() // 换尺寸后原来那张码不再适用
+        resetQrScanState() // 连同上一次拍的照片一起丢掉
+      }
+      yahooForm.size = size
+      yahooForm.location = ''
+      if (!isYahooPostBoxSize.value) {
+        shippingStep.value = 'ylocation'
         return
       }
-      shippingStep.value = 'size'
+      shippingStep.value = 'yqr'
+      await openQrCamera() // 内部已 nextTick，等 video 元素挂上再取流
+    }
+
+    /** 提交拍下的二维码照片：后端解码 → 当场向雅虎校验，一次往返给出能不能用 */
+    async function submitYahooQrShot() {
+      const row = currentRow.value
+      if (!row?.id || !qrShot.value || yahooQrScanning.value) return
+      yahooQrResult.value = null
+      yahooQrScanning.value = true
+      try {
+        const data = await todosApi.yahooScanMaterialCode(row.id, {
+          image: qrShot.value,
+          size: yahooForm.size,
+        })
+        yahooQrResult.value = data
+        // 只有雅虎回 OK 才把材料码填进表单——SAME（已用过）/ NG 都不能拿去发货
+        yahooForm.material_code = data?.ok ? String(data.material_code || '') : ''
+        if (data?.ok) ElMessage.success(t('todos.yahoo.materialCodeOk'))
+        else ElMessage.warning(data?.message || t('todos.yahoo.materialCodeNg'))
+      } catch (e) {
+        yahooQrResult.value = null
+        yahooForm.material_code = ''
+        if (!e?.response) ElMessage.error(e?.message || t('todos.yahoo.qrDecodeFailed'))
+      } finally {
+        yahooQrScanning.value = false
+      }
+    }
+
+    /** 重拍：丢掉照片与上一次的校验结果，重新取景 */
+    async function retakeYahooQrShot() {
+      yahooQrResult.value = null
+      yahooForm.material_code = ''
+      await retakeQrShot()
+    }
+
+    /** 向导最后一页的「発行配送码」：成功即关闭向导 */
+    async function onConfirmYahooShip() {
+      if (await doSubmitYahooShip()) shippingDialogVisible.value = false
     }
 
     function onClickShippingSizeLocation() {
@@ -2584,12 +2863,23 @@ export default defineComponent({
       isYahoo,
       yahooForm,
       yahooShipLoading,
+      yahooNotifyLoading,
       yahooSizeOptions,
       yahooLocationOptions,
-      yahooItemNameMax,
       yahooShipped,
+      isYahooPostBoxSize,
+      yahooNeedsShipNotify,
       canSubmitYahooShip,
       onSubmitYahooShip,
+      onNotifyYahooShipped,
+      yahooAppSizeOptions,
+      yahooSizeCards,
+      onPickYahooSize,
+      submitYahooQrShot,
+      retakeYahooQrShot,
+      onConfirmYahooShip,
+      yahooQrScanning,
+      yahooQrResult,
       syncLoading,
       bulkReviewLoading,
       bulkConfirmShipLoading,
@@ -2652,6 +2942,10 @@ export default defineComponent({
       shippingImageUrl,
       shippingMethodCardImg,
       postShipMethodImg,
+      mercariCarrierName,
+      postShipMethodName,
+      yahooCarrierImg,
+      yahooCarrierName,
       onShippingImgError,
       listParams,
       load,

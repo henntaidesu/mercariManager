@@ -495,15 +495,42 @@
                  读回来（见 web_drive/yahoo_trade），前端不写死。 -->
             <template v-if="isYahoo">
               <div v-if="yahooShipped" class="detail-ship-form">
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('todos.yahoo.carrier') }}</span>
-                  <span class="detail-value">{{ detail.yahoo_ship_form?.carrier || dash }}</span>
+                <div class="detail-method-head detail-method-head--solo">
+                  <img
+                    v-if="yahooCarrierImg"
+                    class="detail-method-img"
+                    :src="facilityImageUrl(yahooCarrierImg)"
+                    :alt="yahooCarrierName"
+                    @error="onShippingImgError"
+                  />
+                  <span class="detail-method-name">{{ yahooCarrierName || dash }}</span>
                 </div>
                 <div v-if="detail.ship_tracking_no" class="detail-row">
                   <span class="detail-label">{{ t('todos.yahoo.trackingNo') }}</span>
                   <span class="detail-value">{{ detail.ship_tracking_no }}</span>
                 </div>
-                <div class="detail-empty-hint">{{ t('todos.yahoo.alreadyShipped') }}</div>
+                <!-- 投函型（ゆうパケットポスト / mini）：配送コード発行 ≠ 已发货。
+                     还要真的投进邮筒，再点这个按钮通知买家——买家的受取期限从通知起算。 -->
+                <div v-if="detail.yahoo_app?.confirm_code" class="detail-row">
+                  <span class="detail-label">{{ t('todos.yahoo.confirmCode') }}</span>
+                  <span class="detail-value">{{ detail.yahoo_app.confirm_code }}</span>
+                </div>
+                <template v-if="yahooNeedsShipNotify">
+                  <div class="detail-empty-hint">{{ t('todos.yahoo.notifyHint') }}</div>
+                  <div class="detail-method-row">
+                    <div class="detail-shipping-actions">
+                      <el-button
+                        type="primary"
+                        size="default"
+                        :loading="yahooNotifyLoading"
+                        @click="onNotifyYahooShipped"
+                      >
+                        {{ t('todos.yahoo.notifyShipped') }}
+                      </el-button>
+                    </div>
+                  </div>
+                </template>
+                <div v-else class="detail-empty-hint">{{ t('todos.yahoo.alreadyShipped') }}</div>
                 <div v-if="detail.yahoo_code_image_url" class="detail-qr-wrap">
                   <el-image
                     :src="detail.yahoo_code_image_url"
@@ -515,54 +542,20 @@
                 </div>
               </div>
               <div v-else class="detail-ship-form">
-                <div class="detail-row">
-                  <span class="detail-label">{{ t('todos.yahoo.carrier') }}</span>
-                  <span class="detail-value">{{ detail.yahoo_ship_form?.carrier || dash }}</span>
-                </div>
-                <div class="detail-row detail-row-form">
-                  <span class="detail-label">{{ t('todos.yahoo.itemName') }}</span>
-                  <div class="detail-value">
-                    <el-input
-                      v-model="yahooForm.item_name"
-                      :maxlength="yahooItemNameMax"
-                      show-word-limit
-                      :placeholder="t('todos.yahoo.itemNamePlaceholder')"
-                    />
-                  </div>
-                </div>
-                <div class="detail-row detail-row-form">
-                  <span class="detail-label">{{ t('todos.yahoo.size') }}</span>
-                  <div class="detail-value">
-                    <el-radio-group v-if="yahooSizeOptions.length" v-model="yahooForm.size" class="yahoo-opt-group">
-                      <el-radio v-for="s in yahooSizeOptions" :key="s" :value="s" border>{{ s }}</el-radio>
-                    </el-radio-group>
-                    <div v-else class="detail-empty-hint">{{ t('todos.yahoo.needFetch') }}</div>
-                  </div>
-                </div>
-                <div class="detail-row detail-row-form">
-                  <span class="detail-label">{{ t('todos.yahoo.location') }}</span>
-                  <div class="detail-value">
-                    <el-radio-group v-if="yahooLocationOptions.length" v-model="yahooForm.location" class="yahoo-opt-group">
-                      <el-radio v-for="l in yahooLocationOptions" :key="l" :value="l" border>{{ l }}</el-radio>
-                    </el-radio-group>
-                    <div v-else class="detail-empty-hint">{{ t('todos.yahoo.needFetch') }}</div>
-                  </div>
-                </div>
-                <!-- ゆうパケットポスト / mini 网页端不下发（雅虎自己在页面上写明只能用 App），
-                     原文照搬展示，省得用户对着少两项的尺寸列表怀疑是抓取漏了 -->
-                <el-alert
-                  v-if="detail.yahoo_app_only_note"
-                  type="info"
-                  :closable="false"
-                  show-icon
-                  :title="t('todos.yahoo.appOnlyTitle')"
-                  :description="detail.yahoo_app_only_note"
-                  class="yahoo-app-only"
-                />
-                <div class="detail-empty-hint">{{ t('todos.yahoo.shipWarning') }}</div>
                 <div class="detail-method-row">
+                  <div class="detail-method-head">
+                    <img
+                      v-if="yahooCarrierImg"
+                      class="detail-method-img"
+                      :src="facilityImageUrl(yahooCarrierImg)"
+                      :alt="yahooCarrierName"
+                      @error="onShippingImgError"
+                    />
+                    <span class="detail-method-name">{{ yahooCarrierName || dash }}</span>
+                  </div>
                   <div class="detail-shipping-actions">
-                    <!-- 包材不再在表单里选：点「発送」先弹包材卡片，选完才真正提交 -->
+                    <!-- 点它进多级向导：包材 → 品名/尺寸 → 発送場所（或上传二维码）。
+                         没有「修改」——雅虎的配送公司在出品时就定了，交易页改不了。 -->
                     <el-tooltip
                       :disabled="hasInventoryMatch"
                       :content="t('todos.updateOrderFirst')"
@@ -570,18 +563,54 @@
                     >
                       <span>
                         <el-button
-                          type="primary"
                           size="default"
                           :loading="yahooShipLoading"
-                          :disabled="!canSubmitYahooShip || !hasInventoryMatch"
+                          :disabled="!hasInventoryMatch"
                           @click="onSubmitYahooShip"
                         >
-                          {{ t('todos.yahoo.submitShip') }}
+                          {{ t('todos.pickSizeAndLocation') }}
                         </el-button>
                       </span>
                     </el-tooltip>
                   </div>
                 </div>
+                <!-- 品名 / 尺寸 / 発送場所（或扫二维码）全部搬进多级向导，与煤炉同一形态。
+                     这里只留一个入口按钮和当前已填内容的回显。 -->
+                <div v-if="yahooForm.size" class="detail-row">
+                  <span class="detail-label">{{ t('todos.yahoo.size') }}</span>
+                  <span class="detail-value">{{ yahooForm.size }}</span>
+                </div>
+                <div v-if="yahooForm.location" class="detail-row">
+                  <span class="detail-label">{{ t('todos.yahoo.location') }}</span>
+                  <span class="detail-value">{{ yahooForm.location }}</span>
+                </div>
+                <!-- 雅虎在交易页上写明 ゆうパケットポスト / mini 只能用 App 发货。这两项现在由
+                     后端走 App API 补上（见 use_yahoo/app_api），所以原文提示只在**没配 App 令牌**
+                     时才显示——配好之后它就是一句会误导人的话。 -->
+                <el-alert
+                  v-if="detail.yahoo_app_only_note && !detail.yahoo_app?.extra_size_options?.length"
+                  type="info"
+                  :closable="false"
+                  show-icon
+                  :title="t('todos.yahoo.appOnlyTitle')"
+                  class="yahoo-app-only"
+                >
+                  <div>{{ detail.yahoo_app_only_note }}</div>
+                  <!-- 这两项本项目能发（走 App API），只是还没配 App 令牌。不写这一句的话，
+                       用户对着少两项的列表完全看不出缺的是什么。 -->
+                  <div v-if="detail.yahoo_app && !detail.yahoo_app.token_configured" class="yahoo-app-only__todo">
+                    {{ t('todos.yahoo.appTokenMissing') }}
+                  </div>
+                </el-alert>
+                <el-alert
+                  v-if="detail.yahoo_app?.error"
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                  :title="t('todos.yahoo.appApiFailed')"
+                  :description="detail.yahoo_app.error"
+                  class="yahoo-app-only"
+                />
               </div>
             </template>
 
@@ -659,7 +688,7 @@
                     :alt="detail.ship_method_label || detail.shipping_method_name || ''"
                     @error="onShippingImgError"
                   />
-                  <span class="detail-method-name">{{ detail.ship_method_label || detail.shipping_method_name }}</span>
+                  <span class="detail-method-name">{{ postShipMethodName }}</span>
                 </div>
                 <div v-if="detail.ship_confirm_code" class="detail-row">
                   <span class="detail-label">{{ t('todos.shipConfirmCode') }}</span>
@@ -721,7 +750,7 @@
                       :alt="detail.shipping_method_name || ''"
                       @error="onShippingImgError"
                     />
-                    <span class="detail-method-name">{{ detail.shipping_method_name }}</span>
+                    <span class="detail-method-name">{{ mercariCarrierName }}</span>
                   </div>
                   <div class="detail-shipping-actions">
                     <!-- 「发货」是三步向导的入口：包材 → 商品尺寸 → 发送方法 -->
@@ -1040,6 +1069,136 @@
       </template>
 
       <!-- 第 3 步：发送方法（发货场所） -->
+      <!-- ── 雅虎第 2 步：选择商品尺寸。与煤炉尺寸页同一套卡片（复用 ship-card 类）：
+           插图 + 规格行 + 注意事项，文案与排序都对齐煤炉的 SHIPPING_OPTIONS。
+           品名不在这里填：雅虎已按商品名预填好，改它没有意义（买家与配送公司看到的就是它）。 -->
+      <template v-else-if="shippingStep === 'ysize'">
+          <el-radio-group v-if="yahooSizeCards.length" v-model="yahooForm.size" class="ship-radio-group">
+            <div
+              v-for="opt in yahooSizeCards"
+              :key="opt.name"
+              :class="['ship-card', yahooForm.size === opt.name ? 'ship-card-active' : '']"
+              @click="onPickYahooSize(opt.name)"
+            >
+              <el-radio :value="opt.name" class="ship-card-radio">
+                <span class="ship-card-radio-label">{{ opt.name }}</span>
+              </el-radio>
+              <div class="ship-card-content">
+                <img
+                  v-if="opt.img"
+                  class="ship-card-img"
+                  :src="shippingImageUrl(opt.img)"
+                  :alt="opt.name"
+                  @error="onShippingImgError"
+                />
+                <div class="ship-card-body">
+                  <div
+                    v-for="(row, ri) in (opt.rows || [])"
+                    :key="`row-${ri}`"
+                    class="ship-card-row"
+                  >
+                    <span class="ship-card-label">{{ row[0] }}</span>
+                    <span class="ship-card-value">{{ row[1] }}</span>
+                  </div>
+                  <div
+                    v-for="(c, ci) in (opt.caveats || [])"
+                    :key="`cv-${ci}`"
+                    class="ship-card-caveat"
+                  >{{ c }}</div>
+                </div>
+              </div>
+            </div>
+          </el-radio-group>
+          <div v-else class="detail-empty">{{ t('todos.yahoo.needFetch') }}</div>
+      </template>
+
+      <!-- ── 雅虎第 3 步（网页模拟的三种）：発送場所 ── -->
+      <div v-else-if="shippingStep === 'ylocation'" class="yship-step">
+        <div class="yship-field">
+          <span class="yship-label">{{ t('todos.yahoo.location') }}</span>
+          <div v-if="yahooLocationOptions.length" class="yship-cards">
+            <div
+              v-for="l in yahooLocationOptions"
+              :key="l"
+              :class="['yship-card', yahooForm.location === l ? 'yship-card-active' : '']"
+              @click="yahooForm.location = l"
+            >
+              <span class="yship-card__name">{{ l }}</span>
+            </div>
+          </div>
+          <div v-else class="detail-empty-hint">{{ t('todos.yahoo.needFetch') }}</div>
+        </div>
+        <div class="yship-actions">
+          <el-button
+            type="primary"
+            :disabled="!canSubmitYahooShip"
+            :loading="yahooShipLoading"
+            @click="onConfirmYahooShip"
+          >{{ t('todos.yahoo.submitShip') }}</el-button>
+        </div>
+      </div>
+
+      <!-- ── 雅虎第 3 步（投函型）：与煤炉拍照页同一形态——本机摄像头拍一张专用箱/シール/封筒
+           上的二维码，后端解码成材料码并当场向雅虎校验。取景/拍照/重拍复用煤炉那套。 ── -->
+      <div v-else-if="shippingStep === 'yqr'" class="qr-scan-step">
+        <!-- 把所选尺寸摆在最显眼处：mini 与非 mini 的材料码互不通用，选错了雅虎会直接拒，
+             而拒绝信息里看不出是尺寸选错还是码有问题 -->
+        <div class="yqr-size-bar">
+          {{ t('todos.yahoo.qrForSize', { size: yahooForm.size }) }}
+        </div>
+        <div class="qr-scan-stage">
+          <video
+            v-show="!qrShot"
+            ref="qrVideoEl"
+            class="qr-scan-video"
+            autoplay
+            playsinline
+            muted
+          ></video>
+          <img v-if="qrShot" :src="qrShot" class="qr-scan-video" :alt="t('todos.qrShotPreview')" />
+          <div v-if="qrCamError" class="qr-scan-error">
+            {{ t('todos.cameraOpenFailed') }}: {{ qrCamError }}
+          </div>
+        </div>
+        <div class="qr-scan-tip">
+          {{ qrShot ? t('todos.yahoo.qrShotTip') : t('todos.yahoo.qrAimTip') }}
+        </div>
+        <div v-if="yahooQrResult" class="yship-qr-status">
+          <el-tag :type="yahooQrResult.ok ? 'success' : 'danger'" size="small" effect="light">
+            {{ yahooQrResult.ok ? t('todos.yahoo.materialCodeOk') : (yahooQrResult.message || t('todos.yahoo.materialCodeNg')) }}
+          </el-tag>
+          <!-- 读到的原文不论通过与否都显示：码本身没问题却被拒时，看一眼原文就知道
+               是「解出来的不是材料码」还是别的原因，不必对着一张好码反复重拍 -->
+          <span v-if="yahooQrResult.material_code" class="yship-qr-code">
+            {{ t('todos.yahoo.qrDecoded', { text: yahooQrResult.material_code }) }}
+          </span>
+        </div>
+        <div class="qr-scan-actions">
+          <el-button
+            v-if="!qrShot"
+            type="primary"
+            :disabled="!!qrCamError"
+            @click="takeQrShot"
+          >{{ t('todos.qrTakeShot') }}</el-button>
+          <template v-else>
+            <el-button @click="retakeYahooQrShot">{{ t('todos.qrRetake') }}</el-button>
+            <!-- 还没校验通过就先验码；通过后按钮变成「発行配送码」 -->
+            <el-button
+              v-if="!canSubmitYahooShip"
+              type="primary"
+              :loading="yahooQrScanning"
+              @click="submitYahooQrShot"
+            >{{ t('todos.yahoo.qrVerify') }}</el-button>
+            <el-button
+              v-else
+              type="primary"
+              :loading="yahooShipLoading"
+              @click="onConfirmYahooShip"
+            >{{ t('todos.yahoo.submitShip') }}</el-button>
+          </template>
+        </div>
+      </div>
+
       <div v-else-if="shippingStep === 'facility'" class="ship-facility-section">
         <!-- 新式：按尺寸下发的发货地卡片（带图标），点击选中 -->
         <div v-if="shippingFacilities.length" class="ship-facility-cards">

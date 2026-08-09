@@ -125,6 +125,16 @@ def mercari_automation_key(account_id: int) -> str:
     return f"{mercari_account_key(account_id)}__sync"
 
 
+def mercari_app_auth_key(account_id: int) -> str:
+    """雅虎 App 授权登录专用 profile（``mercari_{id}__appauth``）。
+
+    **刻意与网页那套完全隔离**：App 令牌走的是 App 自己的 YConnect 授权端点，登录态不该和
+    网页自动化（``__sync`` / ``__todo`` / 主 profile）共用一个 Cookie 罐——两边互不影响，
+    一边掉线也不会连累另一边。
+    """
+    return f"{mercari_account_key(account_id)}__appauth"
+
+
 def mercari_todo_key(account_id: int) -> str:
     """待办事项（/#/todos）浏览器操作专用无头 profile（``mercari_{id}__todo``）。
 

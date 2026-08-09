@@ -111,14 +111,32 @@ class YahooShipRequest(PydanticModel):
 
     ``size`` / ``location`` 必须是**该交易页当前真实提供的选项名**（由
     ``/yahoo/ship-state`` 返回），不做本地枚举——可选尺寸随配送会社变化。
+
+    ``size`` 取 ゆうパケットポスト / mini 时改走 App API：这两项网页端不下发，``location``
+    也就无从选起（投函型没有発送場所），因此对这两种设了默认值可以不传，但 ``material_code``
+    变成必填（由后端校验，见 ``use_yahoo/app_api/ship.py``）。
     """
 
     # 品名：雅虎 maxlength=17，超出由后端截断
     item_name: str = Field(..., min_length=1, max_length=17)
     size: str = Field(..., min_length=1, max_length=60)
-    location: str = Field(..., min_length=1, max_length=60)
+    location: str = ""
+    # 专用箱 / 発送用シール / 専用封筒 上二维码的内容（仅投函型需要）
+    material_code: str = Field("", max_length=200)
     # 只填表校验、不点「配送コードを表示する」
     dry_run: bool = False
+
+
+class YahooScanMaterialCodeRequest(PydanticModel):
+    """上传一张含二维码的图片，后端解码成材料码并当场校验。
+
+    与煤炉的发货扫码不同：煤炉解出的文本只用来判断「照片拍清楚了没」，真正推进流程要把图
+    喂给煤炉自己的扫描器；雅虎这边**解出来的文本就是材料码本身**，直接进后续接口。
+    """
+
+    #: 图片 data URL（前端已压到合理尺寸）
+    image: str = Field(..., min_length=1)
+    size: str = Field(..., min_length=1, max_length=60)
 
 
 class YahooTradeMessageRequest(PydanticModel):

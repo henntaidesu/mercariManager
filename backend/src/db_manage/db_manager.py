@@ -25,6 +25,7 @@ from .models import (
     OrderModel,
     OrderOutboundLineModel,
     ShopAccountModel,
+    YahooAppTokenModel,
     OnSaleItemModel,
     ProductTypeCategoryMappingModel,
     YahooCategoryMappingModel,
@@ -653,6 +654,7 @@ class DBManager:
             OrderModel,       # 订单管理
             OrderOutboundLineModel,  # 订单解析出的待出库明细（依赖 orders / inventory 逻辑）
             ShopAccountModel,  # 店铺账号（煤炉 / 雅虎）
+            YahooAppTokenModel,  # 雅虎 App API 令牌（依赖 shop_accounts，仅顺序习惯）
             OnSaleItemModel,  # 在售商品缓存
             TodoItemModel,  # 待办事项缓存（依赖 mercari_accounts，仅顺序习惯）
             TransactionMessageModel,  # 交易消息/交流缓存（按订单ID关联，与 todo_items 解耦）

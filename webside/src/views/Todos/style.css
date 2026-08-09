@@ -1314,3 +1314,106 @@
 .todos-platform-filter {
   width: 140px;
 }
+
+/* App-only 提示里追加的「本系统能发，去登录」一行：与雅虎原文分开，别混成一段 */
+.yahoo-app-only__todo {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--el-border-color);
+  line-height: 1.6;
+}
+
+/* ── 雅虎发货向导：与煤炉共用同一个弹窗，但选项是纯文字（雅虎没有尺寸插图） ── */
+.yship-step {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 2px;
+}
+
+.yship-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.yship-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.yship-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.yship-card {
+  position: relative;
+  min-width: 168px;
+  padding: 14px 16px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.yship-card:hover {
+  border-color: var(--el-color-primary);
+}
+
+.yship-card-active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.yship-card__name {
+  font-size: 14px;
+}
+
+
+.yship-warn {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+.yship-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+
+
+
+.yship-qr-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.yship-qr-code {
+  font-family: var(--el-font-family-mono, monospace);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+
+
+/* 已发货视图里的配送公司：没有按钮同行，单独占一行时补一点下间距 */
+.detail-method-head--solo {
+  margin-bottom: 8px;
+}
+
+/* 扫码页顶部的「正在为 X 扫码」提示：尺寸与材料不匹配是最常见的被拒原因 */
+.yqr-size-bar {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning);
+  font-size: 12px;
+  line-height: 1.6;
+}

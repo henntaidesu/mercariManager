@@ -157,6 +157,59 @@ export default defineComponent({
       t(isYahooForm.value ? 'mercariAccounts.sellerIdPlaceholderYahoo' : 'mercariAccounts.sellerIdPlaceholder')
     )
 
+    //: 编辑态「改动即存」的防抖时长
+    const AUTO_SAVE_DELAY_MS = 600
+
+    // ── 雅虎 App 令牌：ゆうパケットポスト / mini 网页端发不了，只能走 App API ──
+    // 令牌只能由「登录雅虎 App 账号」取得（雅虎没有账密接口，也不指望用户去抓包），
+    // 所以这里没有输入框，status 只表示「配没配、何时过期」。
+    const appTokenStatus = ref(null)
+
+    async function loadYahooAppToken(id) {
+      appTokenStatus.value = null
+      if (!id) return
+      try {
+        appTokenStatus.value = await shopAccountApi.getYahooAppToken(id)
+      } catch {
+        appTokenStatus.value = null // 读不到状态不该挡住账号编辑
+      }
+    }
+
+    // 程序内登录：后端开一个独立 profile 的浏览器，用户在里面登录雅虎，回跳即换到令牌。
+    // 与网页自动化的登录态完全隔离，两边互不影响。
+    const appLoginLoading = ref(false)
+
+    async function loginYahooApp() {
+        const id = form.value.id
+        if (!id || appLoginLoading.value) return
+        appLoginLoading.value = true
+        ElMessage.info(t('mercariAccounts.appLoginOpening'))
+        try {
+          appTokenStatus.value = await shopAccountApi.loginYahooApp(id, {})
+          ElMessage.success(t('mercariAccounts.appLoginDone'))
+        } catch (e) {
+          if (!e?.response) ElMessage.error(e?.message || t('mercariAccounts.appLoginFailed'))
+        } finally {
+          appLoginLoading.value = false
+        }
+    }
+
+    async function clearYahooAppToken() {
+      const id = form.value.id
+      if (!id) return
+      try {
+        appTokenStatus.value = await shopAccountApi.deleteYahooAppToken(id)
+        ElMessage.success(t('mercariAccounts.appTokenCleared'))
+      } catch (e) {
+        if (!e?.response) ElMessage.error(e?.message || t('mercariAccounts.appTokenClearFailed'))
+      }
+    }
+
+    const appTokenExpiresText = computed(() => {
+      const at = appTokenStatus.value?.expires_at
+      return at ? new Date(Number(at)).toLocaleString() : ''
+    })
+
     const sellerIdRules = [
       {
         validator(_rule, val, cb) {
@@ -337,7 +390,6 @@ export default defineComponent({
 
     function openEdit(row) {
       cancelAutoSave()
-      autoSaveState.value = ''
       autoSaveSuppressed = true
       form.value = {
         ...createDefaultForm(),
@@ -358,6 +410,8 @@ export default defineComponent({
         }, {}),
       }
       dialogVisible.value = true
+      if ((row.platform || 'mercari') === 'yahoo') loadYahooAppToken(row.id)
+      else appTokenStatus.value = null
       nextTick(() => {
         autoSaveSuppressed = false
       })
@@ -418,8 +472,6 @@ export default defineComponent({
      * 编辑态实时保存：表单任一字段变动即防抖写库，不依赖「保存」按钮。
      * 仅对已存在的账号生效（新增态还没有 id，只能走「保存」创建）。
      */
-    const AUTO_SAVE_DELAY_MS = 600
-    const autoSaveState = ref('') // '' | saving | saved | failed
     let autoSaveTimer = null
     let autoSaveSeq = 0
     // openEdit 整体替换 form 会触发 watch，回显不该被当成用户改动
@@ -440,21 +492,15 @@ export default defineComponent({
         ?.validate()
         .then(() => true)
         .catch(() => false)
-      if (valid === false || !validateCustomIntervals(true)) {
-        autoSaveState.value = 'failed'
-        return
-      }
+      if (valid === false || !validateCustomIntervals(true)) return
       const payload = buildPayload()
       const seq = ++autoSaveSeq
-      autoSaveState.value = 'saving'
       try {
         await shopAccountApi.update(id, payload)
-        if (seq !== autoSaveSeq) return // 已有更新的一次保存在途，别用旧结果覆盖状态
-        autoSaveState.value = 'saved'
+        if (seq !== autoSaveSeq) return // 已有更新的一次保存在途，旧结果不该再刷列表
         await fetchList().catch(() => {})
       } catch {
         // 错误详情由 axios 拦截器提示
-        if (seq === autoSaveSeq) autoSaveState.value = 'failed'
       }
     }
 
@@ -475,7 +521,6 @@ export default defineComponent({
         cancelAutoSave()
         runAutoSave()
       }
-      autoSaveState.value = ''
     })
 
     async function remove(id) {
@@ -754,13 +799,17 @@ export default defineComponent({
       openEdit,
       buildPayload,
       submit,
-      autoSaveState,
       remove,
       removeFromDialog,
       syncingIds,
       browserLoadingKeys,
       cookieInjectKeys,
       fetchSellerIdLoading,
+      appTokenStatus,
+      appTokenExpiresText,
+      appLoginLoading,
+      loginYahooApp,
+      clearYahooAppToken,
       openBrowserByKey,
       openBrowserForSavedAccount,
       injectCookieForAccount,

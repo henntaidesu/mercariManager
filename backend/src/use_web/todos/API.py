@@ -45,6 +45,8 @@ from .units.todos_sync import (
     sync_todos,
     todos_sync_progress,
     yahoo_finish_reply_endpoint,
+    yahoo_notify_shipped_endpoint,
+    yahoo_scan_material_code_endpoint,
     yahoo_ship_endpoint,
     yahoo_trade_detail_cache_endpoint,
     yahoo_trade_detail_endpoint,
@@ -149,5 +151,8 @@ router.add_api_route("/close-detail-browser/{account_id}", close_detail_browser,
 router.add_api_route("/{todo_id}/yahoo/trade-detail", yahoo_trade_detail_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/yahoo/trade-detail-cache", yahoo_trade_detail_cache_endpoint, methods=["GET"])
 router.add_api_route("/{todo_id}/yahoo/ship", yahoo_ship_endpoint, methods=["POST"])
+# ゆうパケットポスト / mini：发行配送コード与発送通知必须分两步（先投函，再通知买家）
+router.add_api_route("/{todo_id}/yahoo/scan-material-code", yahoo_scan_material_code_endpoint, methods=["POST"])
+router.add_api_route("/{todo_id}/yahoo/notify-shipped", yahoo_notify_shipped_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/yahoo/send-message", yahoo_trade_message_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/yahoo/finish-reply", yahoo_finish_reply_endpoint, methods=["POST"])

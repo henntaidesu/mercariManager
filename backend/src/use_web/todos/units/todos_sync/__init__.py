@@ -15,7 +15,9 @@ from .detail import (
     todos_sync_progress,
 )
 from .yahoo_actions import (
+    yahoo_scan_material_code_endpoint,
     yahoo_finish_reply_endpoint,
+    yahoo_notify_shipped_endpoint,
     yahoo_ship_endpoint,
     yahoo_trade_detail_cache_endpoint,
     yahoo_trade_detail_endpoint,
@@ -63,6 +65,8 @@ __all__ = [
     "yahoo_trade_detail_endpoint",
     "yahoo_trade_detail_cache_endpoint",
     "yahoo_ship_endpoint",
+    "yahoo_notify_shipped_endpoint",
+    "yahoo_scan_material_code_endpoint",
     "yahoo_trade_message_endpoint",
     "yahoo_finish_reply_endpoint",
 ]

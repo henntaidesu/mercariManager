@@ -144,6 +144,7 @@ backend/
     │   ├── mgmt_image_cipher.py  # QIM image watermark — embedded but never decoded (see below)
     │   └── sync/  on_sale/  get_order/  get_to_du_list/  get_notifications/
     ├── use_yahoo/                   # Yahoo!フリマ equivalents (page scraping, see below)
+    │   ├── app_api/                 #   手机 App 的 sparkle JSON API（ゆうパケットポスト 发货唯一口子）
     │   └── on_sale/  orders/  todos/  notifications/  seller.py  item_page.py
     ├── web_drive/                   # Playwright automation
     │   ├── core/                    #   manager/, mitm_session, listing_session, yahoo_session,
@@ -202,6 +203,8 @@ Key tables in `backend/src/db_manage/models/`:
   startup migrations in `models/shop_accounts/shop_account.py` and a self-check in `db_manager.py`.
   `ShopAccountModel.LEGACY_TABLE_NAME` still holds `mercari_accounts`; older docs/comments use the
   old names, but the live table is `shop_accounts`.
+- **yahoo_app_tokens**: Yahoo phone-app OAuth tokens, one row per account (unique `account_id`).
+  Deliberately *not* in `shop_accounts.value` — see `use_yahoo/app_api/` below.
 - **on_sale_items**: Listing records synced from Mercari/Yahoo
 - **orders**: Orders synced from Mercari/Yahoo
 - **image_embeddings**: CLIP vectors for inventory image search (see Auxiliary Subsystems)
@@ -343,7 +346,8 @@ header, not cookies, so the dangerous wildcard+credentials combination never occ
 `shop_accounts.platform` (`mercari` default / `yahoo`) selects the marketplace. Implemented for
 Yahoo: **listing, on-sale list+detail sync, revise/suspend/resume/delete, sold-order sync +
 single-order refresh + order-status batch refresh + fee backfill, auto-relist, todo sync,
-notification sync, and the todo 处理 flow (trade detail / 发货 / 交易留言)**. Still Mercari-only:
+notification sync, and the todo 处理 flow (trade detail / 发货 / 交易留言)** — 发货 covers
+ゆうパケットポスト / mini too, via the App API (see `use_yahoo/app_api/` below). Still Mercari-only:
 受取評価, the bulk todo operations (一键好评 / 一键确认发送), QR/扫码 (Yahoo has no equivalent —
 its 配送コード is issued server-side, nothing to scan), and every *notification* action
 (回复评论/同意降价) — Yahoo notices remain display-only.
@@ -456,19 +460,17 @@ soft-delete, inventory counters and order upsert semantics stay identical across
     all three are set, then flips to 「配送コードを表示する」. `ship.py` **verifies the flip before
     clicking** and aborts otherwise; a half-filled submit issues a 配送コード for the wrong size and
     the postage difference gets billed later. `dry_run=True` stops exactly at that check.
-  - **ゆうパケットポスト / ゆうパケットポストmini are app-only and cannot be automated.** Don't
-    re-investigate: the trade page itself says so — `※ゆうパケットポスト、ゆうパケットポストminiを
-    ご利用の場合は、アプリ版で発送手続きをしてください` — and the サイズ sheet simply never lists them.
-    It is **not** client sniffing: probing the same trade as desktop Edge, as Android Chrome (with
-    CDP `Emulation.setUserAgentOverride` so `navigator.userAgentData.mobile === true`, touch, 412px)
+  - **ゆうパケットポスト / ゆうパケットポストmini are unavailable *on the web* — they ship through
+    `use_yahoo/app_api` instead** (see 雅虎 App API 发货 below). Don't re-investigate the web side:
+    the trade page itself says so — `※ゆうパケットポスト、ゆうパケットポストminiをご利用の場合は、
+    アプリ版で発送手続きをしてください` — and the サイズ sheet simply never lists them. It is **not**
+    client sniffing: probing the same trade as desktop Edge, as Android Chrome (with CDP
+    `Emulation.setUserAgentOverride` so `navigator.userAgentData.mobile === true`, touch, 412px)
     and as iPhone Safari (390px) returns a byte-identical `['ゆうパケット','ゆうパケットプラス',
     'ゆうパック']`. The option list is server-rendered — it is not in the web JS bundle at all — so
-    no amount of UA/viewport/Client-Hints spoofing changes it, and forcing an unoffered method
-    through a raw API call would risk a 配送コード that doesn't match the parcel (postage difference
-    is billed to the seller later). `detail.py::_APP_ONLY_RE` lifts that notice verbatim into
-    `ship_form.app_only_note` and the 处理 panel shows it, so the missing sizes read as a documented
-    platform limit rather than a scraping bug. If Yahoo ever opens this up, the notice disappears
-    first and the hint disappears with it.
+    no amount of UA/viewport/Client-Hints spoofing changes it. `detail.py::_APP_ONLY_RE` still lifts
+    that notice into `ship_form.app_only_note`, and the 处理 panel shows it **only when no App token
+    is configured** — once the App path is available the notice would be actively misleading.
   - **Size/location options are read from the live page, never hard-coded** — the list changes with
     the 配送会社 (日本郵便 → ゆうパケット/プラス/ゆうパック; ヤマト has its own). They're read off the
     sheet's `input[type=radio]` → first text leaf of its `<label>`, which is the same string
@@ -491,6 +493,84 @@ soft-delete, inventory counters and order upsert semantics stay identical across
     包材 or 出库, so a Yahoo sale silently skipped both ledgers.
     "Already shipped" is `ship_form.pending === false` — Yahoo has no local QR file, so
     `isPackedDetail` can't key on `qr_image_url` the way Mercari does.
+- `use_yahoo/app_api/` — **雅虎 App API 发货**（`sparkle-secure.yahooapis.jp`）。The phone app's
+  backend is a real JSON API with **no client attestation** — `Authorization: Bearer` plus a few
+  copied headers (`X-UUID` / `X-BCOOKIE` / `os` / `os-version` / `app-version` / `User-Agent`, all
+  from `qy.IdentifierInterceptor`) is enough from this server. Used **only where the web cannot
+  reach**: ゆうパケットポスト / mini shipping. Everything else stays on page automation.
+  - **Endpoints** (all verified present in the APK's `zy.SparkleService` — the gateway answers a
+    NestJS 404 for anything else, so guessing paths is useless):
+    `GET /v2/items/{itemId}/seller` (→ `sellerId`/`buyerId`/`orderId`, `order.vendor`,
+    `order.progress`, `order.isShipCodeCreated`, `order.jpYupacketPost.confirmCode`) →
+    `GET /v1/items/{itemId}/jpPostMaterialCodeCheck` (→ `OK`/`SAME`/`NG`) →
+    `POST /v2/items/{itemId}/shipcode` → `POST /v3/items/{itemId}/shipping`.
+    `postage.method` is the `ShipMethod` enum name (`JP_YUPACKET_POST`…) and `postage.vendor` the
+    `ShipVendor` name (`JAPAN_POST`); the enum ↔ 日文名 table lives in `app_api/trade.py`.
+  - **発行配送コード and 発送通知 are deliberately two steps.** Yahoo's post-box flow is
+    「発行 → 郵便ポストに投函 → 発送通知」; merging them tells the buyer "shipped" while the parcel is
+    still in your hand, and their 受取期限 starts from the notification. `/yahoo/ship` does the first,
+    `/yahoo/notify-shipped` the second. 打包时间 is recorded at the first (same 口径 as the web path);
+    the order status refresh happens at the second, because that is when Yahoo actually moves it.
+  - **`SAME` from the material-code check is a failure, not a warning** — that 専用箱/シール has
+    already been bound to another trade, and reusing it misroutes the parcel.
+  - **Login is in-app, and Yahoo has no credential API — stop looking for one.** Every
+    `login_type` the SDK supports (`SSOLoginTypeDetail`: app_zerotap / app_onetap / app_deeplink /
+    app_browsersync / app_login_refresh_token / …) either needs an SSO token that already exists,
+    or is `webview_yconnect` — the app itself just loads `login.yahoo.co.jp/config/login` in a
+    WebView and lets the user type. `/yconnect/v2/slogin` takes `token` + `snonce`, never a
+    password. So `use_yahoo/app_api/oauth.py` drives the app's own **authorization** endpoint
+    (`/yconnect/v2/authorization`, `response_type=code id_token`, `redirect_uri=yj-paypay-fleamarket:/`,
+    PKCE S256, `display=inapp`, `sdk=7.5.0a` — all lifted from the APK's `i60.AppAuthorizationRequest`)
+    and lets Yahoo render the login page. Verified: that URL 302s to
+    `login.yahoo.co.jp/config/login?.src=yconnectv2&ckey=<client_id>&auth_lv=pw`.
+    **An Android emulator buys nothing here** — the "Android-ness" of this flow is a UA string and
+    a custom URI scheme; there is no attestation anywhere.
+  - **The login browser is a separate profile (`mercari_{id}__appauth`), opened `fresh=True`.**
+    That isolation *is* the "app token must not share the web session" requirement: its cookie jar
+    is invisible to `__sync` / `__todo` / the main profile, and either side can be logged out
+    without touching the other. `fresh` matters — a leftover session makes Yahoo skip the login
+    page, so the user could never switch accounts.
+  - **The code comes back in the URL *fragment*, and only the `response` event keeps it.**
+    `response_type=code id_token` is the OIDC hybrid flow, so the response is fragment-encoded:
+    `yj-paypay-fleamarket:/#code=…&state=…`. Chromium treats that as an unknown scheme and all
+    three of `response` (Location header), `request` and `requestfailed` fire — but **`request` /
+    `requestfailed` have the fragment stripped** (measured: they yield a bare
+    `yj-paypay-fleamarket:/`) and usually arrive *first*. So `web_drive/yahoo_app_login.py` listens
+    to all three but accepts only a URL that actually carries `code` or `error`; taking
+    whichever arrives first yields an empty shell and a bogus "state 不匹配" error.
+    `_parse_redirect` reads fragment *and* query for the same reason.
+  - **Tokens live in `yahoo_app_tokens` (one row per account), not in `shop_accounts.value`**:
+    that column is rewritten from a whitelist by `_norm_headers_dict`, which would silently drop
+    them on any account edit. The login flow above is the **only** way to obtain them — there is no
+    paste-a-captured-token path, because expecting a user to run a packet capture isn't a real
+    workflow. Renewed automatically against
+    `https://yjapp.auth.login.yahoo.co.jp/yconnect/v2/token` (`grant_type=refresh_token`, public
+    client, **no secret** — see APK `m50.RefreshTokenClient`). Verified against the live endpoint:
+    the access_token rotates and the expiry extends. **Refresh is lazy** — it fires from
+    `_ensure_access_token` right before an App API call (or once on a 401, then retries); there is
+    no background timer, so a token only renews when something actually ships.
+    Yahoo *may* rotate the refresh_token too (the SDK reads one back, though an observed refresh
+    returned the same one), so a refresh writes back whichever tokens the response carries and
+    keeps the old refresh_token when none is returned. Refreshes are serialized per account by a
+    lock that re-reads the row inside it — if Yahoo does rotate, two concurrent refreshes would
+    otherwise make the loser present an already-invalidated token and report a good account as dead.
+  - **The 发货 UI is the same multi-step wizard as Mercari's**, sharing one dialog
+    (`shippingDialogVisible`) but its own step keys — 包材 → `ysize` (品名 + 尺寸) →
+    `ylocation` *or* `yqr`. Sizes are merged: web options (read off the trade page) + the App-only
+    two, the latter only when a token is configured *and* `order.vendor == JAPAN_POST` *and* the
+    trade is still `WAIT_FOR_SELLER_SHIP`. **Which branch the third step takes is the same split as
+    the backend's**: post-box → `yqr` → App API; the other three → `ylocation` → page automation.
+    Don't reuse Mercari's `size`/`facility` steps — they read a hard-coded Mercari size table.
+  - **The material code is photographed with the device camera, never typed.** The `yqr` step
+    reuses Mercari's capture machinery verbatim (`qrVideoEl` / `qrShot` / `openQrCamera` /
+    `takeQrShot`); only the submit differs. `/yahoo/scan-material-code` reuses `qr_photo.decode_qr`
+    (zxing-cpp) and then verifies in the same call, so one round trip answers "is this code usable".
+    Note the semantic difference from Mercari: there the decode is only a "is the photo sharp
+    enough" check and the image is replayed into Mercari's own scanner;
+    **here the decoded text *is* the material code** and goes straight to Yahoo. Yahoo answers a
+    malformed code with **HTTP 400, not `status: NG`** — `check_material_code` folds a 400 into
+    `NG` so scanning the wrong barcode reads as "that's not the shipping code" instead of a raw
+    gateway dump.
 - `use_yahoo/orders/batch_refresh.py` — 订单「更新状态」的雅虎实现（逐条重读交易页）。
   `OrderModel.find_for_batch_info_refresh` now takes `platform`; without it the Mercari
   `transaction_evidences` batch would pick up `z…` orders and open Mercari transaction pages that

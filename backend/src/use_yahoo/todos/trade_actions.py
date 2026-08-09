@@ -10,6 +10,11 @@
 
 平台校验是硬门槛：雅虎待办跑煤炉的发货自动化会点到完全不同的页面，所以对非雅虎待办
 一律抛错而不是「尽力而为」。
+
+**发货有两条路，按尺寸自动分流**：ゆうパケットポスト / mini 网页端不下发（雅虎自己写明只能
+用 App），走 ``use_yahoo/app_api``；其余三种日本郵便方式与ヤマト各方式网页端本来就能发，
+继续走 ``web_drive/yahoo_trade`` 的页面自动化。分流放在这一层而不是端点里，是为了让「一个
+発送按钮」在前端保持单一入口。
 """
 from __future__ import annotations
 
@@ -24,6 +29,16 @@ from ...web_drive.yahoo_trade import (
     fetch_ship_state,
     send_yahoo_trade_message,
     ship_yahoo_item,
+)
+from ..app_api import (
+    YahooAppApiError,
+    check_material_code_for_item,
+    fetch_app_ship_state,
+    get_token_status,
+    is_post_box_method,
+    notify_shipped_via_app,
+    resolve_ship_method,
+    ship_via_app,
 )
 
 log = logging.getLogger(__name__)
@@ -78,10 +93,50 @@ def get_cached_yahoo_todo_detail(todo_id: int) -> Dict[str, Any]:
     return data
 
 
+def _wants_app_path(size: str) -> bool:
+    """这个尺寸是不是只能走 App API（ゆうパケットポスト / mini）。"""
+    try:
+        return is_post_box_method(resolve_ship_method(size))
+    except ValueError:
+        # 认不出来的一律当网页尺寸——网页那条路会用页面真实选项报出更准确的错
+        return False
+
+
+async def _merge_app_ship_state(account_id: int, item_id: str, data: Dict[str, Any]) -> None:
+    """把 App API 视角的发货状态并进详情。
+
+    没配令牌就整段跳过（前端据此不显示那两个尺寸）；配了但调用失败也只记进 ``app.error``
+    并继续——网页详情本身是完整可用的，不能因为 App 这条增强路径挂掉就打不开处理面板。
+    """
+    status = get_token_status(int(account_id))
+    app: Dict[str, Any] = {"token_configured": bool(status.get("configured"))}
+    if not app["token_configured"]:
+        data["app"] = app
+        return
+    try:
+        state = await fetch_app_ship_state(int(account_id), item_id)
+        app.update(state)
+        app["extra_size_options"] = (
+            [
+                label
+                for label in (state.get("available_ship_methods") or [])
+                if _wants_app_path(label)
+            ]
+            if state.get("shippable")
+            else []
+        )
+    except (YahooAppApiError, ValueError) as exc:
+        app["error"] = str(exc)[:200]
+        app["extra_size_options"] = []
+        log.warning("[yahoo_trade] 读取 App 发货状态失败 item_id=%s：%s", item_id, exc)
+    data["app"] = app
+
+
 async def fetch_yahoo_todo_detail(todo_id: int) -> Dict[str, Any]:
     """打开雅虎交易页读详情（含发货表单可选项），并写入缓存。"""
     aid, item_id = _resolve_yahoo_todo(todo_id)
     data = await fetch_ship_state(aid, item_id=item_id)
+    await _merge_app_ship_state(aid, item_id, data)
     data["todo_id"] = int(todo_id)
     data["cached"] = False
     _cache_detail(int(todo_id), data)
@@ -99,16 +154,43 @@ async def _refresh_order_after_ship(account_id: int, item_id: str) -> Optional[D
         return {"error": str(exc)[:200]}
 
 
+def _mark_packed(todo_id: int) -> None:
+    """复用煤炉的「发行发货码 = 已打包」口径（订单与待办按 order_no == item_id 关联）。"""
+    try:
+        from ...use_mercari.get_to_du_list.transaction_detail._cache import _mark_order_packed
+
+        _mark_order_packed(DatabaseManager(), int(todo_id))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[yahoo_trade] 记录打包时间失败 todo_id=%s：%s", todo_id, exc)
+
+
 async def ship_yahoo_todo(
     todo_id: int,
     *,
     item_name: str,
     size: str,
     location: str,
+    material_code: str = "",
     dry_run: bool = False,
 ) -> Dict[str, Any]:
-    """提交雅虎发货信息（发行配送コード），成功后刷新本地订单并记打包时间。"""
+    """提交雅虎发货信息（发行配送コード），成功后刷新本地订单并记打包时间。
+
+    ``size`` 是 ゆうパケットポスト / mini 时改走 App API（网页端没有这两项），此时
+    ``location`` 无意义——投函型没有発送場所可选，包裹是投进邮筒的——但仍需 ``material_code``
+    （专用箱/シール/封筒 上的二维码）。
+    """
     aid, item_id = _resolve_yahoo_todo(todo_id)
+    if _wants_app_path(size):
+        return await _ship_yahoo_todo_via_app(
+            todo_id,
+            aid,
+            item_id,
+            item_name=item_name,
+            size=size,
+            material_code=material_code,
+            dry_run=dry_run,
+        )
+
     result = await ship_yahoo_item(
         aid,
         item_id=item_id,
@@ -121,19 +203,63 @@ async def ship_yahoo_todo(
     if not result.get("submitted"):
         return result
 
-    # 复用煤炉的「发行发货码 = 已打包」口径（订单与待办按 order_no == item_id 关联）
-    try:
-        from ...use_mercari.get_to_du_list.transaction_detail._cache import _mark_order_packed
-
-        _mark_order_packed(DatabaseManager(), int(todo_id))
-    except Exception as exc:  # noqa: BLE001
-        log.warning("[yahoo_trade] 记录打包时间失败 todo_id=%s：%s", todo_id, exc)
-
+    _mark_packed(int(todo_id))
     result["order_refresh"] = await _refresh_order_after_ship(aid, item_id)
     state = result.get("state")
     if isinstance(state, dict):
         state["todo_id"] = int(todo_id)
         _cache_detail(int(todo_id), state)
+    return result
+
+
+async def _ship_yahoo_todo_via_app(
+    todo_id: int,
+    account_id: int,
+    item_id: str,
+    *,
+    item_name: str,
+    size: str,
+    material_code: str,
+    dry_run: bool,
+) -> Dict[str, Any]:
+    """投函型发货：发行配送コード + 绑材料码。**不做発送通知**——那要等真的投进邮筒。
+
+    这里不刷新订单状态：雅虎侧要到発送通知之后才算已发货，提前刷一次只会把「待发货」原样
+    再写一遍，白开一次浏览器。打包时间照记，口径与网页那条路一致（发行配送码 = 已打包）。
+    """
+    result = await ship_via_app(
+        account_id,
+        item_id=item_id,
+        ship_method=size,
+        item_name=item_name,
+        material_code=material_code,
+        dry_run=dry_run,
+    )
+    result["todo_id"] = int(todo_id)
+    if not result.get("submitted"):
+        return result
+    _mark_packed(int(todo_id))
+    return result
+
+
+async def notify_yahoo_todo_shipped(todo_id: int) -> Dict[str, Any]:
+    """投函型发货的第二步：确认已投进邮筒，通知买家发货，并刷新本地订单状态。"""
+    aid, item_id = _resolve_yahoo_todo(todo_id)
+    result = await notify_shipped_via_app(aid, item_id=item_id)
+    result["todo_id"] = int(todo_id)
+    result["order_refresh"] = await _refresh_order_after_ship(aid, item_id)
+    return result
+
+
+async def check_yahoo_todo_material_code(
+    todo_id: int, *, size: str, material_code: str
+) -> Dict[str, Any]:
+    """扫完专用箱/シール 的二维码先验一次，别等到提交时才发现是用过的那张。"""
+    aid, item_id = _resolve_yahoo_todo(todo_id)
+    result = await check_material_code_for_item(
+        aid, item_id=item_id, ship_method=size, material_code=material_code
+    )
+    result["todo_id"] = int(todo_id)
     return result
 
 
