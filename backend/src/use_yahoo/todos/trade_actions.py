@@ -32,7 +32,6 @@ from ...web_drive.yahoo_trade import (
 )
 from ..app_api import (
     YahooAppApiError,
-    check_material_code_for_item,
     fetch_app_ship_state,
     get_token_status,
     is_post_box_method,
@@ -222,10 +221,14 @@ async def _ship_yahoo_todo_via_app(
     material_code: str,
     dry_run: bool,
 ) -> Dict[str, Any]:
-    """投函型发货：发行配送コード + 绑材料码。**不做発送通知**——那要等真的投进邮筒。
+    """投函型发货：发行配送コード + 绑材料码，**紧接着直接発送通知**。
 
-    这里不刷新订单状态：雅虎侧要到発送通知之后才算已发货，提前刷一次只会把「待发货」原样
-    再写一遍，白开一次浏览器。打包时间照记，口径与网页那条路一致（发行配送码 = 已打包）。
+    与煤炉同一颗粒度：扫完码点一次就走完，不让用户再回来点一次「通知发货」。
+    代价是**通知发在投函之前**——买家的受取期限从通知那一刻起算，所以提交后要尽快投函。
+    （雅虎 App 自己是分两步引导的，这里是按本项目的作业方式合并的。）
+
+    通知失败不回滚：配送コード已经发行且不可撤回，此时只把 ``ship_notified`` 留成 False 并
+    带上 ``notify_error``，详情面板据此仍显示「已投函，通知发货」按钮供手动补发。
     """
     result = await ship_via_app(
         account_id,
@@ -239,27 +242,32 @@ async def _ship_yahoo_todo_via_app(
     if not result.get("submitted"):
         return result
     _mark_packed(int(todo_id))
+
+    try:
+        notified = await notify_shipped_via_app(account_id, item_id=item_id)
+        result["ship_notified"] = True
+        if isinstance(notified.get("state"), dict):
+            result["state"] = notified["state"]
+    except (YahooAppApiError, ValueError) as exc:
+        result["notify_error"] = str(exc)[:200]
+        log.warning(
+            "[yahoo_trade] 配送コード已发行但発送通知失败 item_id=%s：%s（可在详情面板手动补发）",
+            item_id, exc,
+        )
+        return result
+
+    # 通知过了雅虎才把交易挪出「待发货」，这时刷新订单状态才有意义
+    result["order_refresh"] = await _refresh_order_after_ship(account_id, item_id)
     return result
 
 
 async def notify_yahoo_todo_shipped(todo_id: int) -> Dict[str, Any]:
-    """投函型发货的第二步：确认已投进邮筒，通知买家发货，并刷新本地订单状态。"""
+    """単独補発発送通知：正常路径下发货时已经通知过了，这里是**通知失败后的手动补发口**
+    （详情面板只在 ``is_ship_code_created && !ship_notified`` 时才显示那个按钮）。"""
     aid, item_id = _resolve_yahoo_todo(todo_id)
     result = await notify_shipped_via_app(aid, item_id=item_id)
     result["todo_id"] = int(todo_id)
     result["order_refresh"] = await _refresh_order_after_ship(aid, item_id)
-    return result
-
-
-async def check_yahoo_todo_material_code(
-    todo_id: int, *, size: str, material_code: str
-) -> Dict[str, Any]:
-    """扫完专用箱/シール 的二维码先验一次，别等到提交时才发现是用过的那张。"""
-    aid, item_id = _resolve_yahoo_todo(todo_id)
-    result = await check_material_code_for_item(
-        aid, item_id=item_id, ship_method=size, material_code=material_code
-    )
-    result["todo_id"] = int(todo_id)
     return result
 
 

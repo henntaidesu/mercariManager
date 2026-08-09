@@ -506,11 +506,15 @@ soft-delete, inventory counters and order upsert semantics stay identical across
     `POST /v2/items/{itemId}/shipcode` → `POST /v3/items/{itemId}/shipping`.
     `postage.method` is the `ShipMethod` enum name (`JP_YUPACKET_POST`…) and `postage.vendor` the
     `ShipVendor` name (`JAPAN_POST`); the enum ↔ 日文名 table lives in `app_api/trade.py`.
-  - **発行配送コード and 発送通知 are deliberately two steps.** Yahoo's post-box flow is
-    「発行 → 郵便ポストに投函 → 発送通知」; merging them tells the buyer "shipped" while the parcel is
-    still in your hand, and their 受取期限 starts from the notification. `/yahoo/ship` does the first,
-    `/yahoo/notify-shipped` the second. 打包时间 is recorded at the first (same 口径 as the web path);
-    the order status refresh happens at the second, because that is when Yahoo actually moves it.
+  - **発行配送コード and 発送通知 are merged into one action, by request.** Yahoo's own app guides
+    「発行 → 郵便ポストに投函 → 発送通知」, and splitting them is the safer reading — merging tells the
+    buyer "shipped" while the parcel is still in hand and starts their 受取期限. The operator here
+    scans the code immediately before posting, so `_ship_yahoo_todo_via_app` issues the code and
+    then notifies in the same call. **A failed notice never rolls back** the (irreversible) code
+    issue: it returns `ship_notified: false` + `notify_error`, and the panel keeps a
+    「补发发货通知」 button wired to `/yahoo/notify-shipped`, which now exists only for that retry.
+    打包时间 is recorded at the code issue (same 口径 as the web path); the order status refresh
+    happens after the notice, because that is when Yahoo actually moves the trade.
   - **`SAME` from the material-code check is a failure, not a warning** — that 専用箱/シール has
     already been bound to another trade, and reusing it misroutes the parcel.
   - **Login is in-app, and Yahoo has no credential API — stop looking for one.** Every
@@ -561,16 +565,19 @@ soft-delete, inventory counters and order upsert semantics stay identical across
     trade is still `WAIT_FOR_SELLER_SHIP`. **Which branch the third step takes is the same split as
     the backend's**: post-box → `yqr` → App API; the other three → `ylocation` → page automation.
     Don't reuse Mercari's `size`/`facility` steps — they read a hard-coded Mercari size table.
-  - **The material code is photographed with the device camera, never typed.** The `yqr` step
-    reuses Mercari's capture machinery verbatim (`qrVideoEl` / `qrShot` / `openQrCamera` /
-    `takeQrShot`); only the submit differs. `/yahoo/scan-material-code` reuses `qr_photo.decode_qr`
-    (zxing-cpp) and then verifies in the same call, so one round trip answers "is this code usable".
-    Note the semantic difference from Mercari: there the decode is only a "is the photo sharp
-    enough" check and the image is replayed into Mercari's own scanner;
-    **here the decoded text *is* the material code** and goes straight to Yahoo. Yahoo answers a
-    malformed code with **HTTP 400, not `status: NG`** — `check_material_code` folds a 400 into
-    `NG` so scanning the wrong barcode reads as "that's not the shipping code" instead of a raw
-    gateway dump.
+  - **The material code is photographed, and the photo rides along with the ship request.**
+    The `yqr` step reuses Mercari's capture machinery verbatim (`qrVideoEl` / `qrShot` /
+    `openQrCamera` / `takeQrShot`) and, like Mercari's post-box flow, submits straight from the
+    shot — no separate verify button and no confirm dialog. `yahoo_ship_endpoint` decodes the
+    image with `qr_photo.decode_qr` (zxing-cpp); `ship_via_app` then checks the code against Yahoo
+    *before* the irreversible `POST /shipcode`, so the guard is still there, just not a user step.
+  - **The QR payload is not the material code.** It reads
+    `PYP:01/JT2603CAAAAAA00645638626DH62WS;` — Yahoo wants only the 30 chars in the middle.
+    `parse_material_code` applies the app's own regex verbatim
+    (`^PYP:[0-9]{2}/([0-9a-zA-Z]{30});$`, APK `he/o1.java`) and takes group 1; sending the whole
+    string gets a flat rejection with no hint why. It is idempotent, so an already-extracted code
+    passes through unchanged. Yahoo also answers a malformed code with **HTTP 400, not
+    `status: NG`** — `check_material_code` folds a 400 into `NG`.
 - `use_yahoo/orders/batch_refresh.py` — 订单「更新状态」的雅虎实现（逐条重读交易页）。
   `OrderModel.find_for_batch_info_refresh` now takes `platform`; without it the Mercari
   `transaction_evidences` batch would pick up `z…` orders and open Mercari transaction pages that

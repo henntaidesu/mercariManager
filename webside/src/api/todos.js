@@ -84,12 +84,9 @@ export const todosApi = {
   yahooTradeDetail: (todoId, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/yahoo/trade-detail`, {}, { timeout: 0, ...axiosConfig }),
   /** 提交发货信息并发行配送コード（dry_run 只校验不提交）。
-   *  尺寸为 ゆうパケットポスト / mini 时后端自动改走 App API，需一并传 material_code */
+   *  尺寸为 ゆうパケットポスト / mini 时后端自动改走 App API，需一并传 material_image（二维码照片） */
   yahooShip: (todoId, body = {}, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/yahoo/ship`, body || {}, { timeout: 0, ...axiosConfig }),
-  /** 投函型发货：上传一张含二维码的图片，后端解码成材料码并当场校验 */
-  yahooScanMaterialCode: (todoId, body = {}, axiosConfig = {}) =>
-    http.post(`/use_web/todos/${encodeURIComponent(todoId)}/yahoo/scan-material-code`, body || {}, { timeout: 60000, ...axiosConfig }),
   /** 投函型发货第二步：确认已投进邮筒，通知买家发货 */
   yahooNotifyShipped: (todoId, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/yahoo/notify-shipped`, {}, { timeout: 0, ...axiosConfig }),

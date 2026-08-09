@@ -378,21 +378,14 @@ export default defineComponent({
       },
     }
 
-    const yahooForm = reactive({ item_name: '', size: '', location: '', material_code: '' })
+    const yahooForm = reactive({ item_name: '', size: '', location: '' })
     const yahooShipLoading = ref(false)
     const yahooNotifyLoading = ref(false)
 
-    // ── 投函型：与煤炉一样用本机摄像头拍一张二维码照片，后端解码成材料码并当场校验 ──
-    // 取景/拍照/重拍复用煤炉那套（qrVideoEl / qrShot / openQrCamera / takeQrShot），
-    // 只有「提交」这一步不同：煤炉把图喂给自己的扫描器，雅虎解出来的文本就是材料码。
-    const yahooQrScanning = ref(false)
-    const yahooQrResult = ref(null)   // { ok, status, message, material_code }
-
-    function resetYahooQrScan() {
-      yahooQrScanning.value = false
-      yahooQrResult.value = null
-      yahooForm.material_code = ''
-    }
+    // ── 投函型：与煤炉一样用本机摄像头拍一张二维码照片，拍完直接提交 ──
+    // 取景/拍照/重拍复用煤炉那套（qrVideoEl / qrShot / openQrCamera / takeQrShot）；
+    // 照片随发货请求一起发出，由后端解码取材料码。材料码可用与否在服务端发行前自动核验，
+    // 不作为用户步骤暴露——与煤炉的ゆうパケットポスト系「拍完即提交」一致。
 
     // 网页端的尺寸 + 只能走 App API 的投函型（ゆうパケットポスト / mini，配了令牌才出现）
     const yahooAppSizeOptions = computed(() => detail.yahoo_app?.extra_size_options || [])
@@ -429,18 +422,15 @@ export default defineComponent({
     )
     const canSubmitYahooShip = computed(() => {
       if (!yahooForm.item_name.trim() || !yahooForm.size) return false
-      return isYahooPostBoxSize.value
-        ? !!yahooForm.material_code.trim()
-        : !!yahooForm.location
+      return isYahooPostBoxSize.value ? !!qrShot.value : !!yahooForm.location
     })
     function resetYahooShipForm() {
       yahooForm.item_name = ''
       yahooForm.size = ''
       yahooForm.location = ''
-      yahooForm.material_code = ''
       yahooShipLoading.value = false
       yahooNotifyLoading.value = false
-      resetYahooQrScan() // 换一条待办必须清掉，否则上一单的码会跟过来
+      resetQrScanState() // 换一条待办必须清掉，否则上一单拍的照片会跟过来
     }
 
     // 「発送をしてください」反查到的本地库存（图片）与关联订单号
@@ -1981,7 +1971,7 @@ export default defineComponent({
         ElMessage.warning(t('todos.updateOrderFirst'))
         return
       }
-      resetYahooQrScan()
+      resetQrScanState()
       openShipFlow({ target: 'yahoo', withPackaging: true })
     }
 
@@ -1991,16 +1981,17 @@ export default defineComponent({
       const row = currentRow.value
       if (!row?.id || !canSubmitYahooShip.value || yahooShipLoading.value) return false
       const viaApp = isYahooPostBoxSize.value
-      try {
-        await ElMessageBox.confirm(
-          viaApp
-            ? t('todos.yahoo.confirmShipPostBox', { size: yahooForm.size })
-            : t('todos.yahoo.confirmShip', { size: yahooForm.size, location: yahooForm.location }),
-          t('todos.yahoo.confirmTitle'),
-          { type: 'warning' },
-        )
-      } catch {
-        return false
+      // 投函型不弹二次确认：与煤炉的ゆうパケットポスト系一样，拍完照点一次就走完
+      if (!viaApp) {
+        try {
+          await ElMessageBox.confirm(
+            t('todos.yahoo.confirmShip', { size: yahooForm.size, location: yahooForm.location }),
+            t('todos.yahoo.confirmTitle'),
+            { type: 'warning' },
+          )
+        } catch {
+          return false
+        }
       }
       // 发行配送码后雅虎侧不可撤回：出发前先确认所选包材仍存在且库存足够
       if (!(await validatePackagingBeforeShip())) return false
@@ -2010,7 +2001,7 @@ export default defineComponent({
           item_name: yahooForm.item_name.trim(),
           size: yahooForm.size,
           location: viaApp ? '' : yahooForm.location,
-          material_code: viaApp ? yahooForm.material_code.trim() : '',
+          material_image: viaApp ? qrShot.value : '',
         })
         // submitted 只代表「点到了发行按钮」。网页那条路后端会回读页面，读不到配送コード图片时
         // 给出 code_uncertain —— 这时不能报成功：既不知道配送码是否真的发行，也就不该顺势
@@ -2021,12 +2012,17 @@ export default defineComponent({
           if (data?.state) applyYahooDetail(data.state)
           return false
         }
-        ElMessage.success(viaApp ? t('todos.yahoo.shippedPostBox') : t('todos.yahoo.shipped'))
+        // 投函型的発送通知已随发货一起发出；只有它没发成时才需要提示用户去补发
+        if (viaApp && data.notify_error) ElMessage.warning(t('todos.yahoo.notifyFailed'))
+        else ElMessage.success(viaApp ? t('todos.yahoo.shippedPostBox') : t('todos.yahoo.shipped'))
         // App 那条路返回的 state 是 App 视角的发货状态，不是网页交易页详情，别喂给 applyYahooDetail。
-        // 发行后的回读可能失败（state_error）——那时也必须把「已发行、待通知」立起来，
-        // 否则「已投函，通知发货」按钮不出现，配送码发了却没法完成发货。
+        // 发行后的回读可能失败（state_error）——那时按响应里的 ship_notified 立状态，
+        // 否则通知明明发出去了却还挂着「补发发货通知」按钮。
         if (viaApp) {
-          detail.yahoo_app = data.state || { is_ship_code_created: true, ship_notified: false }
+          detail.yahoo_app = data.state || {
+            is_ship_code_created: true,
+            ship_notified: !!data.ship_notified,
+          }
         } else if (data.state) {
           applyYahooDetail(data.state)
         }
@@ -2079,10 +2075,7 @@ export default defineComponent({
      *  ポスト系（ゆうパケットポスト / mini）网页端根本没有这两项，走 App API + 扫二维码；
      *  其余三种仍是网页模拟，需要选発送場所。 */
     async function onPickYahooSize(size) {
-      if (yahooForm.size !== size) {
-        resetYahooQrScan() // 换尺寸后原来那张码不再适用
-        resetQrScanState() // 连同上一次拍的照片一起丢掉
-      }
+      if (yahooForm.size !== size) resetQrScanState() // 换尺寸后原来那张码不再适用
       yahooForm.size = size
       yahooForm.location = ''
       if (!isYahooPostBoxSize.value) {
@@ -2091,38 +2084,6 @@ export default defineComponent({
       }
       shippingStep.value = 'yqr'
       await openQrCamera() // 内部已 nextTick，等 video 元素挂上再取流
-    }
-
-    /** 提交拍下的二维码照片：后端解码 → 当场向雅虎校验，一次往返给出能不能用 */
-    async function submitYahooQrShot() {
-      const row = currentRow.value
-      if (!row?.id || !qrShot.value || yahooQrScanning.value) return
-      yahooQrResult.value = null
-      yahooQrScanning.value = true
-      try {
-        const data = await todosApi.yahooScanMaterialCode(row.id, {
-          image: qrShot.value,
-          size: yahooForm.size,
-        })
-        yahooQrResult.value = data
-        // 只有雅虎回 OK 才把材料码填进表单——SAME（已用过）/ NG 都不能拿去发货
-        yahooForm.material_code = data?.ok ? String(data.material_code || '') : ''
-        if (data?.ok) ElMessage.success(t('todos.yahoo.materialCodeOk'))
-        else ElMessage.warning(data?.message || t('todos.yahoo.materialCodeNg'))
-      } catch (e) {
-        yahooQrResult.value = null
-        yahooForm.material_code = ''
-        if (!e?.response) ElMessage.error(e?.message || t('todos.yahoo.qrDecodeFailed'))
-      } finally {
-        yahooQrScanning.value = false
-      }
-    }
-
-    /** 重拍：丢掉照片与上一次的校验结果，重新取景 */
-    async function retakeYahooQrShot() {
-      yahooQrResult.value = null
-      yahooForm.material_code = ''
-      await retakeQrShot()
     }
 
     /** 向导最后一页的「発行配送码」：成功即关闭向导 */
@@ -2875,11 +2836,7 @@ export default defineComponent({
       yahooAppSizeOptions,
       yahooSizeCards,
       onPickYahooSize,
-      submitYahooQrShot,
-      retakeYahooQrShot,
       onConfirmYahooShip,
-      yahooQrScanning,
-      yahooQrResult,
       syncLoading,
       bulkReviewLoading,
       bulkConfirmShipLoading,

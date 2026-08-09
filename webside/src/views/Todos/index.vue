@@ -1141,11 +1141,6 @@
       <!-- ── 雅虎第 3 步（投函型）：与煤炉拍照页同一形态——本机摄像头拍一张专用箱/シール/封筒
            上的二维码，后端解码成材料码并当场向雅虎校验。取景/拍照/重拍复用煤炉那套。 ── -->
       <div v-else-if="shippingStep === 'yqr'" class="qr-scan-step">
-        <!-- 把所选尺寸摆在最显眼处：mini 与非 mini 的材料码互不通用，选错了雅虎会直接拒，
-             而拒绝信息里看不出是尺寸选错还是码有问题 -->
-        <div class="yqr-size-bar">
-          {{ t('todos.yahoo.qrForSize', { size: yahooForm.size }) }}
-        </div>
         <div class="qr-scan-stage">
           <video
             v-show="!qrShot"
@@ -1160,19 +1155,7 @@
             {{ t('todos.cameraOpenFailed') }}: {{ qrCamError }}
           </div>
         </div>
-        <div class="qr-scan-tip">
-          {{ qrShot ? t('todos.yahoo.qrShotTip') : t('todos.yahoo.qrAimTip') }}
-        </div>
-        <div v-if="yahooQrResult" class="yship-qr-status">
-          <el-tag :type="yahooQrResult.ok ? 'success' : 'danger'" size="small" effect="light">
-            {{ yahooQrResult.ok ? t('todos.yahoo.materialCodeOk') : (yahooQrResult.message || t('todos.yahoo.materialCodeNg')) }}
-          </el-tag>
-          <!-- 读到的原文不论通过与否都显示：码本身没问题却被拒时，看一眼原文就知道
-               是「解出来的不是材料码」还是别的原因，不必对着一张好码反复重拍 -->
-          <span v-if="yahooQrResult.material_code" class="yship-qr-code">
-            {{ t('todos.yahoo.qrDecoded', { text: yahooQrResult.material_code }) }}
-          </span>
-        </div>
+        <div v-if="!qrShot" class="qr-scan-tip">{{ t('todos.yahoo.qrAimTip') }}</div>
         <div class="qr-scan-actions">
           <el-button
             v-if="!qrShot"
@@ -1181,20 +1164,13 @@
             @click="takeQrShot"
           >{{ t('todos.qrTakeShot') }}</el-button>
           <template v-else>
-            <el-button @click="retakeYahooQrShot">{{ t('todos.qrRetake') }}</el-button>
-            <!-- 还没校验通过就先验码；通过后按钮变成「発行配送码」 -->
+            <el-button @click="retakeQrShot">{{ t('todos.qrRetake') }}</el-button>
+            <!-- 拍完直接提交：照片随请求发出，材料码可用与否由服务端在发行前核验 -->
             <el-button
-              v-if="!canSubmitYahooShip"
-              type="primary"
-              :loading="yahooQrScanning"
-              @click="submitYahooQrShot"
-            >{{ t('todos.yahoo.qrVerify') }}</el-button>
-            <el-button
-              v-else
               type="primary"
               :loading="yahooShipLoading"
               @click="onConfirmYahooShip"
-            >{{ t('todos.yahoo.submitShip') }}</el-button>
+            >{{ t('todos.yahoo.submitShipPostBox') }}</el-button>
           </template>
         </div>
       </div>

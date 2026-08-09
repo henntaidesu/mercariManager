@@ -121,22 +121,11 @@ class YahooShipRequest(PydanticModel):
     item_name: str = Field(..., min_length=1, max_length=17)
     size: str = Field(..., min_length=1, max_length=60)
     location: str = ""
-    # 专用箱 / 発送用シール / 専用封筒 上二维码的内容（仅投函型需要）
-    material_code: str = Field("", max_length=200)
+    # 专用箱 / 発送用シール / 専用封筒 上二维码的**照片**（data URL，仅投函型需要）。
+    # 由后端解码并提取材料码——与煤炉一样「拍完即提交」，不让用户多按一次校验。
+    material_image: str = ""
     # 只填表校验、不点「配送コードを表示する」
     dry_run: bool = False
-
-
-class YahooScanMaterialCodeRequest(PydanticModel):
-    """上传一张含二维码的图片，后端解码成材料码并当场校验。
-
-    与煤炉的发货扫码不同：煤炉解出的文本只用来判断「照片拍清楚了没」，真正推进流程要把图
-    喂给煤炉自己的扫描器；雅虎这边**解出来的文本就是材料码本身**，直接进后续接口。
-    """
-
-    #: 图片 data URL（前端已压到合理尺寸）
-    image: str = Field(..., min_length=1)
-    size: str = Field(..., min_length=1, max_length=60)
 
 
 class YahooTradeMessageRequest(PydanticModel):

@@ -14,9 +14,7 @@ from typing import Any, Dict
 
 from fastapi import HTTPException
 
-from .....use_yahoo.app_api import YahooAppApiError
 from .....use_yahoo.todos import (
-    check_yahoo_todo_material_code,
     fetch_yahoo_todo_detail,
     finish_yahoo_wait_reply_todo,
     get_cached_yahoo_todo_detail,
@@ -28,11 +26,7 @@ from .....web_drive.core.account_serial_queue import (
     queue_key_for_mercari_account,
     run_mercari_serial_async,
 )
-from ..todos_models import (
-    YahooScanMaterialCodeRequest,
-    YahooShipRequest,
-    YahooTradeMessageRequest,
-)
+from ..todos_models import YahooShipRequest, YahooTradeMessageRequest
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +88,19 @@ async def yahoo_ship_endpoint(todo_id: int, req: YahooShipRequest) -> Dict[str, 
     if not via_app and not (req.location or "").strip():
         raise HTTPException(status_code=400, detail="発送場所未选择")
 
+    # 投函型：材料码从照片里解出来。解不出就地拦下——拿一个空码去发行只会得到含糊的错。
+    material_code = ""
+    if via_app:
+        from .qr_photo import decode_qr
+
+        if not (req.material_image or "").strip():
+            raise HTTPException(status_code=400, detail="请先拍摄专用箱/シール/封筒 上的二维码")
+        material_code = decode_qr(req.material_image) or ""
+        if not material_code:
+            raise HTTPException(
+                status_code=400, detail="没能从照片里读出二维码，请重拍一张更清晰的"
+            )
+
     return await _run(
         todo_id,
         lambda: ship_yahoo_todo(
@@ -101,7 +108,7 @@ async def yahoo_ship_endpoint(todo_id: int, req: YahooShipRequest) -> Dict[str, 
             item_name=req.item_name,
             size=req.size,
             location=req.location,
-            material_code=req.material_code,
+            material_code=material_code,
             dry_run=bool(req.dry_run),
         ),
     )
@@ -110,37 +117,6 @@ async def yahoo_ship_endpoint(todo_id: int, req: YahooShipRequest) -> Dict[str, 
 async def yahoo_notify_shipped_endpoint(todo_id: int) -> Dict[str, Any]:
     """投函型发货的第二步：确认已投进邮筒后通知买家发货。"""
     return await _run(todo_id, lambda: notify_yahoo_todo_shipped(int(todo_id)))
-
-
-async def yahoo_scan_material_code_endpoint(
-    todo_id: int, req: YahooScanMaterialCodeRequest
-) -> Dict[str, Any]:
-    """上传的图片 → 解出二维码 → 当场校验，一次调用给出能不能用。
-
-    解不出直接 400 让用户重拍/换图，不往下走：拿一个空材料码去调雅虎只会得到一个更含糊的错。
-    """
-    from .qr_photo import decode_qr
-
-    code = decode_qr(req.image)
-    if not code:
-        raise HTTPException(status_code=400, detail="没能从图片里读出二维码，请换一张更清晰的")
-    try:
-        result = await check_yahoo_todo_material_code(
-            int(todo_id), size=req.size, material_code=code
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except YahooAppApiError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    result["material_code"] = code
-    # 被拒时把读到的原文一并回传：码没问题却被拒，多半是「解出来的文本 ≠ 材料码」
-    # （二维码可能编的是 URL），只报一句「不可用」会让人反复重拍一张本来就没问题的码。
-    if not result.get("ok"):
-        log.warning(
-            "[yahoo_trade] 材料码被拒 todo_id=%s size=%s status=%s 读到的原文=%r",
-            todo_id, req.size, result.get("status"), code,
-        )
-    return result
 
 
 async def yahoo_trade_message_endpoint(

@@ -15,7 +15,6 @@ from ._client import (
 )
 from .oauth import build_authorization_request, login_yahoo_app_account
 from .ship import (
-    check_material_code_for_item,
     fetch_app_ship_state,
     notify_shipped_via_app,
     ship_via_app,
@@ -24,6 +23,7 @@ from .trade import (
     JAPAN_POST_SHIP_METHODS,
     POST_BOX_SHIP_METHODS,
     is_post_box_method,
+    parse_material_code,
     resolve_ship_method,
 )
 
@@ -33,13 +33,13 @@ __all__ = [
     "YahooAppApiError",
     "YahooAppTokenMissing",
     "build_authorization_request",
-    "check_material_code_for_item",
     "clear_token",
     "fetch_app_ship_state",
     "get_token_status",
     "is_post_box_method",
     "login_yahoo_app_account",
     "notify_shipped_via_app",
+    "parse_material_code",
     "resolve_ship_method",
     "save_token",
     "ship_via_app",

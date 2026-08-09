@@ -6,9 +6,30 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional, Tuple
 
 from ._client import SPARKLE_SECURE_BASE, YahooAppApiError, api_request
+
+#: 専用箱/シール/封筒 上二维码的载荷格式，例：``PYP:01/JT2603CAAAAAA00645638626DH62WS;``
+#: **材料码是中间那 30 位，不是整串原文**——原样送过去雅虎一律拒绝。
+#: 正则与 App 里的一字不差（APK ``he/o1.java``），组 1 即 App 送去校验的值。
+_QR_PAYLOAD_RE = re.compile(r"^PYP:[0-9]{2}/([0-9a-zA-Z]{30});$")
+_BARE_CODE_RE = re.compile(r"^[0-9a-zA-Z]{30}$")
+
+
+def parse_material_code(raw: str) -> str:
+    """二维码原文 → 材料码。已经是提取过的 30 位裸码时原样返回（幂等）。"""
+    text = (raw or "").strip()
+    m = _QR_PAYLOAD_RE.match(text)
+    if m:
+        return m.group(1)
+    if _BARE_CODE_RE.match(text):
+        return text
+    raise ValueError(
+        "这不是 ゆうパケットポスト 系的発送用二维码"
+        "（専用箱/発送用シール/専用封筒 上「ご利用のアプリで読み取る」的那一个）"
+    )
 
 #: ``ShipMethod`` 枚举名 → 页面/前端用的日文名（APK ``core_entity/ShipMethod.java``）。
 #: 只列日本郵便的五种：ヤマト 那三种网页端本来就能发，没必要走 App 路。

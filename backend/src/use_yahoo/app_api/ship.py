@@ -25,6 +25,7 @@ from .trade import (
     fetch_trade_seller,
     is_post_box_method,
     notify_shipped,
+    parse_material_code,
     resolve_ship_method,
     resolve_trade_ids,
 )
@@ -96,7 +97,7 @@ async def ship_via_app(
     name = (item_name or "").strip()[:CONTENTS_NAME_MAX_LEN]
     if not name:
         raise ValueError("品名不能为空（雅虎必填）")
-    code = (material_code or "").strip()
+    code = parse_material_code(material_code) if (material_code or "").strip() else ""
     if is_post_box_method(method) and not code:
         raise ValueError(
             f"「{JAPAN_POST_SHIP_METHODS[method]}」必须先扫描专用箱/シール 上的二维码并填入材料码"
@@ -211,36 +212,3 @@ async def notify_shipped_via_app(
         log.warning("[yahoo_app] %s 発送通知后回读失败：%s", item_id, exc)
         out["state_error"] = str(exc)[:200]
     return out
-
-
-async def check_material_code_for_item(
-    account_id: int, *, item_id: str, ship_method: str, material_code: str
-) -> Dict[str, Any]:
-    """单独校验一次材料码（扫完码先验一下，别等到提交时才发现是用过的）。"""
-    method = resolve_ship_method(ship_method)
-    code = (material_code or "").strip()
-    if not code:
-        raise ValueError("材料码不能为空")
-    seller = await fetch_trade_seller(int(account_id), item_id)
-    seller_id, buyer_id, order_id = resolve_trade_ids(seller)
-    status = await check_material_code(
-        int(account_id),
-        item_id=item_id,
-        seller_id=seller_id,
-        buyer_id=buyer_id,
-        order_id=order_id,
-        ship_method=method,
-        material_code=code,
-    )
-    messages = {
-        "OK": "",
-        "SAME": "这张专用箱/シール 的二维码已经用过了，请换一张未使用的",
-        "NG": "这不是可用的专用箱/シール 二维码，请确认扫的是发货用的那一张",
-    }
-    return {
-        "item_id": str(item_id).strip(),
-        "ship_method": method,
-        "status": status,
-        "ok": status == "OK",
-        "message": messages.get(status, messages["NG"]),
-    }
