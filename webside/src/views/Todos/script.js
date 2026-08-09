@@ -59,6 +59,19 @@ export default defineComponent({
     // 已发送状态下输入框 placeholder（与煤炉一致）
     const REPLY_PLACEHOLDER_SHIPPED = 'お待たせしていた商品の発送が完了しました。到着まで今しばらくお待ちください。'
     const DEFAULT_REVIEW = 'この度はお取引ありがとうございました。また機会がありましたらよろしくお願いします。'
+    // 评价模板：与煤炉取引評価上方的两颗 chip（取引への感謝 / スムーズな対応）一一对应，
+    // 点一下替换评价正文。煤炉那两颗的正文由服务端下发、拿不到，这里用等价的日文模板。
+    const REVIEW_TEMPLATES = [
+      { key: 'thanks', labelKey: 'todos.reviewTplThanks', text: DEFAULT_REVIEW },
+      {
+        key: 'smooth',
+        labelKey: 'todos.reviewTplSmooth',
+        text: 'スムーズなお取引ありがとうございました。またの機会がありましたらよろしくお願いいたします。',
+      },
+    ]
+    // 「残念だった」的评论字数下限，与页面校验（残念だった評価には10文字以上の記入が必要です）
+    // 同口径；后端 REVIEW_BAD_MIN_LEN 再拦一次，避免白开一趟浏览器
+    const REVIEW_BAD_MIN_LEN = 10
 
     // 「発送をしてください」（待发货）待办：处理时按商品 ID 反查本地库存图片与关联订单号
     const WAIT_SHIPPING_TITLE = '発送をしてください'
@@ -815,6 +828,8 @@ export default defineComponent({
         reply_draft: '',
         // 评价草稿（仅 ReviewedSeller 用，预填默认评价）
         review_draft: DEFAULT_REVIEW,
+        // 取引評価单选，与页面 input[name="fame"] 同口径：good=良かった（页面默认）/ bad=残念だった
+        review_rating: 'good',
       }
     }
 
@@ -867,6 +882,13 @@ export default defineComponent({
       const kind = (currentRow.value?.kind || '').trim()
       const title = (currentRow.value?.title || '').trim()
       return kind === 'ReviewedSeller' && title === '評価をしてください'
+    })
+
+    // 评价可否提交：良かった 的评论是任意项（页面注脚「コメントはなくてもかまいません」），
+    // 残念だった 必须写够 REVIEW_BAD_MIN_LEN 字
+    const canSubmitReview = computed(() => {
+      if (detail.review_rating !== 'bad') return true
+      return (detail.review_draft || '').trim().length >= REVIEW_BAD_MIN_LEN
     })
 
     // 「待回复」：处理面板只展示消息流与回复，不显示发货相关操作
@@ -2632,15 +2654,16 @@ export default defineComponent({
       }
     }
 
-    function onResetReviewDefault() {
-      detail.review_draft = DEFAULT_REVIEW
+    function onPickReviewTemplate(tpl) {
+      detail.review_draft = tpl.text
     }
 
     async function onSubmitReview() {
       if (!currentRow.value?.id) return
       const text = (detail.review_draft || '').trim()
-      if (!text) {
-        ElMessage.warning(t('todos.reviewEmpty'))
+      const rating = detail.review_rating === 'bad' ? 'bad' : 'good'
+      if (rating === 'bad' && text.length < REVIEW_BAD_MIN_LEN) {
+        ElMessage.warning(t('todos.reviewBadTooShort'))
         return
       }
       reviewLoading.value = true
@@ -2650,7 +2673,10 @@ export default defineComponent({
           consoleTag: '[提交评价]',
           pollFn: (jobId) => todosApi.getSyncProgress(jobId),
           actionFn: (jobId) =>
-            todosApi.submitTransactionReview(currentRow.value.id, text, { progress_job_id: jobId }),
+            todosApi.submitTransactionReview(currentRow.value.id, text, {
+              rating,
+              progress_job_id: jobId,
+            }),
         })
         if (result?.completed) {
           const note = result.order_refresh_error
@@ -2775,6 +2801,7 @@ export default defineComponent({
       KIND_LABEL_KEYS,
       DEFAULT_REPLY,
       DEFAULT_REVIEW,
+      REVIEW_TEMPLATES,
       SHIPPING_OPTIONS,
       KIND_TAG_TYPES,
       list,
@@ -2836,6 +2863,7 @@ export default defineComponent({
       Minus,
       replyLoading,
       reviewLoading,
+      canSubmitReview,
       reactionLoading,
       REACTION_OPTIONS,
       REACTION_EMOJI_BY_KEY,
@@ -2946,7 +2974,7 @@ export default defineComponent({
       onSendReply,
       finishReplyLoading,
       onFinishYahooReply,
-      onResetReviewDefault,
+      onPickReviewTemplate,
       onSubmitReview,
       onSendReaction,
       onDetailDialogClose,

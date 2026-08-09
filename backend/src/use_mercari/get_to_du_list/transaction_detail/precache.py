@@ -31,7 +31,12 @@ log = logging.getLogger(__name__)
 _DEFAULT_MAX_PER_RUN = 20
 
 
-def _max_per_run() -> int:
+def precache_max_per_run() -> int:
+    """单次预缓存的条数上限（``TXDETAIL_PRECACHE_MAX_PER_RUN``）。
+
+    雅虎侧的交易详情预缓存（``use_yahoo/todos/precache.py``）共用同一个上限：两边抢的是
+    同一条全局串行 worker，各自设一套阈值只会让「一次同步最多占多久」不可预测。
+    """
     raw = (os.environ.get("TXDETAIL_PRECACHE_MAX_PER_RUN") or "").strip()
     if not raw:
         return _DEFAULT_MAX_PER_RUN
@@ -55,7 +60,7 @@ async def precache_uncached_todo_details(
     连续失败 ``PRECACHE_MAX_FAILURES`` 次后退出候选集合——否则一条永远抓不出来的待办会被
     每个自动同步 tick 重抓一次，成为永不收敛的串行阻塞开销。
     """
-    limit = _max_per_run()
+    limit = precache_max_per_run()
     todo_ids = list_uncached_detail_todo_ids(int(account_id), limit=limit)
     if not todo_ids:
         return 0, 0

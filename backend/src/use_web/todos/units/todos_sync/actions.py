@@ -126,7 +126,7 @@ async def confirm_shipping_selection_endpoint(
 async def submit_transaction_review_endpoint(
     todo_id: int, req: SubmitTransactionReviewRequest
 ) -> Dict[str, Any]:
-    """在已打开浏览器（取引評価页）填评价文本并点击提交按钮。"""
+    """打开取引評価页：选 良かった/残念だった → 填评价文本 → 点提交按钮。"""
     todo = TodoItemModel.find_by_id(id=int(todo_id))
     if not todo:
         raise HTTPException(status_code=404, detail="待办事项不存在")
@@ -137,7 +137,9 @@ async def submit_transaction_review_endpoint(
     try:
         return await run_mercari_serial_async(
             queue_key_for_mercari_account(aid),
-            lambda: submit_transaction_review(int(todo_id), req.text, progress_job_id=jid),
+            lambda: submit_transaction_review(
+                int(todo_id), req.text, rating=req.rating, progress_job_id=jid
+            ),
             suppress_idle_close=True,
         )
     except ValueError as exc:

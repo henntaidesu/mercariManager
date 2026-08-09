@@ -452,8 +452,17 @@ soft-delete, inventory counters and order upsert semantics stay identical across
   `fetch_and_store_shipping_durations` Mercari uses, dispatched on `platform=`. Unlike Mercari
   it re-tries every sync for any undeleted 発送依頼 still missing the value: Yahoo returns the
   full todo list each time and soft-deletes the rest, so the retry set is bounded by open trades.
-  This naming is also what keeps 一键好评 / 一键确认发送 / 详情预抓 off Yahoo rows for free — they all
-  filter on Mercari `kind`/`title` constants that no `Yahoo*` value matches.
+  This naming is also what keeps 一键好评 / 一键确认发送 and Mercari's 详情预抓 off Yahoo rows for
+  free — they all filter on Mercari `kind`/`title` constants that no `Yahoo*` value matches.
+  **Two sync entry points, and calling the wrong one just silently does less work**:
+  `sync_yahoo_todos` is the list-only form; `sync_yahoo_todos_with_details` is the twin of Mercari's
+  `sync_todos_with_details` and is what every sync caller uses (待办页同步 / 账号同步数据 /
+  自动获取循环) — list sync → precache each todo's trade page into `todo_items.detail_json`
+  (`use_yahoo/todos/precache.py`, only the two kinds that *have* a seller trade page; an unknown
+  `Yahoo:*` kind like `rsura`/商品の発送 is a **buyer**-side notice whose seller page doesn't exist)
+  → on a newly-inserted 発送依頼, link-sync 在售 + 订单 once. The precache shares Mercari's
+  `detail_fetch_failures` column, `PRECACHE_MAX_FAILURES` and `TXDETAIL_PRECACHE_MAX_PER_RUN`,
+  because both compete for the same single global worker.
 - `web_drive/yahoo_trade/` + `use_yahoo/todos/trade_actions.py` — the todo 処理 flow. The whole
   Yahoo transaction lives on one page, so this package splits by *action* (`_page` sheet/row
   primitives, `detail`, `ship`, `message`) rather than by page.
@@ -754,6 +763,15 @@ Three self-contained features that are easy to miss because nothing else depends
   sources 403** (`MERCARI_PROXY_ALLOW_LAN=0` narrows it back to this machine only). `/__inject` stays
   loopback-only on top of its `x-internal-secret`. Binding to loopback while the frontend points at a
   LAN IP was the original bug: the tab just failed to connect, with nothing in any log.
+  **Binding `0.0.0.0` costs a startup check that a loopback bind gave for free.** Windows lets
+  `0.0.0.0:P` coexist with an existing `127.0.0.1:P`, and routes each connection to the most specific
+  bind — so a stale mercari-proxy (backend killed without `stop_proxy`) keeps loopback while the new
+  process gets the LAN, and neither errors. `register_injection` goes to loopback but `/__boot` comes
+  from the LAN, so the cookies land in one process's memory and the boot token is looked up in the
+  other's: "injected N cookies" followed by 链接已失效 or a logged-out page. The old `EADDRINUSE`
+  check can't see this (nothing exits), so `start_proxy` now handshakes `/__ping` and compares the
+  answering **pid** against the process it just spawned, aborting with both pids named when they
+  differ. Never assume a listening port belongs to the process you just started.
   The self-signed cert already carries every local IPv4 in its SAN (`cert.py::_local_ips`), but it is
   generated **once** — if the host's IP later changes the browser shows a name-mismatch interstitial
   that has to be clicked through, or delete `backend/data/mercari_proxy/cert.pem`+`key.pem` to

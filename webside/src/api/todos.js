@@ -32,7 +32,8 @@ export const todosApi = {
   /** 对买家某条消息发送 emoji 反应（reaction_index = 在 is_buyer 消息中的索引） */
   sendMessageReaction: (todoId, payload, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/send-reaction`, payload, { timeout: 60000, ...axiosConfig }),
-  /** 在已开浏览器（取引評価页）填评价并点击「購入者を評価して取引完了する」 */
+  /** 取引評価页：选 rating（good=良かった / bad=残念だった）+ 填评价，
+   *  再点「購入者を評価して取引完了する」。rating 走 opts 传入 */
   submitTransactionReview: (todoId, text, opts = {}, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/submit-review`, { text, ...opts }, { timeout: 60000, ...axiosConfig }),
   /** 退货「确认签收」：点「返送された商品を受け取った」+ 二次确认「キャンセルを完了する」，

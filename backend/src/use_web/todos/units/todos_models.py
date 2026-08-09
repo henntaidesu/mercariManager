@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """待办事项 API 请求体（Pydantic）。"""
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel as PydanticModel, Field
 
@@ -81,7 +81,11 @@ class ShippingQrPhotoRequest(PydanticModel):
 
 
 class SubmitTransactionReviewRequest(PydanticModel):
-    text: str = Field(..., min_length=1, max_length=140)
+    #: 评价正文。「良かった」时可留空——页面注脚写明コメントは任意；
+    #: 「残念だった」需 10 字以上，由 ``submit_transaction_review`` 与页面同口径校验
+    text: str = Field("", max_length=140)
+    #: 取引評価单选，与页面 input[name="fame"] 的 value 一致
+    rating: Literal["good", "bad"] = "good"
     progress_job_id: Optional[str] = None
 
 

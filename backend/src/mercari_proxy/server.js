@@ -132,20 +132,33 @@ const handler = async (req, res) => {
       return res.end();
     }
 
-    // 2) 内部注入端点（后端 → 本进程，不经 BASE 前缀；浏览器经 Vite 只能到 BASE 下，触达不到）
+    // 2) 身份探针：让 runner 确认「127.0.0.1 上应答的确实是我刚拉起的那个进程」。
+    //    旧版本没有这个路由，会把 /__ping 当普通路径转发给上游，于是返回的不是这段 JSON——
+    //    这正是 runner 用来识别残留进程的依据。
+    if (path === "/__ping") {
+      if (!isLoopbackAddr(remoteAddr(req)) ||
+          (INTERNAL_SECRET && req.headers["x-internal-secret"] !== INTERNAL_SECRET)) {
+        res.writeHead(403, { "content-type": "text/plain" });
+        return res.end("forbidden");
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, proxy: "mercari-proxy", pid: process.pid }));
+    }
+
+    // 3) 内部注入端点（后端 → 本进程，不经 BASE 前缀；浏览器经 Vite 只能到 BASE 下，触达不到）
     if (path === "/__inject") return handleInject(req, res);
 
-    // 3) Cookie 注入引导页：写 Cookie 后跳转进代理站
+    // 4) Cookie 注入引导页：写 Cookie 后跳转进代理站
     if (path === `${BASE}/__boot`) return handleBoot(req, res, reqUrl, PROXY_HOST);
 
-    // 4) 解析上游目标（先剥离 BASE 前缀）；上游站点由 __mp_site Cookie 决定
+    // 5) 解析上游目标（先剥离 BASE 前缀）；上游站点由 __mp_site Cookie 决定
     const site = siteOf(req);
     let rel = BASE && path.startsWith(BASE) ? path.slice(BASE.length) : path;
     if (rel === "") rel = "/";
     const { upstreamHost, upstreamPath } = resolveTarget(rel, site);
     const upstreamUrl = `https://${upstreamHost}${upstreamPath}${reqUrl.search}`;
 
-    // 5) 组装转发请求头（DPoP / Authorization / Cookie 原样透传）
+    // 6) 组装转发请求头（DPoP / Authorization / Cookie 原样透传）
     const fwd = {};
     for (const [k, v] of Object.entries(req.headers)) {
       const lk = k.toLowerCase();
@@ -160,7 +173,7 @@ const handler = async (req, res) => {
         .replace(new RegExp(`^https?://${escapeReg(site.host)}${escapeReg(BASE)}/__p/[^/]+/`), "https://" + site.host + "/");
     }
 
-    // 6) body
+    // 7) body
     const hasBody = !["GET", "HEAD"].includes(req.method);
     const body = hasBody ? await readBody(req) : undefined;
 
@@ -171,7 +184,7 @@ const handler = async (req, res) => {
       redirect: "manual",
     });
 
-    // 7) 处理响应头
+    // 8) 处理响应头
     const outHeaders = {};
     for (const [k, v] of resp.headers) {
       if (k.toLowerCase() === "set-cookie") continue;
@@ -186,7 +199,7 @@ const handler = async (req, res) => {
 
     const ctype = (resp.headers.get("content-type") || "").toLowerCase();
 
-    // 8) HTML：注入运行时劫持脚本 + 改写绝对 URL 属性
+    // 9) HTML：注入运行时劫持脚本 + 改写绝对 URL 属性
     if (ctype.includes("text/html")) {
       let html = await resp.text();
       html = injectAndRewriteHtml(html, PROXY_HOST, site);
@@ -194,7 +207,7 @@ const handler = async (req, res) => {
       return res.end(html);
     }
 
-    // 9) JS：仅当配置了补丁时才改（默认不动，保住 DPoP htu）
+    // 10) JS：仅当配置了补丁时才改（默认不动，保住 DPoP htu）
     const isJs = ctype.includes("javascript") || new URL(upstreamUrl).pathname.endsWith(".js");
     if (JS_PATCHES.length && isJs) {
       let text = await resp.text();
@@ -203,7 +216,7 @@ const handler = async (req, res) => {
       return res.end(text);
     }
 
-    // 10) 其它原样透传（流式）
+    // 11) 其它原样透传（流式）
     res.writeHead(resp.status, outHeaders);
     if (resp.body) Readable.fromWeb(resp.body).pipe(res);
     else res.end();

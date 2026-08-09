@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """雅虎待办事项（やることリスト）同步与处理动作。"""
 
-from .todo_sync import sync_yahoo_todos
+from .precache import precache_uncached_yahoo_todo_details
+from .todo_sync import sync_yahoo_todos, sync_yahoo_todos_with_details
 from .trade_actions import (
     fetch_yahoo_todo_detail,
     finish_yahoo_wait_reply_todo,
@@ -13,6 +14,8 @@ from .trade_actions import (
 
 __all__ = [
     "sync_yahoo_todos",
+    "sync_yahoo_todos_with_details",
+    "precache_uncached_yahoo_todo_details",
     "fetch_yahoo_todo_detail",
     "get_cached_yahoo_todo_detail",
     "notify_yahoo_todo_shipped",

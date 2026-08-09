@@ -81,6 +81,28 @@ def _wait_listen(host: str, port: int, timeout: float = 10.0) -> bool:
     return False
 
 
+def _ping_identity() -> Optional[int]:
+    """问一下 ``127.0.0.1:<port>/__ping``「你是谁」，返回应答进程的 pid。
+
+    拿不到 pid 就返回 None——可能是旧版本没有这个路由（会把 /__ping 转发给上游，
+    返回的是 HTML 而不是这段 JSON），也可能压根不是 mercari-proxy。两种都算「不是我」。
+    """
+    try:
+        resp = requests.get(
+            f"{proxy_scheme()}://127.0.0.1:{proxy_port()}/__ping",
+            headers={"x-internal-secret": _ensure_secret()},
+            timeout=5,
+            verify=False,  # 自签证书
+        )
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(data, dict) or data.get("proxy") != "mercari-proxy":
+        return None
+    pid = data.get("pid")
+    return int(pid) if isinstance(pid, int) else None
+
+
 def is_running() -> bool:
     return _proc is not None and _proc.poll() is None
 
@@ -156,6 +178,25 @@ def start_proxy() -> Dict[str, Any]:
                 f"{host}:{port} 已被占用：本次拉起的 node 立即退出，端口上监听的是其它进程"
                 "（多为上次后端未正常退出遗留的 mercari-proxy）。"
                 "请在任务管理器结束残留的 node 进程后重试，或用 MERCARI_PROXY_PORT 换一个端口。"
+            ),
+        }
+
+    # 上面那一条只能抓住「新进程退出了」。绑 0.0.0.0 之后它**不再够用**：
+    # Windows 允许 0.0.0.0:P 与已存在的 127.0.0.1:P 共存，于是新进程活得好好的，
+    # 而连接按最具体匹配分流——局域网打到新进程，环回打到残留进程。
+    # register_injection / boot 恰好一个走环回一个走局域网，登录态就注进了两个不同的进程内存，
+    # 表现为「注入成功但打开就是未登录 / 链接已失效」。所以这里必须验明正身而不是只看端口通不通。
+    own_pid = _proc.pid
+    stale_pid = _ping_identity()
+    if stale_pid != own_pid:
+        stop_proxy()
+        return {
+            "started": False,
+            "error": (
+                f"{host}:{port} 的环回地址上应答的不是本次拉起的 mercari-proxy"
+                f"（期望 pid {own_pid}，实际 {stale_pid or '无法识别，多为旧版本进程'}）。"
+                "这通常是上次后端未正常退出遗留的 node 进程仍占着 127.0.0.1。"
+                "请结束残留的 node 进程后重试，或用 MERCARI_PROXY_PORT 换一个端口。"
             ),
         }
 

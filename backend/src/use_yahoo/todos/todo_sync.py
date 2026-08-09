@@ -21,6 +21,12 @@
 所以回复完得靠本地标记收尾：``trade_actions.send_yahoo_todo_message`` 成功后置
 ``is_delete=1`` + ``shipped_finalized=1``，后者是 ``_upsert_todo_row`` 认的「本地已完成、
 不得被同步复活」标记——否则下一次同步会把同一个 uuid 原样写回，待办永远回不去。
+
+**两个入口，选错了不会报错、只会少干活**（与煤炉 ``todolist_sync`` 的分层同形）：
+``sync_yahoo_todos`` 只同步列表；``sync_yahoo_todos_with_details`` 在其之后补抓交易页详情、
+并在出现新待发货时联动同步在售/订单。所有「同步」入口（待办页、账号同步数据、自动获取循环）
+都该用后者——只调前者的话，待办列表有了，但每条交易详情要等用户点开「处理」才现抓，
+新成交的订单也要等订单同步那一项自己到期才出现。
 """
 from __future__ import annotations
 
@@ -46,6 +52,11 @@ _KIND_BY_TYPE = {
     "ooesh": "YahooShipRequest",         # 発送依頼：已售出待发货
     "obems": "YahooIncomingMessage",     # 取引メッセージ：买家来信待回复（来自通知流）
 }
+
+#: 两个「有交易页可打开」的 kind。写入方是本模块，消费方在别处（详情预缓存的候选集合、
+#: 处理动作的类型校验），所以定义只放这一处——名字对不上时不会报错，只会静默不匹配。
+YAHOO_WAIT_SHIPPING_KIND = _KIND_BY_TYPE["ooesh"]
+YAHOO_WAIT_REPLY_KIND = _KIND_BY_TYPE["obems"]
 
 #: 通知流里要提升为待办的 type（其余仍只进 notifications 表）
 _NOTICE_TODO_TYPES = frozenset({"obems"})
@@ -159,6 +170,8 @@ async def sync_yahoo_todos(account_id: int) -> Dict[str, Any]:
     stats: Dict[str, Any] = {
         "account_id": aid, "platform": "yahoo",
         "api_item_count": 0, "inserted": 0, "updated": 0, "skipped": 0, "marked_deleted": 0,
+        # 本次新出现的待发货（=新成交）：供调用方决定要不要联动同步在售/订单
+        "new_wait_shipping": 0, "new_wait_shipping_item_ids": [],
     }
 
     raw = await fetch_yahoo_todos(aid)
@@ -177,6 +190,13 @@ async def sync_yahoo_todos(account_id: int) -> Dict[str, Any]:
             stats[outcome] += 1
         else:
             stats["skipped"] += 1
+            continue
+        # inserted 才算「新」：uuid 已存在只是同一条待办被再次返回（雅虎每次给全量）
+        if outcome == "inserted" and row["kind"] == YAHOO_WAIT_SHIPPING_KIND:
+            stats["new_wait_shipping"] += 1
+            item_id = (row.get("item_id") or "").strip()
+            if item_id:
+                stats["new_wait_shipping_item_ids"].append(item_id)
 
     # 雅虎接口一次给全量，未返回的本地雅虎待办即已处理完 → 软删除
     if incoming:
@@ -222,3 +242,60 @@ async def _fetch_missing_shipping_durations(db: Any, account_id: int, stats: Dic
     except Exception as exc:  # noqa: BLE001 抓不到发货期限不影响待办同步结果
         log.warning("[yahoo_todos] 账号#%s 抓取发货期限失败：%s", account_id, exc)
         stats["shipping_duration_error"] = str(exc)[:200]
+
+
+async def sync_yahoo_todos_with_details(
+    account_id: int, progress_job_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """同步雅虎待办 → 为无缓存的待办补抓交易页详情 → 有新待发货时联动同步在售/订单。
+
+    与煤炉 ``sync_todos_with_details`` 同一颗粒度：待办列表本身只有 ``item_id``，交易内容
+    （买家消息、发货表单可选项、状态）全在交易页上，等用户点开「处理」再现抓等于每条都要
+    干等一次浏览器加载。这里在同步时就把它们抓好落进 ``todo_items.detail_json``。
+
+    **必须在该账号串行队列内调用**：详情预缓存与联动同步都复用同一个浏览器会话，不再单独入队。
+    预缓存/联动同步的失败只记录，不影响待办列表同步结果。
+    """
+    from .precache import precache_uncached_yahoo_todo_details
+
+    stats = await sync_yahoo_todos(account_id=int(account_id))
+    aid = int(stats.get("account_id") or account_id)
+
+    fetched, failed = await precache_uncached_yahoo_todo_details(
+        aid, progress_job_id=progress_job_id
+    )
+    stats["detail_fetched"] = int(fetched)
+    stats["detail_failed"] = int(failed)
+
+    # 有新待发货 = 有新成交：这笔交易的商品刚从在售变已售、订单表里还没有它。
+    # 没有新待发货就不触发，避免每个 tick 都白跑两趟抓取。
+    if int(stats.get("new_wait_shipping") or 0) > 0:
+        await _link_sync_on_new_wait_shipping(aid, stats, progress_job_id)
+    return stats
+
+
+async def _link_sync_on_new_wait_shipping(
+    account_id: int, stats: Dict[str, Any], progress_job_id: Optional[str]
+) -> None:
+    """联动同步一次雅虎「在售列表」与「订单列表」（各自失败互不影响，结果写进 stats）。"""
+    from ..on_sale import sync_yahoo_on_sale_items
+    from ..orders import sync_yahoo_orders
+
+    log.info(
+        "[yahoo_todos] 账号#%s 检测到 %d 条新待发货，联动同步在售列表与订单列表",
+        account_id, int(stats.get("new_wait_shipping") or 0),
+    )
+    try:
+        stats["linked_on_sale"] = await sync_yahoo_on_sale_items(
+            account_id=int(account_id), progress_job_id=progress_job_id
+        )
+    except Exception as exc:  # noqa: BLE001 联动失败不影响待办同步结果
+        log.warning("[yahoo_todos] 账号#%s 联动在售同步失败：%s", account_id, exc)
+        stats["linked_on_sale_error"] = str(exc)[:200]
+    try:
+        stats["linked_orders"] = await sync_yahoo_orders(
+            account_id=int(account_id), progress_job_id=progress_job_id
+        )
+    except Exception as exc:  # noqa: BLE001 联动失败不影响待办同步结果
+        log.warning("[yahoo_todos] 账号#%s 联动订单同步失败：%s", account_id, exc)
+        stats["linked_orders_error"] = str(exc)[:200]

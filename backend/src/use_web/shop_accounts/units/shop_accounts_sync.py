@@ -101,10 +101,10 @@ async def sync_account_all_data_core(
         from ....use_yahoo.notifications import sync_yahoo_notifications
         from ....use_yahoo.on_sale import sync_yahoo_on_sale_items
         from ....use_yahoo.orders import batch_refresh_yahoo_orders, sync_yahoo_orders
-        from ....use_yahoo.todos import sync_yahoo_todos
+        from ....use_yahoo.todos import sync_yahoo_todos_with_details
 
         all_steps = [
-            ("todos", "待办事项", lambda: sync_yahoo_todos(account_id=account_id)),
+            ("todos", "待办事项", lambda: sync_yahoo_todos_with_details(account_id=account_id, progress_job_id=jid)),
             ("notifications", "通知", lambda: sync_yahoo_notifications(account_id=account_id)),
             ("on_sale", "在售商品", lambda: sync_yahoo_on_sale_items(account_id=account_id, progress_job_id=jid)),
             ("orders_list", "订单列表", lambda: sync_yahoo_orders(account_id=account_id, progress_job_id=jid)),

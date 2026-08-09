@@ -794,27 +794,41 @@
 
         <!-- 右栏：默认是消息/交流；ReviewedSeller 时切换为取引評価表单 -->
         <div class="detail-col detail-col-right">
-          <!-- 取引評価（仅 ReviewedSeller） -->
+          <!-- 取引評価（仅 ReviewedSeller）：颗粒度对齐煤炉页面
+               单选（良かった/残念だった）→ 模板 chip → 140 字评论 → 提交 -->
           <section v-if="isReviewedSeller" class="detail-section detail-section-grow">
             <div class="detail-section-title">{{ t('todos.reviewTitle') }}</div>
-            <div class="detail-empty-hint" style="margin-bottom: 10px">
-              {{ t('todos.reviewHint') }}
+            <el-radio-group v-model="detail.review_rating" class="review-rating-group">
+              <el-radio value="good" border class="review-rating">
+                <span class="review-rating-face">😊</span>{{ t('todos.reviewGood') }}
+              </el-radio>
+              <el-radio value="bad" border class="review-rating review-rating-bad">
+                <span class="review-rating-face">😞</span>{{ t('todos.reviewBad') }}
+              </el-radio>
+            </el-radio-group>
+            <div class="review-templates">
+              <el-button
+                v-for="tpl in REVIEW_TEMPLATES"
+                :key="tpl.key"
+                size="small"
+                round
+                @click="onPickReviewTemplate(tpl)"
+              >{{ t(tpl.labelKey) }}</el-button>
             </div>
             <el-input
               v-model="detail.review_draft"
               type="textarea"
-              :autosize="{ minRows: 6, maxRows: 12 }"
+              :autosize="{ minRows: 5, maxRows: 10 }"
               :placeholder="t('todos.reviewPlaceholder')"
               maxlength="140"
               show-word-limit
             />
             <div class="detail-reply-actions">
-              <el-button size="small" @click="onResetReviewDefault">{{ t('todos.defaultReview') }}</el-button>
               <el-button
                 size="small"
                 type="primary"
                 :loading="reviewLoading"
-                :disabled="!detail.review_draft || !detail.review_draft.trim()"
+                :disabled="!canSubmitReview"
                 @click="onSubmitReview"
               >
                 {{ t('todos.submitReviewFinish') }}

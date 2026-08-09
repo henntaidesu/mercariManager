@@ -34,7 +34,8 @@ async def sync_todos(req: SyncTodosRequest) -> Dict[str, Any]:
 
     每个账号执行 ``sync_todos_with_details``：同步待办列表 → 为「待发货/待回复/待评价」无缓存
     待办补抓交易详情 → 若本次有**新待发货**则联动同步一次在售列表与订单列表（两个列表对新数据
-    各自再获取详情）。
+    各自再获取详情）。雅虎账号走同形的 ``sync_yahoo_todos_with_details``（交易详情来自交易页，
+    没有「待评价」那一类）。
 
     不再指定单个账号：点击即同步全部已开启账号，逐个执行并汇总结果。
     ``progress_job_id`` 与 GET /use_web/todos/sync-progress/{job_id} 配合，
@@ -87,9 +88,12 @@ async def sync_todos_core(
         try:
             # 雅虎账号走雅虎的待办接口（/api/v1/notices/todo），写库仍是同一张 todo_items
             if _account_platform_for_todos(aid) == "yahoo":
-                from .....use_yahoo.todos import sync_yahoo_todos
+                from .....use_yahoo.todos import sync_yahoo_todos_with_details
 
-                runner = lambda aid=aid: sync_yahoo_todos(account_id=aid)
+                runner = lambda aid=aid: sync_yahoo_todos_with_details(
+                    account_id=aid,
+                    progress_job_id=jid,
+                )
             else:
                 runner = lambda aid=aid: sync_todos_with_details(
                     account_id=aid,

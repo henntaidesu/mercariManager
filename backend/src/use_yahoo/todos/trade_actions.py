@@ -39,11 +39,12 @@ from ..app_api import (
     resolve_ship_method,
     ship_via_app,
 )
+from .todo_sync import YAHOO_WAIT_REPLY_KIND
 
 log = logging.getLogger(__name__)
 
-#: 雅虎「待回复」待办的 kind（写入方见 todos/todo_sync.py 的 _KIND_BY_TYPE）
-_WAIT_REPLY_KIND = "YahooIncomingMessage"
+#: 雅虎「待回复」待办的 kind（定义在写入方 todos/todo_sync.py）
+_WAIT_REPLY_KIND = YAHOO_WAIT_REPLY_KIND
 
 
 def _resolve_yahoo_todo(todo_id: int) -> Tuple[int, str]:
@@ -64,9 +65,15 @@ def _resolve_yahoo_todo(todo_id: int) -> Tuple[int, str]:
 
 
 def _cache_detail(todo_id: int, data: Dict[str, Any]) -> None:
+    """缓存交易详情，并清零预缓存失败计数。
+
+    清零与煤炉 ``_persist_transaction_detail`` 同口径：抓成功说明这条已恢复正常，之前累计的
+    失败次数不该继续把它挡在预缓存候选集合之外（详情缓存日后若被清空还要重进候选）。
+    """
     try:
         DatabaseManager().execute_update(
-            "UPDATE [todo_items] SET [detail_json]=?, [detail_synced_at]=? WHERE [id]=?",
+            "UPDATE [todo_items] SET [detail_json]=?, [detail_synced_at]=?, "
+            "[detail_fetch_failures]=0 WHERE [id]=?",
             (json.dumps(data, ensure_ascii=False), int(time.time() * 1000), int(todo_id)),
         )
     except Exception as exc:  # noqa: BLE001 缓存失败不影响本次返回

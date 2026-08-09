@@ -128,7 +128,7 @@ def _yahoo_task_callable(key: str, aid: int):
     from .use_yahoo.notifications import sync_yahoo_notifications
     from .use_yahoo.on_sale import sync_yahoo_on_sale_items
     from .use_yahoo.orders import sync_yahoo_orders
-    from .use_yahoo.todos import sync_yahoo_todos
+    from .use_yahoo.todos import sync_yahoo_todos_with_details
 
     if key == "notifications":
         return lambda: sync_yahoo_notifications(account_id=aid)
@@ -137,7 +137,8 @@ def _yahoo_task_callable(key: str, aid: int):
     if key == "on_sale":
         return lambda: sync_yahoo_on_sale_items(account_id=aid)
     if key == "todos":
-        return lambda: sync_yahoo_todos(account_id=aid)
+        # 与煤炉同颗粒度：同步列表后补抓交易详情，有新待发货再联动同步在售/订单
+        return lambda: sync_yahoo_todos_with_details(account_id=aid)
     raise KeyError(key)
 
 
