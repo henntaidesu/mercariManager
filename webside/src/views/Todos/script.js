@@ -1826,6 +1826,8 @@ export default defineComponent({
         const data = await todosApi.yahooNotifyShipped(row.id)
         if (data?.state) detail.yahoo_app = data.state
         ElMessage.success(t('todos.yahoo.notified'))
+        // 通知一发出后端就把这条待办软删了，详情面板留着只会显示一条已不存在的待办
+        detailDialogVisible.value = false
         load({ inPlace: true })
       } catch (e) {
         if (!e?.response) ElMessage.error(e?.message || t('todos.yahoo.notifyFailed'))
@@ -1997,23 +1999,20 @@ export default defineComponent({
       openShipFlow({ target: 'yahoo', withPackaging: true })
     }
 
-    /** 雅虎发货：填完品名/尺寸/发货场所一次提交，雅虎当场发行配送コード（不可撤回）。
-     *  返回是否真正发货成功——包材弹窗据此决定关闭还是留着让用户重试。 */
+    /** 雅虎网页发货（ゆうパケット / プラス / ゆうパック 等）：填完品名/尺寸/发货场所一次提交，
+     *  雅虎当场发行配送コード（不可撤回）。返回是否真正发货成功——包材弹窗据此决定关闭还是
+     *  留着让用户重试。投函型不走这里，见 submitYahooShipQr。 */
     async function doSubmitYahooShip() {
       const row = currentRow.value
       if (!row?.id || !canSubmitYahooShip.value || yahooShipLoading.value) return false
-      const viaApp = isYahooPostBoxSize.value
-      // 投函型不弹二次确认：与煤炉的ゆうパケットポスト系一样，拍完照点一次就走完
-      if (!viaApp) {
-        try {
-          await ElMessageBox.confirm(
-            t('todos.yahoo.confirmShip', { size: yahooForm.size, location: yahooForm.location }),
-            t('todos.yahoo.confirmTitle'),
-            { type: 'warning' },
-          )
-        } catch {
-          return false
-        }
+      try {
+        await ElMessageBox.confirm(
+          t('todos.yahoo.confirmShip', { size: yahooForm.size, location: yahooForm.location }),
+          t('todos.yahoo.confirmTitle'),
+          { type: 'warning' },
+        )
+      } catch {
+        return false
       }
       // 发行配送码后雅虎侧不可撤回：出发前先确认所选包材仍存在且库存足够
       if (!(await validatePackagingBeforeShip())) return false
@@ -2022,32 +2021,18 @@ export default defineComponent({
         const data = await todosApi.yahooShip(row.id, {
           item_name: yahooForm.item_name.trim(),
           size: yahooForm.size,
-          location: viaApp ? '' : yahooForm.location,
-          material_image: viaApp ? qrShot.value : '',
+          location: yahooForm.location,
         })
-        // submitted 只代表「点到了发行按钮」。网页那条路后端会回读页面，读不到配送コード图片时
-        // 给出 code_uncertain —— 这时不能报成功：既不知道配送码是否真的发行，也就不该顺势
+        // submitted 只代表「点到了发行按钮」。后端会回读页面，读不到配送コード图片时给出
+        // code_uncertain —— 这时不能报成功：既不知道配送码是否真的发行，也就不该顺势
         // 记包材 + 出库（下面那段是不可逆的记账）。让用户「重新抓取」确认后再走。
-        // App 那条路是接口调用，返回即确定，没有这种不确定态。
         if (!data?.submitted || data?.code_uncertain) {
           ElMessage.warning(t('todos.yahoo.shipUncertain'))
           if (data?.state) applyYahooDetail(data.state)
           return false
         }
-        // 投函型的発送通知已随发货一起发出；只有它没发成时才需要提示用户去补发
-        if (viaApp && data.notify_error) ElMessage.warning(t('todos.yahoo.notifyFailed'))
-        else ElMessage.success(viaApp ? t('todos.yahoo.shippedPostBox') : t('todos.yahoo.shipped'))
-        // App 那条路返回的 state 是 App 视角的发货状态，不是网页交易页详情，别喂给 applyYahooDetail。
-        // 发行后的回读可能失败（state_error）——那时按响应里的 ship_notified 立状态，
-        // 否则通知明明发出去了却还挂着「补发发货通知」按钮。
-        if (viaApp) {
-          detail.yahoo_app = data.state || {
-            is_ship_code_created: true,
-            ship_notified: !!data.ship_notified,
-          }
-        } else if (data.state) {
-          applyYahooDetail(data.state)
-        }
+        ElMessage.success(t('todos.yahoo.shipped'))
+        if (data.state) applyYahooDetail(data.state)
         // 与煤炉一致：发货成功即把包材记到关联订单并出库（同一待办只记一次）
         if (!shipCommittedIds.has(row.id)) {
           shipCommittedIds.add(row.id)
@@ -2063,6 +2048,49 @@ export default defineComponent({
       } catch (e) {
         if (!e?.response) ElMessage.error(e?.message || t('todos.yahoo.shipFailed'))
         return false
+      } finally {
+        yahooShipLoading.value = false
+      }
+    }
+
+    /** 雅虎投函型（ゆうパケットポスト / mini）：拍完这一张就交给任务队列，与煤炉的扫码发货
+     *  同一形态——发行配送コード、発送通知、刷订单、软删待办全在后台任务里跑，前台立刻可走。
+     *
+     *  不弹二次确认：与煤炉一样「拍完即提交」。后端在入队前就把二维码解成材料码并校验，
+     *  照片读不出会当场 400 让用户重拍，不会排队几分钟才发现照糊了。 */
+    async function submitYahooShipQr() {
+      const row = currentRow.value
+      if (!row?.id || !canSubmitYahooShip.value || yahooShipLoading.value) return
+      // 发行配送码后雅虎侧不可撤回：出发前先确认所选包材仍存在且库存足够
+      if (!(await validatePackagingBeforeShip())) return
+      yahooShipLoading.value = true
+      try {
+        await todosApi.yahooShipQr(row.id, {
+          item_name: yahooForm.item_name.trim(),
+          size: yahooForm.size,
+          photo: qrShot.value,
+          client_token: newClientToken(),
+        })
+        ElMessage.success(t('todos.yahoo.shipQueued'))
+        // 包裹已实际打包寄出，包材消耗与出库照记；用 Set 防止重拍重提时重复记账
+        if (!shipCommittedIds.has(row.id)) {
+          shipCommittedIds.add(row.id)
+          try {
+            await commitShipPackagingAndOutbound()
+          } catch {
+            shipCommittedIds.delete(row.id)
+            ElMessage.warning(t('todos.packagingSyncFailed'))
+          }
+        }
+        resetQrScanState()
+        shippingDialogVisible.value = false
+        // 后台任务接手后详情页已没有可操作的东西了 —— 直接关掉回列表。
+        // 必须放在上面记账之后：onDetailDialogClose 会清空 currentRow / invMatch。
+        detailDialogVisible.value = false
+        load({ inPlace: true })
+      } catch (e) {
+        // 二维码读不出 / 尺寸不是投函型 → 后端 400，拦截器已弹出原因；停在当前照片让用户重拍
+        if (!e?.response) ElMessage.error(e?.message || t('todos.yahoo.shipFailed'))
       } finally {
         yahooShipLoading.value = false
       }
@@ -2108,8 +2136,12 @@ export default defineComponent({
       await openQrCamera() // 内部已 nextTick，等 video 元素挂上再取流
     }
 
-    /** 向导最后一页的「発行配送码」：成功即关闭向导 */
+    /** 向导最后一页的提交按钮。投函型走任务队列（自己收尾关窗），网页型同步提交、成功即关窗。 */
     async function onConfirmYahooShip() {
+      if (isYahooPostBoxSize.value) {
+        await submitYahooShipQr()
+        return
+      }
       if (await doSubmitYahooShip()) shippingDialogVisible.value = false
     }
 

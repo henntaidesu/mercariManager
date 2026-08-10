@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 
 from ...auth import require_auth
-from .units.todos_models import ShippingQrPhotoRequest
+from .units.todos_models import ShippingQrPhotoRequest, YahooShipQrRequest
 from .units.todos_query import (
     count_todos_by_chip,
     list_kinds,
@@ -47,6 +47,7 @@ from .units.todos_sync import (
     yahoo_finish_reply_endpoint,
     yahoo_notify_shipped_endpoint,
     yahoo_ship_endpoint,
+    yahoo_ship_qr_endpoint,
     yahoo_trade_detail_cache_endpoint,
     yahoo_trade_detail_endpoint,
     yahoo_trade_message_endpoint,
@@ -118,6 +119,15 @@ async def _scan_qr_photo_endpoint(
     return await submit_shipping_qr_photo(todo_id, req, claims)
 
 
+async def _yahoo_ship_qr_endpoint(
+    todo_id: int,
+    req: YahooShipQrRequest,
+    claims: dict = Depends(require_auth),
+):
+    """雅虎投函型发货：校验二维码照片 → 落盘 → 入队，立即返回（不阻塞页面）。"""
+    return await yahoo_ship_qr_endpoint(todo_id, req, claims)
+
+
 router.add_api_route("", _list_todos_endpoint, methods=["GET"])
 router.add_api_route("/kinds", _list_kinds_endpoint, methods=["GET"])
 router.add_api_route("/chip-counts", _chip_counts_endpoint, methods=["GET"])
@@ -150,7 +160,9 @@ router.add_api_route("/close-detail-browser/{account_id}", close_detail_browser,
 router.add_api_route("/{todo_id}/yahoo/trade-detail", yahoo_trade_detail_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/yahoo/trade-detail-cache", yahoo_trade_detail_cache_endpoint, methods=["GET"])
 router.add_api_route("/{todo_id}/yahoo/ship", yahoo_ship_endpoint, methods=["POST"])
-# ゆうパケットポスト / mini：发行配送コード与発送通知必须分两步（先投函，再通知买家）
+# ゆうパケットポスト / mini：拍一张二维码照片 → 校验 → 入队（发行配送コード + 発送通知 + 软删待办）
+router.add_api_route("/{todo_id}/yahoo/ship-qr", _yahoo_ship_qr_endpoint, methods=["POST"])
+# 発送通知失败时的手动补发口（正常路径下发货任务已经通知过了）
 router.add_api_route("/{todo_id}/yahoo/notify-shipped", yahoo_notify_shipped_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/yahoo/send-message", yahoo_trade_message_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/yahoo/finish-reply", yahoo_finish_reply_endpoint, methods=["POST"])

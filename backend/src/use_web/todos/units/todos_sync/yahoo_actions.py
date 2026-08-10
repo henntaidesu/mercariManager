@@ -26,7 +26,7 @@ from .....web_drive.core.account_serial_queue import (
     queue_key_for_mercari_account,
     run_mercari_serial_async,
 )
-from ..todos_models import YahooShipRequest, YahooTradeMessageRequest
+from ..todos_models import YahooShipQrRequest, YahooShipRequest, YahooTradeMessageRequest
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +41,27 @@ def _account_id_of(todo_id: int) -> int:
     if not aid:
         raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
     return aid
+
+
+def _yahoo_todo_of(todo_id: int):
+    """待办行 + account_id，并确认它确实是雅虎待办。
+
+    平台在**入队前**就校验：排进队列之后才发现平台不对，用户只能到任务页看一条失败记录。
+    """
+    from .....db_manage.models.todos.todo_item import TodoItemModel
+
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise HTTPException(status_code=404, detail="待办事项不存在")
+    aid = int(getattr(todo, "account_id", 0) or 0)
+    if not aid:
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
+    platform = (getattr(todo, "platform", "") or "mercari").strip().lower()
+    if platform != "yahoo":
+        raise HTTPException(
+            status_code=400, detail=f"待办 id={todo_id} 不是雅虎待办（platform={platform}）"
+        )
+    return aid, todo
 
 
 async def _run(todo_id: int, factory) -> Dict[str, Any]:
@@ -112,6 +133,85 @@ async def yahoo_ship_endpoint(todo_id: int, req: YahooShipRequest) -> Dict[str, 
             dry_run=bool(req.dry_run),
         ),
     )
+
+
+async def yahoo_ship_qr_endpoint(
+    todo_id: int, req: YahooShipQrRequest, claims: Dict[str, Any]
+) -> Dict[str, Any]:
+    """投函型发货：校验二维码照片 → 落盘 → 入队 ``todos.shipping_qr``，立即返回。
+
+    与煤炉的 ``/scan-qr-photo`` 同一形态，也刻意复用**同一个 task_type**：``ship_qr_state``
+    的失败复位（worker / 取消入口）、关处理弹窗时的会话守卫全挂在那个类型上，另起一个
+    类型就得把这些逐一再登记一遍，漏一处就是「行永远卡在发货中」。
+
+    材料码在这里就解出来：拿一张读不出的照片去排队，用户要等任务跑到才知道得重拍。
+    解出来的码随 payload 走，任务不再解第二遍。
+    """
+    from .....task_queue import TaskDuplicateError, submit_task
+    from .....task_queue.registry import TODOS_SHIPPING_QR
+    from .....use_yahoo.app_api import (
+        is_post_box_method,
+        parse_material_code,
+        resolve_ship_method,
+    )
+    from .qr_photo import cleanup_photo, decode_qr, mark_shipping, save_photo
+
+    aid, todo = _yahoo_todo_of(todo_id)
+    item_id = str(getattr(todo, "item_id", "") or "").strip()
+    if not item_id:
+        raise HTTPException(status_code=400, detail="待办缺少商品 ID，无法发货")
+
+    try:
+        via_app = is_post_box_method(resolve_ship_method(req.size))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not via_app:
+        raise HTTPException(
+            status_code=400,
+            detail=f"「{req.size}」不是投函型（ゆうパケットポスト / mini），请走网页发货表单",
+        )
+
+    qr_text = decode_qr(req.photo)
+    if not qr_text:
+        raise HTTPException(
+            status_code=400,
+            detail="没能从照片里识别出二维码，请对准后重新拍摄（注意对焦、避免反光和阴影）",
+        )
+    try:
+        material_code = parse_material_code(qr_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    photo_path = save_photo(req.photo)
+    payload = {
+        "todo_id": int(todo_id),
+        "account_id": aid,
+        "photo_path": photo_path,
+        "order_no": item_id,
+        # class_text 与煤炉同义：本单提交时选的商品尺寸
+        "class_text": req.size,
+        "item_name": req.item_name,
+        "material_code": material_code,
+    }
+    try:
+        task, created = submit_task(
+            task_type=TODOS_SHIPPING_QR,
+            payload=payload,
+            client_token=req.client_token,
+            user_id=claims.get("user_id"),
+            username=claims.get("username"),
+        )
+    except TaskDuplicateError as exc:
+        cleanup_photo(photo_path)  # 没入队就别把照片留在盘上
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception:
+        cleanup_photo(photo_path)
+        raise
+
+    if created:
+        mark_shipping(int(todo_id), photo_path, req.size)
+
+    return {"success": True, "data": {"task": task, "created": created}}
 
 
 async def yahoo_notify_shipped_endpoint(todo_id: int) -> Dict[str, Any]:

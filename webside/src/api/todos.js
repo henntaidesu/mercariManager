@@ -88,7 +88,11 @@ export const todosApi = {
    *  尺寸为 ゆうパケットポスト / mini 时后端自动改走 App API，需一并传 material_image（二维码照片） */
   yahooShip: (todoId, body = {}, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/yahoo/ship`, body || {}, { timeout: 0, ...axiosConfig }),
-  /** 投函型发货第二步：确认已投进邮筒，通知买家发货 */
+  /** 投函型（ゆうパケットポスト / mini）发货：提交一张二维码照片 → 后端校验并入队后台执行
+   *  （发行配送コード → 発送通知 → 刷订单 → 软删待办），与煤炉的 scanQrPhoto 同一形态 */
+  yahooShipQr: (todoId, body = {}, axiosConfig = {}) =>
+    http.post(`/use_web/todos/${encodeURIComponent(todoId)}/yahoo/ship-qr`, body || {}, { timeout: 60000, ...axiosConfig }),
+  /** 発送通知失败后的手动补发（正常路径下发货任务已经通知过了） */
   yahooNotifyShipped: (todoId, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/yahoo/notify-shipped`, {}, { timeout: 0, ...axiosConfig }),
   /** 给买家发一条雅虎取引メッセージ */

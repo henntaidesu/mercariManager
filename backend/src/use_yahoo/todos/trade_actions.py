@@ -6,6 +6,8 @@
 
 - **发货成功** → 用 ``refresh_yahoo_order`` 重读交易页把订单状态刷成雅虎当前的真实状态
   （不自己猜「发完货就是 wait_review」），并复用煤炉的 ``_mark_order_packed`` 记打包时间。
+- **発送通知成功** → 软删该待办（``_finalize_shipped_todo``），与煤炉
+  ``finalize_post_shipping`` 同口径：通知一发出这条就不该再挂在「待发货」里。
 - **详情** → 缓存进 ``todo_items.detail_json``，重开面板不必再开一次浏览器。
 
 平台校验是硬门槛：雅虎待办跑煤炉的发货自动化会点到完全不同的页面，所以对非雅虎待办
@@ -39,12 +41,13 @@ from ..app_api import (
     resolve_ship_method,
     ship_via_app,
 )
-from .todo_sync import YAHOO_WAIT_REPLY_KIND
+from .todo_sync import YAHOO_WAIT_REPLY_KIND, YAHOO_WAIT_SHIPPING_KIND
 
 log = logging.getLogger(__name__)
 
-#: 雅虎「待回复」待办的 kind（定义在写入方 todos/todo_sync.py）
+#: 雅虎「待回复」/「待发货」待办的 kind（定义在写入方 todos/todo_sync.py）
 _WAIT_REPLY_KIND = YAHOO_WAIT_REPLY_KIND
+_WAIT_SHIPPING_KIND = YAHOO_WAIT_SHIPPING_KIND
 
 
 def _resolve_yahoo_todo(todo_id: int) -> Tuple[int, str]:
@@ -263,6 +266,7 @@ async def _ship_yahoo_todo_via_app(
         )
         return result
 
+    result["todo_finalized"] = _finalize_shipped_todo(int(todo_id))
     # 通知过了雅虎才把交易挪出「待发货」，这时刷新订单状态才有意义
     result["order_refresh"] = await _refresh_order_after_ship(account_id, item_id)
     return result
@@ -274,6 +278,7 @@ async def notify_yahoo_todo_shipped(todo_id: int) -> Dict[str, Any]:
     aid, item_id = _resolve_yahoo_todo(todo_id)
     result = await notify_shipped_via_app(aid, item_id=item_id)
     result["todo_id"] = int(todo_id)
+    result["todo_finalized"] = _finalize_shipped_todo(int(todo_id))
     result["order_refresh"] = await _refresh_order_after_ship(aid, item_id)
     return result
 
@@ -331,13 +336,38 @@ def _finalize_wait_reply_todo(todo_id: int) -> bool:
     todo = TodoItemModel.find_by_id(id=int(todo_id))
     if not todo or (getattr(todo, "kind", "") or "").strip() != _WAIT_REPLY_KIND:
         return False
+    return _soft_delete_todo(todo, "待回复", todo_id)
+
+
+def _finalize_shipped_todo(todo_id: int) -> bool:
+    """発送通知成功 → 软删待发货待办，与煤炉 ``finalize_post_shipping`` 同口径。
+
+    雅虎每次返回全量待办、发完货那条 ``ooesh`` 会消失，靠「本次缺席即软删」也能收尾——
+    但那要等到下一次同步，中间这条已经发完货的行还挂在「待发货」里等人再处理一次。
+    立刻本地收尾，``shipped_finalized=1`` 则保证在雅虎列表尚未更新时的那次同步不会把它
+    按 ``is_delete=0`` 原样写回（见 ``_upsert_todo_row``）。
+
+    只对待发货类生效：通知发货与「待回复」等其它 kind 无关，别把同交易的其它待办一起抹掉。
+    """
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo or (getattr(todo, "kind", "") or "").strip() != _WAIT_SHIPPING_KIND:
+        return False
+    return _soft_delete_todo(todo, "待发货", todo_id)
+
+
+def _soft_delete_todo(todo: Any, what: str, todo_id: int) -> bool:
+    """软删 + 置防复活标记 ``shipped_finalized=1``。失败只记日志。
+
+    调用点都在「对外不可逆的动作已经做完」之后（消息已发出 / 発送通知已发出），
+    本地收尾失败绝不能让那件事回滚，所以这里吞异常并返回 False。
+    """
     try:
         todo.is_delete = 1
         todo.shipped_finalized = 1
         todo.synced_at = int(time.time() * 1000)
         todo.save()
-        log.info("[yahoo_trade] 待回复已软删 todo_id=%s", todo_id)
+        log.info("[yahoo_trade] %s已软删 todo_id=%s", what, todo_id)
         return True
-    except Exception as exc:  # noqa: BLE001 软删失败不该让「消息已发出」这件事回滚
-        log.warning("[yahoo_trade] 软删待回复待办失败 todo_id=%s：%s", todo_id, exc)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[yahoo_trade] 软删%s待办失败 todo_id=%s：%s", what, todo_id, exc)
         return False

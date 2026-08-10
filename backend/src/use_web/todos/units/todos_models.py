@@ -132,6 +132,24 @@ class YahooShipRequest(PydanticModel):
     dry_run: bool = False
 
 
+class YahooShipQrRequest(PydanticModel):
+    """雅虎投函型（ゆうパケットポスト / mini）发货：拍一张二维码照片就提交。
+
+    与 ``YahooShipRequest`` 的区别只在**执行方式**：这条走任务队列，发行配送コード /
+    発送通知 / 刷订单 / 软删待办都在后台跑，前台拍完即走。没有 ``location``——
+    投函型没有発送場所可选；没有 ``dry_run``——排队的任务不做空跑。
+    """
+
+    # 品名：雅虎 maxlength=17，超出由后端截断
+    item_name: str = Field(..., min_length=1, max_length=17)
+    # 只接受 ゆうパケットポスト / ゆうパケットポストmini，端点会校验
+    size: str = Field(..., min_length=1, max_length=60)
+    # 専用箱 / 発送用シール / 専用封筒 上二维码的照片（data URL）
+    photo: str = Field(..., min_length=1)
+    # 前端一次点击生成的幂等 token
+    client_token: Optional[str] = Field(default=None, max_length=128)
+
+
 class YahooTradeMessageRequest(PydanticModel):
     """雅虎取引メッセージ（页面上限 1024 字）。"""
 

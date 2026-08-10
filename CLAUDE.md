@@ -576,12 +576,31 @@ soft-delete, inventory counters and order upsert semantics stay identical across
     trade is still `WAIT_FOR_SELLER_SHIP`. **Which branch the third step takes is the same split as
     the backend's**: post-box → `yqr` → App API; the other three → `ylocation` → page automation.
     Don't reuse Mercari's `size`/`facility` steps — they read a hard-coded Mercari size table.
-  - **The material code is photographed, and the photo rides along with the ship request.**
-    The `yqr` step reuses Mercari's capture machinery verbatim (`qrVideoEl` / `qrShot` /
+  - **The material code is photographed, and the shot goes to the task queue — not to a blocking
+    request.** The `yqr` step reuses Mercari's capture machinery verbatim (`qrVideoEl` / `qrShot` /
     `openQrCamera` / `takeQrShot`) and, like Mercari's post-box flow, submits straight from the
-    shot — no separate verify button and no confirm dialog. `yahoo_ship_endpoint` decodes the
-    image with `qr_photo.decode_qr` (zxing-cpp); `ship_via_app` then checks the code against Yahoo
-    *before* the irreversible `POST /shipcode`, so the guard is still there, just not a user step.
+    shot — no separate verify button and no confirm dialog. Submission goes to
+    `POST /{todo_id}/yahoo/ship-qr` (`yahoo_ship_qr_endpoint`), which decodes the image with
+    `qr_photo.decode_qr` (zxing-cpp) + `parse_material_code` **before enqueueing** (a photo that
+    can't be read 400s on the spot instead of failing minutes later in a task), stores the photo,
+    marks the row `ship_qr_state='shipping'`, and enqueues. `ship_via_app` still re-checks the code
+    against Yahoo *before* the irreversible `POST /shipcode`.
+    It deliberately reuses Mercari's **`todos.shipping_qr` task type** rather than adding a new
+    one: the `ship_qr_state` reset on failure/cancel/restart (`worker.py`, `tasks_handler.py`) and
+    the close-处理-dialog session guard (`_BROWSER_HOLDING_TASKS`) all key on that type, and a new
+    type would have to re-register in every one of them — missing one leaves rows stuck in 发货中.
+    `handle_shipping_qr` dispatches on the todo row's `platform` (read from the DB, not the
+    payload) into `_run_yahoo_shipping_qr` / `_run_mercari_shipping_qr`.
+    **「配送コード issued but 発送通知 failed」 is a task failure**, matching Mercari: the code is
+    irreversible and the buyer hasn't been told, so a green "success" would bury it. The row goes
+    back to 待发货 (`ship_qr_state='failed'`, photo kept) and the fix is the panel's 补发发货通知
+    button, never a re-run (Yahoo rejects a second 発行).
+  - **発送通知 success soft-deletes the todo** (`_finalize_shipped_todo`: `is_delete=1` +
+    `shipped_finalized=1`), same as Mercari's `finalize_post_shipping`. Yahoo returns the full todo
+    list each sync and the shipped `ooesh` disappears from it, so absence-based soft-delete would
+    get there eventually — but not until the next sync, leaving a finished trade sitting in 待发货.
+    `shipped_finalized=1` is what stops a sync that ran before Yahoo's list caught up from writing
+    it back with `is_delete=0` (see `_upsert_todo_row`). The manual 补发 endpoint finalizes too.
   - **The QR payload is not the material code.** It reads
     `PYP:01/JT2603CAAAAAA00645638626DH62WS;` — Yahoo wants only the 30 chars in the middle.
     `parse_material_code` applies the app's own regex verbatim

@@ -221,7 +221,95 @@ async def handle_send_reaction(task: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def handle_shipping_qr(task: Dict[str, Any]) -> Dict[str, Any]:
-    """ゆうパケットポスト系 发货：一张照片跑完「选尺寸 → 扫码 → 発送通知」全程。
+    """发货扫码：一张二维码照片跑完整条发货链路，按待办所属平台分派。
+
+    两边形态不同（煤炉是页面自动化喂图给它自己的扫描器，雅虎是 App API 直接发行配送
+    コード），但对外的约定完全一致，也正因如此共用同一个 ``task_type``：
+    ``ship_qr_state`` 的失败复位、取消复位、关处理弹窗时的会话守卫都挂在这个类型上。
+
+    成败口径两边也一致——**买家已经被通知发货**才算成功；任一步失败都把行退回「待发货」
+    （``ship_qr_state='failed'``）并**保留照片**，用户能在列表里看到当时扫的是哪个码。
+    """
+    from ...db_manage.models.todos.todo_item import TodoItemModel
+    from ...use_web.todos.units.todos_sync.qr_photo import mark_ship_failed
+
+    payload = task.get("payload") or {}
+    todo_id = int(payload.get("todo_id") or 0)
+    account_id = int(task.get("account_id") or 0)
+    photo_path = str(payload.get("photo_path") or "")
+    if not todo_id or not photo_path:
+        raise ValueError("发货扫码任务缺少 todo_id 或照片")
+
+    # 平台以库里的待办行为准，不信 payload：入队与执行之间隔着队列，payload 只是当时的快照
+    todo = TodoItemModel.find_by_id(id=todo_id)
+    if not todo:
+        raise RuntimeError(f"待办事项 id={todo_id} 不存在")
+    platform = (getattr(todo, "platform", "") or "mercari").strip().lower()
+
+    try:
+        if platform == "yahoo":
+            return await _run_yahoo_shipping_qr(task, todo_id, account_id, photo_path)
+        return await _run_mercari_shipping_qr(task, todo_id, account_id, photo_path)
+    except Exception:
+        # 任何一步失败：把行退回「待发货」并**保留照片**，用户在列表里能看到当时扫的是哪个码。
+        mark_ship_failed(todo_id)
+        raise
+
+
+async def _run_yahoo_shipping_qr(
+    task: Dict[str, Any], todo_id: int, account_id: int, photo_path: str
+) -> Dict[str, Any]:
+    """雅虎投函型（ゆうパケットポスト / mini）：发行配送コード → 発送通知 → 软删待办。
+
+    材料码在入队时就从照片里解好了（``yahoo_ship_qr_endpoint``），这里不再解第二遍。
+    实际动作全在 ``ship_yahoo_todo`` 里：它走 App API 发行配送コード并紧接着通知买家，
+    通知成功后软删待办、刷新订单。
+
+    **「已发行但没通知成功」必须落成失败**：配送コード不可撤回，此时买家还不知道已发货，
+    显示成绿色「成功」这单就再没人回头看了。用户要去详情面板点「补发发货通知」，
+    而不是重跑这条流程（重跑会被雅虎以「已经发行过配送コード」拒绝）。
+    """
+    from ...use_web.todos.units.todos_sync.qr_photo import mark_scanned_and_cleanup
+    from ...use_yahoo.todos import ship_yahoo_todo
+    from ...web_drive.core.account_serial_queue import (
+        queue_key_for_mercari_account,
+        run_mercari_serial_async,
+    )
+
+    payload = task.get("payload") or {}
+    size = str(payload.get("class_text") or "").strip()
+    item_name = str(payload.get("item_name") or "").strip()
+    material_code = str(payload.get("material_code") or "").strip()
+    if not size or not item_name or not material_code:
+        raise ValueError("雅虎发货扫码任务缺少尺寸 / 品名 / 材料码")
+
+    result = await run_mercari_serial_async(
+        queue_key_for_mercari_account(account_id),
+        lambda: ship_yahoo_todo(
+            todo_id,
+            item_name=item_name,
+            size=size,
+            location="",  # 投函型没有発送場所
+            material_code=material_code,
+        ),
+    )
+    if not result.get("submitted"):
+        raise RuntimeError("雅虎未发行配送コード（未做任何对外操作），请重试或改用网页发货")
+    if not result.get("ship_notified"):
+        raise RuntimeError(
+            f"配送コード已发行，但発送通知失败：{result.get('notify_error') or '雅虎未确认'}。"
+            "请打开该待办点「补发发货通知」，不要重新发行配送コード。"
+        )
+
+    # 通知已确认发出、待办已软删 → 清空照片字段并删除照片文件（成功件不留证）
+    mark_scanned_and_cleanup(todo_id, photo_path)
+    return result
+
+
+async def _run_mercari_shipping_qr(
+    task: Dict[str, Any], todo_id: int, account_id: int, photo_path: str
+) -> Dict[str, Any]:
+    """煤炉 ゆうパケットポスト系：一张照片跑完「选尺寸 → 扫码 → 発送通知」全程。
 
     整条链路都在这一个任务里，前台点完拍照即可离开：
       1. 选尺寸/发货地点 → 完了する → 进 ``/qr_code_scanner``（``class_text`` 为空时
@@ -229,9 +317,6 @@ async def handle_shipping_qr(task: Dict[str, Any]) -> Dict[str, Any]:
       2. 把照片喂给煤炉扫描器直到读出；
       3. 抓発送確認符号/追跡番号 → **直接发送発送通知**（按用户要求取消人工确认）；
       4. 成功 → 记扫码时刻、删除照片文件并清空照片字段（成功件不留证）。
-
-    任一步失败：行退回「待发货」（``ship_qr_state='failed'``）并**保留照片**，
-    用户能在列表里看到当时扫的是哪个码。
 
     注意第 3 步不可撤回：扫错码会直接错发。故第 2 步一旦超时就立刻中止，绝不带着
     不确定的扫描结果往下走。
@@ -248,7 +333,6 @@ async def handle_shipping_qr(task: Dict[str, Any]) -> Dict[str, Any]:
     from ...use_web.todos.units.todos_sync.qr_photo import (
         load_photo_data_url,
         mark_scanned_and_cleanup,
-        mark_ship_failed,
     )
     from ...web_drive.core.account_serial_queue import (
         queue_key_for_mercari_account,
@@ -256,14 +340,9 @@ async def handle_shipping_qr(task: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     payload = task.get("payload") or {}
-    todo_id = int(payload.get("todo_id") or 0)
-    account_id = int(task.get("account_id") or 0)
-    photo_path = str(payload.get("photo_path") or "")
     timeout_sec = float(payload.get("timeout_sec") or SCAN_TIMEOUT_SEC)
     class_text = str(payload.get("class_text") or "").strip()
     facility = payload.get("facility") or None
-    if not todo_id or not photo_path:
-        raise ValueError("发货扫码任务缺少 todo_id 或照片")
     if not class_text:
         # 没有尺寸就没法开浏览器进扫描页，直接喂图只会绕一圈报「浏览器未打开」。
         # 明确失败，提示走完整重扫流程（前端会弹尺寸选择框）。
@@ -330,13 +409,7 @@ async def handle_shipping_qr(task: Dict[str, Any]) -> Dict[str, Any]:
     # 与该账号的其它浏览器操作串行。这条链路端到端跑完（発送通知也已自动发出），
     # 后续不再需要复用该会话，故**不**抑制空闲关闭——让队列在任务结束约 10s 后自动收回
     # 浏览器；否则前端因守卫关不掉、队列又被抑制，这个 __todo 会话会一直挂着。
-    try:
-        return await run_mercari_serial_async(
-            queue_key_for_mercari_account(account_id),
-            _run,
-        )
-    except Exception:
-        # 任何一步失败（含未进扫描页 / 扫码超时 / 核验不一致 / 通知未确认）：
-        # 把行退回「待发货」并**保留照片**，用户在列表里能看到当时扫的是哪个码。
-        mark_ship_failed(todo_id)
-        raise
+    return await run_mercari_serial_async(
+        queue_key_for_mercari_account(account_id),
+        _run,
+    )
