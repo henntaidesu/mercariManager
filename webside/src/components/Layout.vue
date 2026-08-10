@@ -674,13 +674,40 @@ const handleLogout = async () => {
   background: #0b1220;
   padding: 20px;
   min-width: 0;
+  /* 滚到顶端还继续下拉时不要把滚动传给页面：安卓 Chrome 会当成下拉刷新，
+     把这个单页应用整页重载 */
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
-@media (max-width: 767px) {
+/* 断点与 JS 侧 useIsMobile()（matchMedia '(max-width: 768px)'）对齐；
+   原来写 767px，恰好 768px 宽的设备会显示悬浮菜单按钮却用电脑内边距，
+   按钮直接压在页面标题上 */
+@media (max-width: 768px) {
   .main-content {
+    /* 顶部同时避开刘海（独立 App 模式状态栏透明）与左上角悬浮菜单按钮；
+       左右 / 底部让开横屏刘海与 Home 指示条 */
     padding: 12px;
-    padding-top: 56px;
+    padding-top: calc(56px + env(safe-area-inset-top, 0px));
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
   }
+}
+
+/* 抽屉侧栏同样要让开安全区，否则横屏时菜单文字被刘海切掉、
+   底部退出按钮被 Home 指示条压住 */
+.sidebar--mobile .sidebar-inner {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+.sidebar--mobile .logo-area {
+  padding-top: calc(16px + env(safe-area-inset-top, 0px));
+}
+.sidebar--mobile .sidebar-footer {
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+}
+.sidebar--mobile .sidebar-menu-wrap {
+  overscroll-behavior: contain;
 }
 
 .fade-enter-active,
@@ -718,6 +745,9 @@ const handleLogout = async () => {
   cursor: pointer;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
   padding: 0;
+  /* 去掉旧版安卓浏览器的 300ms 点击延迟 */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .layout-mobile-fab:active {
   opacity: 0.92;

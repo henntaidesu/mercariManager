@@ -2,6 +2,7 @@ import { computed, defineComponent, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { dashboardApi, transactionApi } from '@/api/index.js'
+import { useIsMobile } from '@/composables/useIsMobile.js'
 import { rollingLocalDayRangeTs, localTodayRangeTs } from '@/utils/orderStatsTime.js'
 import { formatUnixSecLocal } from '@/utils/timeDisplay.js'
 import EChart from './EChart.vue'
@@ -26,6 +27,14 @@ export default defineComponent({
   setup() {
     const { t, te } = useI18n()
     const router = useRouter()
+    const isMobile = useIsMobile()
+
+    /** 手机上图表要压矮：竖屏一屏才 700px 左右高，300px 的图加卡片头就占掉半屏，
+     *  一次只能看到一张图，整页要划很久 */
+    const trendChartHeight = computed(() => (isMobile.value ? '210px' : '300px'))
+    const orderCountChartHeight = computed(() => (isMobile.value ? '170px' : '210px'))
+    /** 趋势表格视图的固定高度（el-table height 需要数值/字符串，不能给 computed 的 px 串） */
+    const trendTableHeight = computed(() => (isMobile.value ? 240 : 300))
 
     /** 订单状态文案：未收录的状态（煤炉后加的取值）原样显示，不做猜测翻译 */
     const statusLabel = (s) => (s && te(`dashboard.status.${s}`) ? t(`dashboard.status.${s}`) : s || '—')
@@ -363,6 +372,10 @@ export default defineComponent({
       RANGE_PRESETS,
       STATUS,
       SERIES0: SERIES[0],
+      isMobile,
+      trendChartHeight,
+      orderCountChartHeight,
+      trendTableHeight,
       days,
       loading,
       loaded,

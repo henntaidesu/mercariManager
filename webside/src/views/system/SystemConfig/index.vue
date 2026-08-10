@@ -542,6 +542,40 @@
             </div>
           </div>
         </section>
+
+        <!-- Cookie 注入域名：代理经 nginx 以独立域名发布时的对外基址 -->
+        <section id="sc-proxy" class="sc-panel">
+          <div class="sc-panel-head">
+            <span class="sc-ic sc-ic--cyan"><el-icon :size="17"><Link /></el-icon></span>
+            <div class="sc-head-text">
+              <div class="sc-panel-title">{{ t('systemConfig.proxySection') }}</div>
+              <div class="sc-panel-desc">{{ t('systemConfig.descProxy') }}</div>
+            </div>
+          </div>
+          <div class="sc-panel-body" v-loading="proxyLoading">
+            <div class="sc-field">
+              <div class="sc-label">{{ t('systemConfig.proxyPublicBase') }}</div>
+              <el-input
+                v-model="proxyPublicBase"
+                clearable
+                :placeholder="t('systemConfig.proxyPublicBasePlaceholder')"
+              />
+            </div>
+            <el-alert
+              v-if="proxyPublicBase.trim()"
+              type="warning"
+              show-icon
+              :closable="false"
+              :title="t('systemConfig.proxyWarning')"
+              style="margin-top: 12px"
+            />
+            <div class="sc-actions">
+              <el-button type="primary" :loading="proxySaving" @click="saveProxyBase">
+                {{ t('systemConfig.save') }}
+              </el-button>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
 
@@ -569,7 +603,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessageBox } from 'element-plus'
-import { Plus, User, Lock, MagicStick, Sell, Coin, Tickets, Printer, Compass, Suitcase } from '@element-plus/icons-vue'
+import { Plus, User, Lock, MagicStick, Sell, Coin, Tickets, Printer, Compass, Suitcase, Link } from '@element-plus/icons-vue'
 import { ElMessage } from '@/utils/notify'
 import { setLocale, SUPPORTED_LOCALES } from '@/i18n'
 import { authApi, configApi } from '@/api/index.js'
@@ -606,6 +640,7 @@ const SECTIONS = [
   { id: 'database', icon: 'Coin', labelKey: 'systemConfig.databaseSection' },
   { id: 'qrparams', icon: 'Tickets', labelKey: 'qrPrint.paramsSection' },
   { id: 'printer', icon: 'Printer', labelKey: 'qrPrint.connSection' },
+  { id: 'proxy', icon: 'Link', labelKey: 'systemConfig.proxySection' },
 ]
 
 const pageRef = ref(null)
@@ -732,6 +767,37 @@ const form = reactive({
   model: '',
   base_url: '',
 })
+
+// ===== Cookie 注入域名 =====
+const proxyLoading = ref(false)
+const proxySaving = ref(false)
+const proxyPublicBase = ref('')
+
+async function loadProxyBase() {
+  proxyLoading.value = true
+  try {
+    const res = await configApi.getProxyPublicBase()
+    proxyPublicBase.value = res?.public_base || ''
+  } catch {
+    ElMessage.error(t('systemConfig.loadFailed'))
+  } finally {
+    proxyLoading.value = false
+  }
+}
+
+async function saveProxyBase() {
+  proxySaving.value = true
+  try {
+    const res = await configApi.putProxyPublicBase(proxyPublicBase.value.trim())
+    // 回填后端规范化后的值（去掉末尾斜杠等），避免界面显示与实际存储不一致
+    proxyPublicBase.value = res?.public_base || ''
+    ElMessage.success(t('systemConfig.saveSuccess'))
+  } catch {
+    /* 错误由 axios 拦截器提示（含后端的格式校验 400） */
+  } finally {
+    proxySaving.value = false
+  }
+}
 
 async function load() {
   loading.value = true
@@ -1186,6 +1252,7 @@ onMounted(() => {
   loadHomecoming()
   loadDbConfig()
   loadPrinterParams()
+  loadProxyBase()
 
   scrollRoot = pageRef.value?.closest('.main-content') || null
   ;(scrollRoot || window).addEventListener('scroll', syncActiveSection, { passive: true })

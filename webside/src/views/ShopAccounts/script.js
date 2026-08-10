@@ -607,9 +607,11 @@ export default defineComponent({
         if (d.boot_path) {
           // 代理是独立端口的另一个源：用当前访问主机名 + 返回的 scheme/port 拼完整 URL，
           // 这样本机(127.0.0.1)与局域网/远程访问都能正确指向代理。
+          // 例外：代理经 nginx 以另一个域名发布时主机名和端口都对不上，此时后端会直接
+          // 给出 boot_url（由 MERCARI_PROXY_PUBLIC_BASE 配置），优先用它。
           const scheme = d.scheme || 'https'
           const host = window.location.hostname
-          const bootUrl = `${scheme}://${host}:${d.port}${d.boot_path}`
+          const bootUrl = d.boot_url || `${scheme}://${host}:${d.port}${d.boot_path}`
           if (win) win.location.href = bootUrl
           else window.open(bootUrl, '_blank')
           ElMessage.success(t('mercariAccounts.cookieInjectDone', {

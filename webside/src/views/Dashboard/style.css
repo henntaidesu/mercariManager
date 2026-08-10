@@ -183,7 +183,14 @@
 .work-row:last-child {
   border-bottom: none;
 }
-.work-row:hover {
+/* 触摸屏没有 hover：安卓上点过的行会一直停在 hover 底色，看着像被选中了。
+   有指针的设备保留悬浮反馈，触摸设备改用按下瞬间的 :active。 */
+@media (hover: hover) {
+  .work-row:hover {
+    background: #18233a;
+  }
+}
+.work-row:active {
   background: #18233a;
 }
 .work-label {
@@ -299,7 +306,12 @@
   cursor: pointer;
   transition: border-color 0.15s ease;
 }
-.mini-tile:hover {
+@media (hover: hover) {
+  .mini-tile:hover {
+    border-color: #3a4c6e;
+  }
+}
+.mini-tile:active {
   border-color: #3a4c6e;
 }
 .mini-tile.warn {
@@ -376,4 +388,126 @@
   object-fit: cover;
   border-radius: 6px;
   display: block;
+}
+
+/* ── 手机端（iOS / Android）─────────────────────────────────────
+   断点 768px，与 useIsMobile() 一致。原来最窄的断点是 1200px（只把栅格
+   拉成一列），到 375px 宽的手机上仍然是电脑版的字号、间距和固定宽输入框。 */
+@media (max-width: 768px) {
+  /* 顶部工具条：区间预设有 5 个，日文/英文文案下一行放不下。
+     不换行、改成横向可滑，比折成两行更省纵向空间，也不会随语言变高度。 */
+  .dash-toolbar {
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+  .dash-actions {
+    width: 100%;
+    gap: 8px;
+  }
+  .dash-actions :deep(.el-radio-group) {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .dash-actions :deep(.el-radio-group)::-webkit-scrollbar {
+    display: none;
+  }
+  .dash-actions :deep(.el-radio-button__inner) {
+    white-space: nowrap;
+  }
+  /* 更新时间独占第二行：留在第一行会把区间按钮挤没 */
+  .dash-stamp {
+    flex: 1 1 100%;
+  }
+
+  /* KPI 一行两块：6 块单列排下来要划满两屏，两列刚好一屏看完 */
+  .kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .kpi-tile {
+    padding: 11px 12px 26px;
+  }
+  .kpi-value {
+    font-size: 19px;
+    /* 金额位数多时宁可折行也不截断——省略号会把 ¥12,345,678 读成 ¥12,345… */
+    overflow-wrap: anywhere;
+  }
+  .kpi-label,
+  .kpi-meta,
+  .kpi-foot {
+    font-size: 11px;
+  }
+  .kpi-foot {
+    margin-top: 6px;
+    gap: 2px 8px;
+  }
+  .kpi-spark {
+    height: 22px;
+  }
+
+  .dash-grid {
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .dash-card {
+    margin-bottom: 12px;
+  }
+
+  /* 卡片头里「标题 + 图/表切换」在 375px 下并排放不开 */
+  .card-header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    gap: 8px;
+  }
+  .card-title {
+    font-size: 14px;
+  }
+
+  /* 待处理列表整行可点：38px 高在手机上偏小，抬到 44px（iOS HIG 下限） */
+  .work-row {
+    padding: 12px 4px;
+  }
+  .work-label {
+    font-size: 14px;
+  }
+
+  .stock-body {
+    gap: 14px;
+  }
+  .share-legend {
+    grid-template-columns: 1fr;
+  }
+  .share-legend li {
+    padding: 5px 0;
+  }
+
+  .mini-tile {
+    padding: 10px;
+  }
+
+  .platform-list {
+    gap: 14px;
+  }
+  /* 平台名 + 金额 + 占比三段在一行里会把金额挤到换行，占比另起一行更好读 */
+  .platform-head {
+    flex-wrap: wrap;
+  }
+  .platform-name {
+    flex: 1 1 100%;
+  }
+  .platform-amount {
+    flex: 1 1 auto;
+  }
+
+  /* 下方几张表列数多（6~7 列），手机上靠横滑读全列；
+     缩略图跟着行高压小，免得整行被图撑高 */
+  .row-thumb {
+    width: 28px;
+    height: 28px;
+  }
 }

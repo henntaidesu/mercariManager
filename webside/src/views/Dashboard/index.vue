@@ -59,9 +59,9 @@
               </el-radio-group>
             </div>
           </template>
-          <EChart v-if="trendView === 'chart'" :option="trendOption" height="300px" />
+          <EChart v-if="trendView === 'chart'" :option="trendOption" :height="trendChartHeight" />
           <!-- 表格视图：图表的等价读法，保证任何数值都不只能靠悬浮提示才能读到 -->
-          <el-table v-else :data="trend" size="small" height="300" stripe class="num-table">
+          <el-table v-else :data="trend" size="small" :height="trendTableHeight" stripe class="num-table">
             <el-table-column prop="date" :label="t('dashboard.date')" width="110" />
             <el-table-column :label="t('dashboard.orderCount')" width="80" align="right">
               <template #default="{ row }">{{ formatInt(row.count) }}</template>
@@ -117,7 +117,7 @@
               </span>
             </div>
           </template>
-          <EChart :option="orderCountOption" height="210px" />
+          <EChart :option="orderCountOption" :height="orderCountChartHeight" />
         </el-card>
 
         <el-card class="dash-card" shadow="never">

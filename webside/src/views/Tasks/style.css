@@ -29,9 +29,15 @@
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
-.task-card:hover {
+/* 触摸屏 :hover 会粘住：点开过详情的那张卡片会一直亮着底色，看着像被选中 */
+@media (hover: hover) {
+  .task-card:hover {
+    background: #1b2942;
+    border-color: #3a4a66;
+  }
+}
+.task-card:active {
   background: #1b2942;
-  border-color: #3a4a66;
 }
 .task-card--pending  { border-left-color: #6b7a94; }
 .task-card--running  { border-left-color: #e6a23c; }
@@ -135,8 +141,28 @@
 /* 窄屏：筛选竖排、标题允许换行 */
 @media (max-width: 768px) {
   .search-left-group { flex-direction: column; align-items: stretch; gap: 10px; }
+  /* align-items: stretch 拉不动这三个下拉：全站给输入类控件写死了
+     `width: 180px !important`，显式宽度压过交叉轴拉伸，竖排后每个只占 180px、
+     右边空一大条。必须在这里显式改回满宽。 */
+  .search-left-group :deep(.el-select) {
+    width: 100% !important;
+    max-width: none !important;
+  }
   .task-card__head { flex-wrap: wrap; }
   .task-card__title { flex-basis: 100%; order: 3; white-space: normal; }
+  /* 取消 / 重试是 link 按钮，默认高度只有 24px 左右，拇指点不准 */
+  .task-card__actions :deep(.el-button) {
+    min-height: 32px;
+    padding: 0 4px;
+  }
+  /* 分页贴右缘时单手够不到 */
+  .pagination { justify-content: center; margin-top: 12px; }
+  .pagination :deep(.el-pagination) {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    justify-content: center;
+  }
+  .search-card { margin-bottom: 12px; }
 }
 
 /* ── 详情弹窗 ───────────────────────────────────────────────── */

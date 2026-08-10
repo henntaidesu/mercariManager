@@ -13,6 +13,10 @@ export const configApi = {
   // 二维码打印参数（标签尺寸/打印质量），整体读写；蓝牙设备绑定仍在 localStorage
   getPrinterParams: () => http.get('/use_web/system/printer-params'),
   putPrinterParams: (data) => http.put('/use_web/system/printer-params', data),
+  // Cookie 注入域名：{ public_base }。空串=未配置，前端按访问主机名+代理端口自行拼接
+  getProxyPublicBase: () => http.get('/use_web/system/proxy-public-base'),
+  putProxyPublicBase: (public_base) =>
+    http.put('/use_web/system/proxy-public-base', { public_base }),
   // 回国模式：{ enabled, on_sale_count, suspended_count, task_id }
   // PUT 立即写开关（上架随即被禁），暂停/恢复整批商品由 system.homecoming 任务执行
   getHomecoming: () => http.get('/use_web/system/homecoming'),

@@ -1,3 +1,14 @@
 .mercari-dialog .el-dialog__body {
   padding-top: 8px;
 }
+
+/* 手机端：标签改「在上」、控件满宽已由 App.vue 的全局手机块统一处理
+   （.el-dialog .el-form-item ...），这里只留这个弹窗特有的部分。
+   写在非 scoped 文件里：弹窗被 teleport 到 body，scoped 选择器要靠
+   祖先带作用域属性才匹配得上。 */
+@media (max-width: 768px) {
+  /* 底部一行「删除 … 取消 / 保存」左右分推，窄屏下中间会拉开一大条空当 */
+  .mercari-dialog .mercari-dialog-footer {
+    justify-content: flex-end;
+  }
+}

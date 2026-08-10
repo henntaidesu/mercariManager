@@ -45,6 +45,37 @@ def proxy_scheme() -> str:
     return _scheme
 
 
+#: [config] 表键名：代理对外基址（系统配置页「Cookie 注入域名」写入）
+PUBLIC_BASE_KEY = "mercari_proxy_public_base"
+
+
+def proxy_public_base() -> str:
+    """代理的对外基址（如 ``https://mp.example.com``）；未配置则为空串。
+
+    默认情况下前端按「当前访问的主机名 + 本代理端口」拼 ``/__boot`` 地址——同一台机器
+    同时提供 SPA 和代理时这是对的。但把代理经 nginx 以**另一个域名**发布后就不成立了：
+    SPA 在 fmm.example.com、代理在 mp.example.com，主机名和端口都对不上，拼出来的地址
+    根本连不上。配置本项后由后端直接给出完整地址，前端不再自行拼接。
+
+    只影响给用户的引导链接；``register_injection`` 始终走环回，与此无关。
+
+    注意：一旦经反代发布，``server.js`` 的 ``isAllowedClient`` 就形同虚设（来源恒为
+    nginx 的内网地址），必须在 nginx 侧另加认证——否则等于对外开了一个通往煤炉/雅虎的
+    开放反向代理。
+    """
+    # 延迟导入：lifecycle 在 init_database() **之前**就导入本模块启动代理，模块级导入
+    # DB 模型会把数据库依赖提前到那一刻。本函数只在注入请求时调用，那时库早已就绪。
+    from ..db_manage.models.system.config_entry import ConfigEntryModel
+
+    try:
+        return (ConfigEntryModel.get_value(PUBLIC_BASE_KEY) or "").strip().rstrip("/")
+    except Exception as exc:  # noqa: BLE001
+        # 读不到就退回「主机名 + 端口」的老拼法：内网直连仍然可用，不该因为一个
+        # 可选配置读失败就让 Cookie 注入整个不能用。
+        log.warning("读取代理对外基址失败，回退默认拼法: %s", exc)
+        return ""
+
+
 def proxy_upstream() -> str:
     return os.environ.get("MERCARI_PROXY_UPSTREAM", "jp.mercari.com")
 

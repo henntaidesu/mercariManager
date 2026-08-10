@@ -100,9 +100,13 @@
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.os-card:hover {
-  border-color: #409eff;
-  transform: translateY(-2px);
+/* 触摸屏 :hover 会粘住：点过的卡片一直保持蓝框 + 抬起，
+   在批量改价的网格里会和真正选中的 is-picked 混淆 */
+@media (hover: hover) {
+  .os-card:hover {
+    border-color: #409eff;
+    transform: translateY(-2px);
+  }
 }
 .os-card.is-alert { border-color: #f56c6c; }
 .os-card.is-picked { border-color: #67c23a; box-shadow: 0 0 0 1px #67c23a inset; }
@@ -218,8 +222,8 @@
   color: #909399;
   min-height: 20px;
 }
-/* 手机：一行两列，图框同比缩小 */
-@media (max-width: 767px) {
+/* 手机：一行两列，图框同比缩小。断点用 768px 与全站 isMobile 对齐 */
+@media (max-width: 768px) {
   .os-card-grid {
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 8px;
@@ -227,6 +231,57 @@
   .os-card-thumb {
     height: 140px;
     flex-basis: 140px;
+  }
+
+  /* 六个筛选下拉各自带着内联 min-width（200 / 160 / 140px）。手机上它们本来
+     就一行一个，却只占 200px 宽、右边空一大条；一律拉满整行。
+     这里的 min-width:0 是安全的：flex-basis 100% 保证每个控件独占一行，
+     不存在被同行的兄弟挤扁的情形（全局那条已因此撤掉）。 */
+  .search-left-group {
+    gap: 8px;
+  }
+  .search-left-group :deep(.el-input),
+  .search-left-group :deep(.el-select) {
+    flex: 1 1 100%;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+
+  /* 批量改价模式下这里最多 6 个按钮，右对齐会排成参差不齐的几行；
+     改成两列等宽，行末不留豁口 */
+  .search-actions {
+    justify-content: stretch;
+    margin-top: 8px;
+    gap: 8px;
+  }
+  .search-actions :deep(.el-button) {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    margin-left: 0;
+  }
+  .batch-pick-count {
+    flex: 1 1 100%;
+    text-align: center;
+  }
+
+  .search-card {
+    margin-bottom: 12px;
+  }
+  /* 分页贴右缘时单手够不到 */
+  .pagination {
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .pagination :deep(.el-pagination) {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    justify-content: center;
+  }
+
+  .os-thumb {
+    width: 40px;
+    height: 40px;
   }
 }
 

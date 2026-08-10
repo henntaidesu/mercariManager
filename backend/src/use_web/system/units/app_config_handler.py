@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""应用配置处理器：出品默认值读写 + 自动出品总开关。"""
+"""应用配置处理器：出品默认值读写 + 自动出品总开关 + Cookie 注入域名。"""
 
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -101,6 +102,56 @@ def put_mgmt_cipher_mode(body: MgmtCipherModeUpdate):
     # base5 为默认：存空即删除该键；binary 显式写入
     ConfigEntryModel.set_value(MGMT_CIPHER_MODE_KEY, "binary" if mode == "binary" else None)
     return MgmtCipherModeOut(mode=mode)
+
+
+class ProxyPublicBaseOut(BaseModel):
+    """Cookie 注入引导地址的对外基址。空串 = 未配置，前端按「访问主机名 + 代理端口」拼。"""
+
+    public_base: str = ""
+
+
+class ProxyPublicBaseUpdate(BaseModel):
+    public_base: Optional[str] = Field(default=None, max_length=255)
+
+
+def _normalize_public_base(raw: Optional[str]) -> str:
+    """校验并规范化对外基址：只接受 ``http(s)://host[:port]``，不带路径/查询。
+
+    这个值会被前端直接当成 URL 打开（``<base>/__boot?token=...``），存进去什么就跳到哪里。
+    宁可在保存时 400，也不要把一个畸形地址留到用户点「Cookie 注入」时才炸——那时错误
+    出现在一个新开的空白标签页里，没有任何提示。
+    """
+    s = (raw or "").strip().rstrip("/")
+    if not s:
+        return ""
+    try:
+        u = urlparse(s)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"无效的地址: {raw}") from exc
+    if u.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="地址必须以 http:// 或 https:// 开头")
+    if not u.netloc:
+        raise HTTPException(status_code=400, detail="地址缺少域名")
+    if u.path or u.query or u.fragment:
+        raise HTTPException(
+            status_code=400, detail="只填协议和域名（可带端口），不要带路径或参数"
+        )
+    return f"{u.scheme}://{u.netloc}"
+
+
+def get_proxy_public_base():
+    from ....mercari_proxy import proxy_public_base
+
+    return ProxyPublicBaseOut(public_base=proxy_public_base())
+
+
+def put_proxy_public_base(body: ProxyPublicBaseUpdate):
+    from ....mercari_proxy.runner import PUBLIC_BASE_KEY
+
+    value = _normalize_public_base(body.public_base)
+    # 空串即删除该键，回到「未配置」而不是存一条空记录
+    ConfigEntryModel.set_value(PUBLIC_BASE_KEY, value or None)
+    return ProxyPublicBaseOut(public_base=value)
 
 
 def get_listing_defaults():

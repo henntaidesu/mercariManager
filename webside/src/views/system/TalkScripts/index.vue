@@ -349,9 +349,12 @@ onMounted(() => {
   padding: 12px;
   transition: all 0.2s ease;
 }
-.add-card:hover {
-  border-color: #409eff;
-  background: #1b2942;
+/* 触摸屏 :hover 会粘住：点过「新增话术」再返回，那张虚线卡会一直亮着 */
+@media (hover: hover) {
+  .add-card:hover {
+    border-color: #409eff;
+    background: #1b2942;
+  }
 }
 .add-card-main {
   flex: 1;
@@ -366,10 +369,44 @@ onMounted(() => {
   color: #a8b4c8;
   transition: color 0.2s ease;
 }
-.add-card:hover .add-card-main {
-  color: #69b1ff;
+@media (hover: hover) {
+  .add-card:hover .add-card-main {
+    color: #69b1ff;
+  }
 }
 .add-card-icon {
   font-size: 24px;
+}
+
+/* ── 手机端（iOS / Android）──────────────────────────────────
+   卡片本身靠 el-col 的 :xs 已自动单列，这里补的是工具栏。 */
+@media (max-width: 768px) {
+  .toolbar {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  /* 搜索框写的 280px 其实早就被全局那条 `width: 180px !important` 压成 180
+     了；手机上直接独占一行，筛选与搜索按钮平分第二行 */
+  .toolbar-search {
+    flex: 1 1 100%;
+    width: 100% !important;
+    max-width: none !important;
+  }
+  .toolbar-filter {
+    flex: 1 1 0;
+    width: auto !important;
+    min-width: 0;
+    max-width: none !important;
+  }
+  .toolbar :deep(.el-button) {
+    flex: 0 0 auto;
+    margin-left: 0;
+  }
+  .card-col {
+    margin-bottom: 12px;
+  }
+  .add-card {
+    min-height: 140px;
+  }
 }
 </style>

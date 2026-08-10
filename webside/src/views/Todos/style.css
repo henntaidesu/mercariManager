@@ -45,16 +45,20 @@
   font-size: 13px;
   transition: all 0.2s ease;
 }
-.search-left-group .search-filter-chip:hover {
-  border-color: var(--el-color-primary, #409eff);
-  color: var(--el-color-primary, #409eff);
+/* 触摸屏点过之后 :hover 会一直留着。这页的 chip 就是主筛选器，
+   粘住的蓝框蓝字和真正选中的 --active 只差一个底色，很容易读成已经筛上了 */
+@media (hover: hover) {
+  .search-left-group .search-filter-chip:hover {
+    border-color: var(--el-color-primary, #409eff);
+    color: var(--el-color-primary, #409eff);
+  }
+  .search-left-group .search-filter-chip--active:hover {
+    color: #fff;
+  }
 }
 .search-left-group .search-filter-chip--active {
   border-color: var(--el-color-primary, #409eff);
   background: var(--el-color-primary, #409eff);
-  color: #fff;
-}
-.search-left-group .search-filter-chip--active:hover {
   color: #fff;
 }
 /* chip 上的条数：圆形徽标。
@@ -195,9 +199,12 @@
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.todo-card:hover {
-  border-color: #409eff;
-  transform: translateY(-2px);
+/* 触摸屏 :hover 会粘住：点过的卡片一直保持蓝框 + 抬起，看着像被选中 */
+@media (hover: hover) {
+  .todo-card:hover {
+    border-color: #409eff;
+    transform: translateY(-2px);
+  }
 }
 /* 与表格里「已打包」标签同色系：整张卡片描橙边，扫一眼就能挑出待发的包裹 */
 .todo-card.is-packed { border-color: #ffb74d; }
@@ -303,8 +310,8 @@
   color: #909399;
   min-height: 20px;
 }
-/* 手机：一行两列，图框同比缩小 */
-@media (max-width: 767px) {
+/* 手机：一行两列，图框同比缩小。断点用 768px 与全站 isMobile 对齐 */
+@media (max-width: 768px) {
   .todo-card-grid {
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 8px;
@@ -316,6 +323,56 @@
   .todo-card-qr {
     width: 66px;
     height: 34px;
+  }
+
+  /* 八个 chip 是这页的主筛选器，也是拇指最常点的地方：32px 偏小 */
+  .search-left-group {
+    gap: 8px;
+  }
+  .search-left-group .search-filter-chip {
+    height: 36px;
+  }
+  /* 平台下拉 + 最多三个按钮，右对齐会排成参差不齐的几行；
+     下拉独占一行、按钮两列等宽 */
+  .search-actions {
+    margin-left: 0;
+    width: 100%;
+    justify-content: stretch;
+    gap: 8px;
+  }
+  .search-actions :deep(.todos-platform-filter) {
+    flex: 1 1 100%;
+    width: 100% !important;
+    max-width: none !important;
+  }
+  .search-actions :deep(.el-button) {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    margin-left: 0;
+  }
+  .search-card {
+    margin-bottom: 12px;
+  }
+
+  /* 分页贴右缘时单手够不到 */
+  .pagination {
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .pagination :deep(.el-pagination) {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    justify-content: center;
+  }
+
+  .todo-thumb {
+    width: 44px;
+    height: 44px;
+  }
+  /* 发货码/扫码照片列：120px 一列在手机上要吃掉三分之一屏宽 */
+  .todo-qr-thumb {
+    width: 84px;
+    height: 42px;
   }
 }
 /* ─── 交易详情面板 / 发货向导：两个弹窗都限制在可见视口内 ───

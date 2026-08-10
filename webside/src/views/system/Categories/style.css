@@ -1,2 +1,10 @@
 .search-card { margin-bottom: 16px; border-radius: 8px; }
 .table-card { border-radius: 8px; }
+
+/* ── 手机端（iOS / Android）────────────────────────────────── */
+@media (max-width: 768px) {
+  .search-card { margin-bottom: 12px; }
+  /* 「新增分类」原本靠 el-row justify="end" 贴在右缘，单手够不到 */
+  .search-card :deep(.el-row) { display: block; }
+  .search-card :deep(.el-button) { width: 100%; }
+}

@@ -50,6 +50,13 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [resumeGuardFirstPlugin(), vue()],
+    build: {
+      // 压缩 CSS 时按 Safari 15 的能力来：默认 target 允许媒体查询范围语法，
+      // 会把 `@media (max-width: 768px)` 压成 `@media (width<=768px)`——
+      // 这个写法要 iOS 16.4 才认，更早的 iPhone（iPhone 7/8 停在 iOS 15）会
+      // 整段忽略，手机版样式一条都不生效。只限定 CSS，不影响 JS 产物。
+      cssTarget: 'safari15'
+    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))

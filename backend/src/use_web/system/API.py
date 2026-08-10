@@ -28,6 +28,9 @@ from .units.app_config_handler import (
     MgmtCipherModeOut,
     get_mgmt_cipher_mode,
     put_mgmt_cipher_mode,
+    ProxyPublicBaseOut,
+    get_proxy_public_base,
+    put_proxy_public_base,
 )
 from .units.homecoming_handler import (
     HomecomingStatusOut,
@@ -99,6 +102,11 @@ router.add_api_route("/printer-params", put_printer_params, methods=["PUT"], res
 # 回国模式（开启=全部在售暂停出售 + 禁止上架；关闭=恢复本模式暂停的那些）
 router.add_api_route("/homecoming", get_homecoming, methods=["GET"], response_model=HomecomingStatusOut)
 router.add_api_route("/homecoming", put_homecoming, methods=["PUT"], response_model=HomecomingStatusOut)
+
+# Cookie 注入域名（代理经 nginx 以独立域名发布时的对外基址）
+# PUT 限管理员：这个值决定用户点「Cookie 注入」会被送到哪个地址，等同于一次跳转目标的授权。
+router.add_api_route("/proxy-public-base", get_proxy_public_base, methods=["GET"], response_model=ProxyPublicBaseOut)
+router.add_api_route("/proxy-public-base", put_proxy_public_base, methods=["PUT"], response_model=ProxyPublicBaseOut, dependencies=_ADMIN)
 
 # 管理番号暗号编码模式（隐藏页 /x9 切换：二进制 ◇◆ / 五进制 -=~<>）
 router.add_api_route("/mgmt-cipher-mode", get_mgmt_cipher_mode, methods=["GET"], response_model=MgmtCipherModeOut)

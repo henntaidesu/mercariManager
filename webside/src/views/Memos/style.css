@@ -99,3 +99,53 @@
   line-height: 1.5;
   margin-top: 4px;
 }
+
+/* ── 手机端（iOS / Android）──────────────────────────────────
+   工具栏是「三个分页标签 + 搜索 + 弹性占位 + 按钮」的一行，375px 下放不开。 */
+@media (max-width: 768px) {
+  .search-card { margin-bottom: 12px; }
+  .memos-toolbar {
+    gap: 8px;
+  }
+  .memos-toolbar :deep(.el-radio-group) {
+    flex: 1 1 100%;
+    display: flex;
+  }
+  .memos-toolbar :deep(.el-radio-button) {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .memos-toolbar :deep(.el-radio-button__inner) {
+    width: 100%;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  /* 240px 会被全局那条 `width: 180px !important` 压掉，必须显式满宽 */
+  .memos-search {
+    flex: 1 1 100%;
+    width: 100% !important;
+    max-width: none !important;
+  }
+  /* 弹性占位在竖排后只会凭空撑出一行空白 */
+  .memos-toolbar-spacer {
+    display: none;
+  }
+  .memos-toolbar :deep(.el-button) {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    margin-left: 0;
+  }
+  /* 分页贴右缘时单手够不到 */
+  .memos-pagination {
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .memos-pagination :deep(.el-pagination) {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    justify-content: center;
+  }
+  .memos-detail-content {
+    max-height: calc(45 * var(--app-vh));
+  }
+}

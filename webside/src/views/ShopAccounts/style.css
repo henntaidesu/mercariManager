@@ -60,9 +60,12 @@
   padding: 12px;
   transition: all 0.2s ease;
 }
-.add-card:hover {
-  border-color: #409eff;
-  background: #1b2942;
+/* 触摸屏 :hover 会粘住：点过「新增账号」再返回，那张虚线卡会一直亮着 */
+@media (hover: hover) {
+  .add-card:hover {
+    border-color: #409eff;
+    background: #1b2942;
+  }
 }
 .add-card-main {
   flex: 1;
@@ -77,8 +80,10 @@
   color: #a8b4c8;
   transition: color 0.2s ease;
 }
-.add-card:hover .add-card-main {
-  color: #69b1ff;
+@media (hover: hover) {
+  .add-card:hover .add-card-main {
+    color: #69b1ff;
+  }
 }
 .add-card-icon {
   font-size: 24px;
@@ -197,8 +202,11 @@
   cursor: pointer;
   transition: border-color 0.2s, background-color 0.2s;
 }
-.af-task-card:hover {
-  border-color: #69b1ff;
+/* 触摸屏 :hover 会粘住，和真正勾选的 is-active 只差一个底色 */
+@media (hover: hover) {
+  .af-task-card:hover {
+    border-color: #69b1ff;
+  }
 }
 .af-task-card.is-active {
   border-color: #409eff;
@@ -282,4 +290,68 @@
 .app-token-expires {
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+/* ── 手机端（iOS / Android）─────────────────────────────────────
+   账号卡片本身靠 el-col 的 :xs="24" 已经自动单列，这里补的是卡内元素。 */
+@media (max-width: 768px) {
+  /* 卡头：账号名 + 平台标签 + 状态标签横排，长账号名会把两个标签挤出卡片 */
+  .card-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .card-header-main {
+    flex: 1 1 100%;
+  }
+  .card-header-tags {
+    flex: 0 0 auto;
+  }
+  /* 三个操作按钮右对齐会排成参差两行，改成三等分一行 */
+  .card-actions {
+    justify-content: stretch;
+    gap: 6px;
+  }
+  .card-actions > * {
+    flex: 1 1 0;
+    min-width: 0;
+    margin-left: 0;
+  }
+  /* 同步数据按钮外面套着 el-tooltip 的 <span>，它才是这里的弹性项 */
+  .card-actions > span :deep(.el-button) {
+    width: 100%;
+  }
+  .card-col {
+    margin-bottom: 12px;
+  }
+  .add-card {
+    min-height: 140px;
+  }
+
+  /* 编辑弹窗里「表单字段 + 140px 头像」的两栏在 94vw 宽度下只剩
+     200 出头给表单，头像改为落到表单下方 */
+  .basic-info-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .basic-info-avatar {
+    width: 100%;
+    padding-top: 0;
+    justify-content: flex-start;
+  }
+  /* 自动获取任务：两列在手机上每列才 130 出头，任务名会折成三行 */
+  .af-task-cards {
+    grid-template-columns: 1fr;
+  }
+  /* 「任务名 132px + 下拉」两栏放不下，任务名改为独占一行 */
+  .af-task-row {
+    flex-wrap: wrap;
+  }
+  .af-task-name {
+    flex: 1 1 100%;
+  }
+  /* 弹窗内表单已按 --app-vh 限高滚动，手机上再压一点给底部按钮留位置 */
+  .mercari-form {
+    max-height: calc(62 * var(--app-vh));
+    padding-right: 4px;
+  }
 }

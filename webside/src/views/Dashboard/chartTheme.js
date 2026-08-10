@@ -50,8 +50,11 @@ export function shortDate(ymd) {
   return String(ymd || '').slice(5)
 }
 
-/** 提示框统一样式：深色卡片底 + 细边，不用 echarts 默认的白底 */
+/** 提示框统一样式：深色卡片底 + 细边，不用 echarts 默认的白底。
+ *  confine 把提示框约束在图表容器内——手机上图宽只有 330px 左右，
+ *  点最右侧那根柱子时默认会溢出到屏幕外，只能看到半个数值。 */
 export const tooltipStyle = {
+  confine: true,
   backgroundColor: '#0f1830',
   borderColor: '#2f3d58',
   borderWidth: 1,

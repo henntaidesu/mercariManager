@@ -3,7 +3,15 @@
   <head>
     <script type="module" src="/src/resumeGuard.js"></script>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- viewport-fit=cover：不写它 iOS 上 env(safe-area-inset-*) 恒为 0，
+         刘海屏横屏时侧边内容会被切掉，底部内容会被 Home 指示条压住 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- iOS 添加到主屏后按独立 App 打开，状态栏融进深色页面 -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- Android Chrome 地址栏/状态栏跟随页面底色，避免顶部一条白边 -->
+    <meta name="theme-color" content="#0b1220" />
     <title>FreeMarket Manager</title>
     <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
     <link rel="alternate icon" type="image/x-icon" href="/static/favicon.ico" />

@@ -45,16 +45,20 @@
   font-size: 13px;
   transition: all 0.2s ease;
 }
-.search-filter-chip:hover {
-  border-color: var(--el-color-primary, #409eff);
-  color: var(--el-color-primary, #409eff);
+/* 触摸屏点过之后 :hover 会一直留着：未选中的 chip 显示成蓝框蓝字，
+   和真正选中的 --active 只差一个底色，很容易读成已经筛上了 */
+@media (hover: hover) {
+  .search-filter-chip:hover {
+    border-color: var(--el-color-primary, #409eff);
+    color: var(--el-color-primary, #409eff);
+  }
+  .search-filter-chip--active:hover {
+    color: #fff;
+  }
 }
 .search-filter-chip--active {
   border-color: var(--el-color-primary, #409eff);
   background: var(--el-color-primary, #409eff);
-  color: #fff;
-}
-.search-filter-chip--active:hover {
   color: #fff;
 }
 /* chip 上的条数：圆形徽标。
@@ -177,8 +181,11 @@
   border-radius: 8px;
   transition: border-color 0.15s ease;
 }
-.ntf-card:hover {
-  border-color: #409eff;
+/* 触摸屏 :hover 会粘住：点过的卡片一直描着蓝边，看着像被选中 */
+@media (hover: hover) {
+  .ntf-card:hover {
+    border-color: #409eff;
+  }
 }
 .ntf-card-head {
   display: flex;
@@ -287,10 +294,57 @@
   font-size: 13px;
   color: #909399;
 }
-@media (max-width: 767px) {
+/* 断点用 768px 与全站 isMobile 对齐 */
+@media (max-width: 768px) {
   .ntf-card-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
+  }
+
+  /* chip 是这页的主筛选器，也是拇指最常点的地方：32px 偏小 */
+  .search-left-group {
+    gap: 8px;
+  }
+  .search-filter-chip {
+    height: 36px;
+  }
+  /* 「全部已读」「同步」两个按钮平分一行；原本右对齐 + margin-left:auto，
+     在窄屏里会掉到第二行右侧，左边空一大条 */
+  .search-actions {
+    margin-left: 0;
+    width: 100%;
+    justify-content: stretch;
+    gap: 8px;
+  }
+  /* 同步按钮外面套了一层 el-tooltip 的 <span>，它才是这里的弹性项，
+     只给 el-button 设 flex 不会生效 */
+  .search-actions > *,
+  .search-actions :deep(.el-button) {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    margin-left: 0;
+  }
+  .search-actions > span :deep(.el-button) {
+    width: 100%;
+  }
+  .search-card {
+    margin-bottom: 12px;
+  }
+
+  /* 分页贴右缘时单手够不到 */
+  .pagination {
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .pagination :deep(.el-pagination) {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    justify-content: center;
+  }
+
+  .ntf-thumb {
+    width: 44px;
+    height: 44px;
   }
 }
 

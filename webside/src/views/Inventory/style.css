@@ -115,16 +115,20 @@
   font-size: 13px;
   transition: all 0.2s ease;
 }
-.search-chips-row .search-filter-chip:hover {
-  border-color: var(--el-color-primary, #409eff);
-  color: var(--el-color-primary, #409eff);
+/* 触摸屏点过之后 :hover 会一直留着：未选中的筛选卡片会一直显示成蓝框蓝字，
+   和真正选中的 --active 只差一个底色，很容易看成已经筛上了 */
+@media (hover: hover) {
+  .search-chips-row .search-filter-chip:hover {
+    border-color: var(--el-color-primary, #409eff);
+    color: var(--el-color-primary, #409eff);
+  }
+  .search-chips-row .search-filter-chip--active:hover {
+    color: #fff;
+  }
 }
 .search-chips-row .search-filter-chip--active {
   border-color: var(--el-color-primary, #409eff);
   background: var(--el-color-primary, #409eff);
-  color: #fff;
-}
-.search-chips-row .search-filter-chip--active:hover {
   color: #fff;
 }
 .product-field-inline {
@@ -1093,9 +1097,13 @@ a.pef-lcard:hover {
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.inv-card:hover {
-  border-color: #409eff;
-  transform: translateY(-2px);
+/* 触摸屏上 :hover 会粘住：点过的卡片会一直保持蓝框 + 抬起 2px，
+   在网格里看着就像被选中了（组合选品模式下的 is-picked 才是真选中） */
+@media (hover: hover) {
+  .inv-card:hover {
+    border-color: #409eff;
+    transform: translateY(-2px);
+  }
 }
 .inv-card.is-alert { border-color: #f56c6c; }
 .inv-card.is-picked { border-color: #67c23a; box-shadow: 0 0 0 1px #67c23a inset; }
@@ -1222,8 +1230,9 @@ a.pef-lcard:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 手机：一行两列，图框同比缩小 */
-@media (max-width: 767px) {
+/* 手机：一行两列，图框同比缩小。断点用 768px 与 isMobile / 其余手机块对齐——
+   写 767px 时恰好 768px 宽的设备会拿到手机版的 JS 行为却是电脑版的卡片尺寸 */
+@media (max-width: 768px) {
   .inv-card-grid {
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 8px;
@@ -1737,6 +1746,19 @@ a.pef-lcard:hover {
   }
   .table-scroll {
     -webkit-overflow-scrolling: touch;
+  }
+  /* 分页右对齐时整组按钮贴在屏幕右缘，单手拿手机够不到；居中并允许换行 */
+  .table-pagination {
+    justify-content: center;
+  }
+  .table-pagination :deep(.el-pagination) {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    justify-content: center;
+  }
+  /* 四个筛选卡片是这页主要的筛选入口，32px 在手机上偏小 */
+  .search-chips-row .search-filter-chip {
+    height: 36px;
   }
   .row-actions {
     gap: 4px;
