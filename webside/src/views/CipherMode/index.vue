@@ -129,4 +129,27 @@ onMounted(load)
   font-size: 18px;
   letter-spacing: 2px;
 }
+
+/* ── 手机端（iOS / Android）────────────────────────────────── */
+@media (max-width: 768px) {
+  .cipher-mode-page {
+    padding: 0;
+  }
+  /* 标题与模式切换并排在 375px 下放不开 */
+  .cipher-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  /* 番号 → 暗号的对照行是等宽字体，暗号本身还带 2px 字距，
+     窄屏下要允许折行，否则右边的暗号会被挤出卡片 */
+  .cipher-preview-row {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+  .cipher-preview-code {
+    font-size: 16px;
+    letter-spacing: 1px;
+    word-break: break-all;
+  }
+}
 </style>

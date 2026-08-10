@@ -47,3 +47,32 @@
   color: #94a3b8;
   text-align: center;
 }
+
+/* ── 手机端（iOS / Android）──────────────────────────────────
+   页面已经用 --app-vh 定高、卡片也有 max-width，主要补两点：安全区，
+   以及标题行放不下的问题。 */
+@media (max-width: 768px) {
+  /* 开了 viewport-fit=cover 之后，横屏刘海侧的 16px 内边距不够避让 */
+  .login-page {
+    padding: max(16px, env(safe-area-inset-top, 0px))
+             max(16px, env(safe-area-inset-right, 0px))
+             max(16px, env(safe-area-inset-bottom, 0px))
+             max(16px, env(safe-area-inset-left, 0px));
+  }
+  /* 标题写死了 nowrap 又没有 overflow:hidden，语言下拉又被全局那条
+     `width: 180px !important` 从 130px 撑到 180px——375px 屏上标题会直接
+     溢出卡片。下拉缩回去，标题超长时省略。 */
+  .login-lang-switcher {
+    width: 110px !important;
+    min-width: 0;
+  }
+  .title-wrap {
+    gap: 8px;
+    font-size: 16px;
+  }
+  .title-wrap__left {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

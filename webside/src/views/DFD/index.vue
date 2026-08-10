@@ -845,4 +845,22 @@ code {
 }
 .note strong { color: var(--ink); }
 footer { margin-top: 48px; color: var(--faint); font-size: 12.5px; font-family: var(--mono); }
+
+/* ── 手机端（iOS / Android）──────────────────────────────────
+   这是文档页，图本身是 min-width:900px 的 SVG，靠 .panel 的
+   overflow-x 横滑看（页面自身不会被撑宽，这点原本就是对的）。
+   这里只压内边距与标题字号，把宽度尽量让给图。 */
+@media (max-width: 768px) {
+  h1 { font-size: 22px; }
+  h2 { font-size: 18px; }
+  h3 { font-size: 15px; }
+  .panel {
+    padding: 10px;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .chain-panel { padding: 10px; }
+  section { margin-top: 26px; }
+  .callout { padding: 10px 12px; }
+}
 </style>

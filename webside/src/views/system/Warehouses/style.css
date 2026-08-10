@@ -414,3 +414,89 @@
 .header-overview-item--muted .header-overview-value {
   color: #8b98b0;
 }
+
+/* ── 手机端（iOS / Android）──────────────────────────────────
+   这页是「仓库 → 货架名 → 货架号」三层折叠，两层折叠标题都是
+   「名称 | 统计 | 操作」的三列栅格。375px 宽下名称列的 42vw 只剩 157px，
+   统计块（每块至少 76px）挤进中间那列必然被压扁，操作按钮也会顶出去。
+   折叠头本身已是 height:auto，所以直接改成竖排三段即可。 */
+@media (max-width: 768px) {
+  /* 卡片头：概览块两列，开关与新建按钮各占半行 */
+  .header-overview-grid {
+    width: 100%;
+  }
+  .header-overview-item {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    padding: 8px 10px;
+  }
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .header-primary-btn {
+    flex: 0 0 auto;
+  }
+
+  /* 两层折叠标题：三列栅格改单列竖排 */
+  .collapse-title,
+  .shelf-name-title-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 8px;
+    padding-right: 0;
+  }
+  .collapse-title-start,
+  .shelf-name-title-start {
+    max-width: 100%;
+  }
+  .collapse-title-end,
+  .shelf-name-title-end {
+    justify-self: stretch;
+  }
+  .collapse-title-actions,
+  .shelf-name-title-actions {
+    justify-content: flex-end;
+  }
+  /* 统计块改三列平分。--primary 那条的 76px 权重是 (0,2,0)，
+     只写 .collapse-stat-item 压不住，必须照原样式的选择器写一遍。 */
+  .collapse-stat-grid--primary .collapse-stat-item,
+  .collapse-stat-item--compact {
+    flex: 1 1 calc(33.333% - 6px);
+    min-width: 0;
+    padding: 8px 6px;
+  }
+  .collapse-stat-value {
+    font-size: 16px;
+  }
+
+  /* 折叠内边距压紧，给三层嵌套留出宽度 */
+  .warehouse-collapse :deep(.el-collapse-item__header) {
+    padding: 10px;
+  }
+  .warehouse-collapse :deep(.el-collapse-item__content) {
+    padding: 8px;
+  }
+  .shelf-name-collapse :deep(.el-collapse-item__header) {
+    padding: 8px 10px;
+  }
+  .shelf-name-collapse :deep(.el-collapse-item__content) {
+    padding: 8px;
+  }
+
+  /* 货架号卡片：内部还嵌着两列指标网格，压到两列会把每个指标挤到 65px
+     出头，所以维持一行一张（210px 的下限在手机上本来就只排得下一列）。
+     这里只把操作行的按钮拉开一点，方便拇指点。 */
+  .shelf-no-card__btns :deep(.el-button) {
+    min-height: 32px;
+  }
+}
+
+/* 触摸屏 :hover 会粘住：点过的货架号卡片会一直描蓝边 + 抬起，看着像被选中 */
+@media (hover: none) {
+  .shelf-no-card:hover {
+    border-color: #253149;
+    box-shadow: none;
+    transform: none;
+  }
+}

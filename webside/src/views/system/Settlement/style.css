@@ -251,3 +251,75 @@
   gap: 16px;
 }
 .detail-footer-tip { font-size: 12px; color: var(--el-text-color-secondary); text-align: left; }
+
+/* ── 手机端（iOS / Android）────────────────────────────────── */
+@media (max-width: 768px) {
+  .toolbar-card,
+  .summary-card {
+    margin-bottom: 12px;
+  }
+  /* 「结算区间」标签与区间选择器原本并排一行。上面为了让日期读得出来
+     把选择器锁成 width/min-width 300px，而 375px 屏上卡片内只有 303px
+     可用，减去标签和间距后剩 230 出头——min-width 顶不动，整页会被撑出
+     横向滚动条。手机上标签换行到上方，选择器满宽。 */
+  .toolbar-field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    width: 100%;
+  }
+  .toolbar :deep(.range-picker.el-date-editor) {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .toolbar-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+  .toolbar-actions :deep(.el-button) {
+    flex: 1 1 0;
+    margin-left: 0;
+  }
+
+  /* 汇总条 6 块单列排下来要划一屏半，两列刚好 */
+  .stat-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stat-tile {
+    min-height: 72px;
+    padding: 10px 12px;
+  }
+  .stat-tile-value {
+    font-size: 17px;
+  }
+  /* 汇率那块内容最多（前缀 + 输入 + 后缀 + 刷新），单独占满一行 */
+  .stat-tile:has(.rate-input-wrap) {
+    grid-column: 1 / -1;
+  }
+  .rate-input-wrap {
+    flex-wrap: wrap;
+  }
+
+  /* 待结算物品登记：三个字段各自够宽才好输，改成品名独占一行 */
+  .pending-form :deep(.pending-name),
+  .pending-form :deep(.pending-name .el-input) {
+    flex: 1 1 100%;
+  }
+  .pending-form :deep(.pending-num) {
+    flex: 1 1 0;
+    width: auto !important;
+  }
+
+  .panel-head,
+  .section-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .panel-tip {
+    flex: 1 1 100%;
+    margin-right: 0;
+  }
+  .detail-meta {
+    gap: 6px 16px;
+  }
+}

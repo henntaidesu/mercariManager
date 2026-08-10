@@ -1379,9 +1379,12 @@ onUnmounted(() => {
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.sc-nav-item:hover {
-  background: #18233a;
-  color: var(--sc-text);
+/* 触摸屏 :hover 会粘住：点过的锚点会一直亮着底色，和 is-active 混在一起 */
+@media (hover: hover) {
+  .sc-nav-item:hover {
+    background: #18233a;
+    color: var(--sc-text);
+  }
 }
 .sc-nav-item.is-active {
   background: linear-gradient(90deg, rgba(91, 140, 255, 0.2), rgba(91, 140, 255, 0.04));
@@ -1570,8 +1573,10 @@ onUnmounted(() => {
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.sc-seg button:hover {
-  color: var(--sc-text);
+@media (hover: hover) {
+  .sc-seg button:hover {
+    color: var(--sc-text);
+  }
 }
 .sc-seg button.is-on {
   background: #26314a;
@@ -1598,8 +1603,12 @@ onUnmounted(() => {
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
-.sc-choice:hover {
-  border-color: #3a4c6e;
+/* 这是数据库后端选择卡，选错要整库迁移 + 重启后端。触摸屏上粘住的 hover 描边
+   会紧挨着 is-on 的高亮描边，最不该在这里让人分不清哪张才是当前生效的。 */
+@media (hover: hover) {
+  .sc-choice:hover {
+    border-color: #3a4c6e;
+  }
 }
 .sc-choice.is-on {
   border-color: var(--sc-accent);
@@ -1729,6 +1738,52 @@ onUnmounted(() => {
   }
   .sc-field--wide {
     grid-column: auto;
+  }
+}
+
+/* ── 手机端（iOS / Android）──────────────────────────────────
+   900px 那档已经把左侧锚点导航改成了顶部 chip 条，这里补的是触摸细节
+   和把内边距让出来——三层 padding（页面 12 + 面板 18 + 字段）在 375px
+   屏上要吃掉整整 60px。 */
+@media (max-width: 768px) {
+  /* chip 条要能顺畅横滑，且不显示那条几乎看不见的滚动条 */
+  .sc-nav {
+    padding: 6px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+  .sc-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .sc-nav-item {
+    white-space: nowrap;
+    padding: 8px 12px;
+  }
+  .sc-body {
+    gap: 12px;
+  }
+  .sc-sections {
+    gap: 12px;
+  }
+  .sc-panel-head {
+    padding: 12px;
+    gap: 8px;
+  }
+  .sc-panel-body {
+    padding: 12px;
+  }
+  .sc-head-text {
+    min-width: 0;
+  }
+  .sc-grid {
+    gap: 12px;
+  }
+  /* 后端选择卡改单列：并排时每张只有 130 出头，副标题会折成三行 */
+  .sc-choices {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
   }
 }
 </style>
