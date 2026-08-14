@@ -192,6 +192,7 @@ async def yahoo_ship_qr_endpoint(
         "class_text": req.size,
         "item_name": req.item_name,
         "material_code": material_code,
+        "qr_text": qr_text,
     }
     try:
         task, created = submit_task(
@@ -209,7 +210,7 @@ async def yahoo_ship_qr_endpoint(
         raise
 
     if created:
-        mark_shipping(int(todo_id), photo_path, req.size)
+        mark_shipping(int(todo_id), photo_path, req.size, qr_text)
 
     return {"success": True, "data": {"task": task, "created": created}}
 

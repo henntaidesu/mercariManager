@@ -173,9 +173,11 @@ def login(data: LoginRequest, request: Request):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     _clear_fail(key)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 活跃时间同登录时间一起写：此后由 auth.require_auth 逐请求刷新
     db.execute_update(
-        "UPDATE [users] SET last_login_at = ? WHERE id = ?",
-        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id),
+        "UPDATE [users] SET last_login_at = ?, last_active_at = ? WHERE id = ?",
+        (now_str, now_str, user_id),
     )
 
     return {

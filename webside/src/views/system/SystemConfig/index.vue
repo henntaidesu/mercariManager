@@ -92,7 +92,7 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="last_login_at" :label="t('system.lastLoginAt')" min-width="160" />
+              <el-table-column prop="last_active_at" :label="t('system.lastActiveAt')" min-width="160" />
               <el-table-column prop="created_at" :label="t('common.createdAt')" min-width="160" />
             </el-table>
           </div>

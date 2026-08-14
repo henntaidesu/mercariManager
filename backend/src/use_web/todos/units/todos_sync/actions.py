@@ -5,12 +5,12 @@ import logging
 from typing import Any, Dict, Optional
 from fastapi import HTTPException
 from .....db_manage.models.todos.todo_item import TodoItemModel
-from .....use_mercari.get_to_du_list.transaction_detail import SUPPORTED_REACTIONS, capture_qr_scanner_frame, click_change_shipping_method, confirm_cancellation_receipt, confirm_change_shipping_method, confirm_shipping_selection, finalize_post_shipping, revise_shipping_after_qr, push_remote_camera_frame, read_post_shipping_confirm_info, send_message_reaction_by_index, send_transaction_message, start_select_shipping_class, submit_transaction_review
+from .....use_mercari.get_to_du_list.transaction_detail import BUYER_RECEIPT_KIND, BUYER_RECEIPT_TITLE, SUPPORTED_REACTIONS, capture_qr_scanner_frame, click_change_shipping_method, confirm_cancellation_receipt, confirm_change_shipping_method, confirm_shipping_selection, finalize_post_shipping, revise_shipping_after_qr, push_remote_camera_frame, read_post_shipping_confirm_info, send_message_reaction_by_index, send_transaction_message, start_select_shipping_class, submit_buyer_receipt_review, submit_transaction_review
 from .....use_mercari.sync.sync_progress import clear_sync_progress
 from .....web_drive.core.account_serial_queue import queue_key_for_mercari_account, run_mercari_serial_async
 from .....web_drive.core.manager import get_web_drive_manager
 from .....web_drive.core.paths import mercari_todo_key
-from ..todos_models import CameraFrameRequest, ChangeShippingMethodRequest, ConfirmShippingSelectionRequest, SendMessageReactionRequest, SendTransactionMessageRequest, SubmitTransactionReviewRequest, TransactionActionRequest
+from ..todos_models import CameraFrameRequest, ChangeShippingMethodRequest, ConfirmShippingSelectionRequest, SendMessageReactionRequest, SendTransactionMessageRequest, SubmitBuyerReceiptRequest, SubmitTransactionReviewRequest, TransactionActionRequest
 from .detail import _validate_job_id
 
 log = logging.getLogger(__name__)
@@ -138,6 +138,46 @@ async def submit_transaction_review_endpoint(
         return await run_mercari_serial_async(
             queue_key_for_mercari_account(aid),
             lambda: submit_transaction_review(
+                int(todo_id), req.text, rating=req.rating, progress_job_id=jid
+            ),
+            suppress_idle_close=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        if jid:
+            clear_sync_progress(jid)
+
+async def confirm_buyer_receipt_endpoint(
+    todo_id: int, req: SubmitBuyerReceiptRequest
+) -> Dict[str, Any]:
+    """买家侧「确认收货」（受取評価）：勾选「商品の中身を確認しました」→ 选 良かった/残念だった
+    → 填评价文本 → 点「評価を投稿する」。仅对 kind=Shipped + title=受取評価をしてください 的
+    煤炉待办开放——放行条件与前端 isBuyerReceiptRow 同口径，命中不了直接 400，
+    比让浏览器跑一趟再报「未找到按钮」好读得多。"""
+    todo = TodoItemModel.find_by_id(id=int(todo_id))
+    if not todo:
+        raise HTTPException(status_code=404, detail="待办事项不存在")
+    aid = int(getattr(todo, "account_id", 0) or 0)
+    if not aid:
+        raise HTTPException(status_code=400, detail="待办事项缺少 account_id")
+    platform = (getattr(todo, "platform", "") or "mercari").strip().lower()
+    if platform and platform != "mercari":
+        raise HTTPException(status_code=400, detail="确认收货仅支持煤炉待办")
+    kind = (getattr(todo, "kind", "") or "").strip()
+    title = (getattr(todo, "title", "") or "").strip()
+    if kind != BUYER_RECEIPT_KIND or title != BUYER_RECEIPT_TITLE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"该待办不是待收货评价类（kind={kind or '空'}, title={title or '空'}）",
+        )
+    jid = _validate_job_id(req.progress_job_id)
+    try:
+        return await run_mercari_serial_async(
+            queue_key_for_mercari_account(aid),
+            lambda: submit_buyer_receipt_review(
                 int(todo_id), req.text, rating=req.rating, progress_job_id=jid
             ),
             suppress_idle_close=True,

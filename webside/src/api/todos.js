@@ -36,6 +36,10 @@ export const todosApi = {
    *  再点「購入者を評価して取引完了する」。rating 走 opts 传入 */
   submitTransactionReview: (todoId, text, opts = {}, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/submit-review`, { text, ...opts }, { timeout: 60000, ...axiosConfig }),
+  /** 买家侧「确认收货」（受取評価）：勾选已确认收到 + 选 rating（good=良かった / bad=残念だった）
+   *  + 填评价，点「評価を投稿する」。仅 kind=Shipped + title=受取評価をしてください 命中，无二次确认 */
+  confirmBuyerReceipt: (todoId, body = {}, axiosConfig = {}) =>
+    http.post(`/use_web/todos/${encodeURIComponent(todoId)}/confirm-receipt`, body || {}, { timeout: 60000, ...axiosConfig }),
   /** 退货「确认签收」：点「返送された商品を受け取った」+ 二次确认「キャンセルを完了する」，
    *  完成后软删待办并刷新订单。后端自带开浏览器 → 不设超时。 */
   confirmCancellationReceipt: (todoId, body = {}, axiosConfig = {}) =>

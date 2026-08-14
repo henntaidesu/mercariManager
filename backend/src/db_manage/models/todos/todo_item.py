@@ -197,6 +197,15 @@ class TodoItemModel(BaseModel):
                 "not_null": False,
                 "default": None,
             },
+            # ship_qr_text: 从照片里解出的二维码原文（煤炉是発送用シール/専用箱 的码，
+            # 雅虎是 PYP:01/...; 材料码）。这才是真正提交出去的东西——煤炉把它注入扫描页，
+            # 雅虎把它解成材料码——照片只是载体。
+            # 与照片相反，**成功后也保留**：照片会被删掉，事后要查「这单发的是哪个码」只剩它。
+            "ship_qr_text": {
+                "type": "TEXT",
+                "not_null": False,
+                "default": None,
+            },
             # ship_qr_state: 发货扫码任务的进行状态。
             #   'shipping' = 已提交照片、任务进行中 → 列表类型显示「发货中」，且移出「待发货」筛选
             #   'failed'   = 任务失败 → 退回「待发货」，并显示保留的照片供人工判断

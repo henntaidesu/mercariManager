@@ -41,6 +41,13 @@ from .bulk_review import (
     pending_review_account_ids,
 )
 
+# ── 待收货（买家侧受取評価，即「确认收货」） ──
+from .buyer_receipt import (
+    BUYER_RECEIPT_KIND,
+    BUYER_RECEIPT_TITLE,
+    submit_buyer_receipt_review,
+)
+
 # ── 退货（申请退货：确认收到退回商品 → 完成取消） ──
 from .cancellation import confirm_cancellation_receipt
 
@@ -61,6 +68,7 @@ from .wait_shipping.qr_scan import (
     feed_photo_until_scanned,
     push_remote_camera_frame,
 )
+from .wait_shipping.qr_inject import deliver_qr_result_until_scanned
 from .wait_shipping.ship_finalize import (
     read_post_shipping_confirm_info,
     finalize_post_shipping,
@@ -87,6 +95,9 @@ __all__ = [
     "bulk_submit_reviews_for_account",
     "list_pending_review_todos",
     "pending_review_account_ids",
+    "BUYER_RECEIPT_KIND",
+    "BUYER_RECEIPT_TITLE",
+    "submit_buyer_receipt_review",
     "confirm_cancellation_receipt",
     "send_transaction_message",
     "SUPPORTED_REACTIONS",
@@ -96,6 +107,7 @@ __all__ = [
     "capture_qr_scanner_frame",
     "feed_photo_until_scanned",
     "push_remote_camera_frame",
+    "deliver_qr_result_until_scanned",
     "read_post_shipping_confirm_info",
     "finalize_post_shipping",
     "bulk_finalize_post_shipping_for_account",

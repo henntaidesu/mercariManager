@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -64,6 +66,33 @@ def _load_auth_user(user_id: int):
     }
 
 
+# 活跃时间写库节流：require_auth 每个请求都走，逐请求 UPDATE 会把一个只为展示的字段
+# 变成全站最高频的写。60 秒一次足够——「在线中」的账号读出来仍然约等于当前时间。
+_ACTIVE_TOUCH_INTERVAL_SEC = 60
+_ACTIVE_TOUCH_LOCK = threading.Lock()
+_ACTIVE_TOUCH_AT: dict = {}  # user_id -> 上次写库的单调时间戳
+
+
+def _touch_last_active(user_id: int) -> None:
+    """刷新 users.last_active_at（节流）。失败绝不能影响鉴权本身。"""
+    now = time.monotonic()
+    with _ACTIVE_TOUCH_LOCK:
+        last = _ACTIVE_TOUCH_AT.get(user_id)
+        if last is not None and (now - last) < _ACTIVE_TOUCH_INTERVAL_SEC:
+            return
+        _ACTIVE_TOUCH_AT[user_id] = now
+    try:
+        from src.db_manage.database import DatabaseManager
+
+        DatabaseManager().execute_update(
+            "UPDATE [users] SET last_active_at = ? WHERE id = ?",
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id),
+        )
+    except Exception:  # noqa: BLE001
+        with _ACTIVE_TOUCH_LOCK:  # 写失败就撤销节流标记，下个请求再试
+            _ACTIVE_TOUCH_AT.pop(user_id, None)
+
+
 def require_auth(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> dict:
@@ -82,6 +111,7 @@ def require_auth(
         raise HTTPException(status_code=403, detail="账号已被禁用")
     if int(claims.get("tv") or 0) != int(user["token_version"]):
         raise HTTPException(status_code=401, detail="登录已失效，请重新登录")
+    _touch_last_active(user["id"])
     claims["user_id"] = user["id"]
     claims["is_admin"] = user["is_admin"]
     return claims

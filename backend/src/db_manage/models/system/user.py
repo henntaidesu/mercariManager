@@ -66,6 +66,13 @@ class UserModel(BaseModel):
                 'not_null': False,
                 'default': None,
             },
+            # 最后活跃时间：每次通过鉴权的请求刷新（见 auth.require_auth，节流写入）。
+            # 与 last_login_at 不同——登录后一直在用的账号，这一列才会跟着走。
+            'last_active_at': {
+                'type': 'DATETIME',
+                'not_null': False,
+                'default': None,
+            },
             'created_at': {
                 'type': 'DATETIME',
                 'not_null': False,

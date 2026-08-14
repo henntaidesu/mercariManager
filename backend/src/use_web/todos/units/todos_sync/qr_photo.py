@@ -4,21 +4,27 @@
 原来的做法是客户端按 N fps 持续把摄像头帧推给后端，喂给煤炉扫描器的虚拟摄像头——
 用户必须一直开着弹窗盯到读出为止，页面被占住，关掉就中断。
 
-现在改为「拍一张」：客户端拍一张含二维码的照片提交，后端当场用 zxingcpp 验一遍能不能读出，
-读不出立刻要求重拍（不入队，避免排队几分钟才发现照糊了）；能读出就落盘并入队，
-剩下的喂图、等扫描器读取、抓发货信息全在后台任务里做，页面立刻可用。
+现在改为「拍一张」：客户端拍一张含二维码的照片提交，后端当场用 zxingcpp 解码，
+读不出立刻要求重拍（不入队，避免排队几分钟才发现照糊了）；能读出就把**解出的文本**
+连同照片一起落库入队，剩下的推进流程、抓发货信息全在后台任务里做，页面立刻可用。
+
+照片到此为止：两个平台的后台任务用的都是 ``qr_text``（煤炉注入扫描页、雅虎解成材料码），
+照片只留作失败时的人工核对凭证。
 
 状态流转（列表据此显示类型）：
     提交照片 → ``ship_qr_state='shipping'``（类型显示「发货中」，移出「待发货」）
-    成功发出通知 → 清空 state 与照片字段，**删除照片文件**（成功件不留证）
+    成功发出通知 → 清空 state 与照片字段，**删除照片文件**（成功件不留证）；
+                   ``ship_qr_text`` 保留，作为「发了哪个码」的本地记录
     失败 → ``ship_qr_state='failed'``，**保留照片**，行退回「待发货」供人工核对
+    同步时该待办已从平台列表消失 → 判定已发出，按「成功」同口径收尾
+                   （见 ``finalize_absent_shipping_rows``）
 """
 from __future__ import annotations
 
 import io
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from ..todos_models import ShippingQrPhotoRequest
 
@@ -33,8 +39,9 @@ _MAX_PHOTO_BYTES = 8 * 1024 * 1024
 def decode_qr(data_url: str) -> Optional[str]:
     """尝试从 dataURL 图片里解出二维码文本；解不出返回 None。
 
-    只作「这张照片拍清楚了吗」的即时校验——真正推进煤炉流程仍然要把图喂给它自己的扫描器，
-    我们解出的文本不参与业务。
+    解出的文本**就是业务本身**：雅虎侧它是材料码的来源，煤炉侧它被注入扫描页
+    （见 ``use_mercari/.../wait_shipping/qr_inject.py``）。照片本身只留作凭证，
+    两个平台都不会再把它喂给对方的扫描器。
     """
     try:
         import base64
@@ -58,6 +65,30 @@ def decode_qr(data_url: str) -> Optional[str]:
     except Exception as exc:
         log.debug("[qrphoto] 解码失败: %s", exc)
     return None
+
+
+def encode_qr_data_url(text: str, *, scale: int = 8) -> str:
+    """把扫码结果重新编码成一张标准二维码图（PNG dataURL）。
+
+    煤炉侧结果注入的兜底：推进虚拟摄像头的不再是用户那张照片，而是同一段文本重画出来的
+    码——没有反光、没有失焦、对比度拉满，扫描器一帧就能读出。
+    """
+    import base64
+
+    import numpy as np
+    import zxingcpp
+    from PIL import Image
+
+    content = (text or "").strip()
+    if not content:
+        raise ValueError("扫码结果为空，无法生成二维码")
+    barcode = zxingcpp.create_barcode(content, zxingcpp.BarcodeFormat.QRCode)
+    arr = np.array(zxingcpp.write_barcode_to_image(barcode, scale=int(scale)))
+    if arr.ndim == 3:
+        arr = arr[:, :, 0]
+    buf = io.BytesIO()
+    Image.fromarray(arr).convert("L").save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def save_photo(data_url: str) -> str:
@@ -110,17 +141,23 @@ def _update_todo(todo_id: int, sql_set: str, params: tuple, extra_where: str = "
     )
 
 
-def mark_shipping(todo_id: int, photo_path: str, class_text: str = "") -> None:
-    """照片提交入队 → 标记「发货中」并记下照片。
+def mark_shipping(
+    todo_id: int, photo_path: str, class_text: str = "", qr_text: str = ""
+) -> None:
+    """照片提交入队 → 标记「发货中」，记下照片与**解出的扫码结果**。
 
     立刻落库，列表才能马上把类型显示成「发货中」并把该行移出「待发货」——
     用户已经拍完码交给系统了，再列在待发货里会让人以为还没处理。
+
+    ``qr_text`` 是这一单真正提交出去的东西（煤炉注入扫描页、雅虎解成材料码），
+    照片只是它的载体，所以它必须独立落库：照片会被删（成功件不留证），它不会。
     """
     try:
         _update_todo(
             todo_id,
-            "[ship_qr_state] = ?, [ship_qr_photo_path] = ?, [ship_qr_class_text] = ?",
-            ("shipping", to_web_path(photo_path), (class_text or None)),
+            "[ship_qr_state] = ?, [ship_qr_photo_path] = ?, [ship_qr_class_text] = ?, "
+            "[ship_qr_text] = ?",
+            ("shipping", to_web_path(photo_path), (class_text or None), (qr_text or None)),
         )
         log.info("[qrphoto] 待办 %s 进入发货中", todo_id)
     except Exception:
@@ -169,6 +206,8 @@ def mark_scanned_and_cleanup(todo_id: int, photo_path: str) -> None:
     """扫码 + 発送通知成功 → 记扫码时刻、清空照片字段并**删除照片文件**。
 
     成功件不留证：通知已正常发出，照片没有留存价值，攒着只会让 imges 无限增长。
+    ``ship_qr_text`` 是例外，**成功也保留**——它是「这单实际发出去的是哪个码」的唯一
+    本地记录，照片删掉之后就只剩它了，事后对账要靠它。
     DB 更新失败（重试一次后）则**保留照片文件**：此时行仍处于 ``shipping`` 且
     ``ship_qr_photo_path`` 还指向照片，先删文件会留下悬空路径 + 永远卡在发货中的行。
     """
@@ -192,6 +231,114 @@ def mark_scanned_and_cleanup(todo_id: int, photo_path: str) -> None:
         return
     cleanup_photo(photo_path)
     log.info("[qrphoto] 待办 %s 发货完成，照片已删除", todo_id)
+
+
+def finalize_absent_shipping_rows(
+    account_id: int,
+    incoming_uuids: Iterable[str],
+    *,
+    platform: Optional[str] = None,
+) -> int:
+    """已经办完、但本地还停在「发货中 / 发货失败」的行 → 收尾，让它离开「已扫码」。
+
+    「办完」有两种：平台待办列表已不再返回它（缺席），或本地已 ``shipped_finalized=1``
+    （発送通知已发出，此时平台的陈旧列表仍可能返回同 uuid，故不能只判缺席）。
+
+    为什么同步时的缺席软删管不到这些行：「已扫码」筛选（``scanned_only``）**故意不套用
+    ``is_delete``**（见 ``todos_query._build_todo_where``，否则中间态的行一条都看不到），
+    所以缺席软删把 ``is_delete`` 置 1 之后，只要 ``ship_qr_state`` 还是 shipping/failed，
+    行就一直挂在「已扫码」里出不来。
+
+    而平台把这条待办撤下，正说明这单已经不需要卖家再操作了——通常是発送通知已经生效
+    （任务在通知发出后、写库前被中断/重启复位成 failed，是最常见的一种），也可能是用户
+    自己在 App 里发的。无论哪种，本地这单都办完了，不该再占着「已扫码」。
+
+    收尾口径与 ``mark_scanned_and_cleanup`` 一致：清空 state 与照片字段、删除照片文件
+    （成功件不留证），``ship_qr_text`` 保留——照片删掉后它是「发了哪个码」的唯一本地记录。
+    另置 ``shipped_finalized=1``：平台的陈旧列表下次若又返回同 uuid，``_upsert_todo_row``
+    据此保持隐藏，不会把已办完的行复活回待发货。
+    ``ship_qr_scanned_at`` 不动——没扫成的行不该被补一个假的扫码时刻，``is_delete=1``
+    本身就是完成标记。
+
+    与并发任务安全：``mark_ship_failed`` 带 ``ship_qr_state='shipping'`` 的前置条件，
+    本函数清空后它就是空操作，不会把已收尾的行又标回 failed。
+
+    ⚠ 两条调用约束：
+    1. **只在列表抓取完整时调用**——不完整列表里的缺席不等于已完成（煤炉见
+       ``apply_todolist_sync`` 的 ``complete`` 参数；雅虎接口没有完整性标志，故只在
+       ``incoming`` 非空时调用，空列表可能是会话失效而非真的没有待办）。
+    2. ``incoming_uuids`` 必须与调用方那条缺席软删**传同一份**，否则两处对「缺席」的
+       判定会分叉。
+
+    ``platform`` 为空时不加平台条件（与煤炉侧缺席软删同口径——账号本身就归属单一平台，
+    且历史行的 platform 可能为空）；雅虎侧传 ``'yahoo'``，与它那条软删的条件保持一致。
+
+    返回收尾的行数。
+    """
+    from .....db_manage.database import DatabaseManager
+    from ....image_storage import get_image_root
+
+    uuids = [str(u).strip() for u in (incoming_uuids or []) if str(u or "").strip()]
+    where = ["[account_id] = ?", "IFNULL([ship_qr_state], '') IN ('shipping', 'failed')"]
+    params: List[Any] = [int(account_id)]
+    if platform:
+        where.append("TRIM(IFNULL([platform], '')) = ?")
+        params.append(str(platform))
+    if uuids:
+        # 两种都算「这单已经办完了」：
+        #  - 缺席：平台列表不再返回它；
+        #  - 已 finalized：本地早已完成（発送通知已发出），此时平台的陈旧列表**仍可能**
+        #    返回同 uuid（``_upsert_todo_row`` 据此把 is_delete 压回 1）。只判缺席的话，
+        #    这类行会一直卡在「已扫码」——实测就有这种行（通知已发出、任务收尾阶段
+        #    出错被 worker 复位成 failed）。
+        where.append(
+            "(COALESCE([shipped_finalized], 0) = 1 OR [uuid] NOT IN (%s))"
+            % ",".join(["?"] * len(uuids))
+        )
+        params.extend(uuids)
+    where_sql = " AND ".join(where)
+
+    db = DatabaseManager()
+    try:
+        rows = db.execute_query(
+            f"SELECT [id], [ship_qr_photo_path] FROM [todo_items] WHERE {where_sql}",
+            tuple(params),
+        ) or []
+    except Exception:
+        log.exception("[qrphoto] 查询待收尾的发货扫码行失败 account_id=%s", account_id)
+        return 0
+    if not rows:
+        return 0
+
+    todo_ids = [int(r[0]) for r in rows if r and r[0] is not None]
+    photo_paths = [str(r[1] or "").strip() for r in rows if r and r[1]]
+
+    # 先写库再删文件：写库失败时照片还留着，行也仍指向它——不会留下悬空路径
+    # （与 mark_scanned_and_cleanup 同一原则）。
+    try:
+        updated = db.execute_update(
+            "UPDATE [todo_items] SET [ship_qr_state] = NULL, [ship_qr_photo_path] = NULL, "
+            "[ship_qr_class_text] = NULL, [is_delete] = 1, [shipped_finalized] = 1 "
+            f"WHERE {where_sql}",
+            tuple(params),
+        )
+    except Exception:
+        log.exception("[qrphoto] 收尾已办完的发货扫码行失败 account_id=%s", account_id)
+        return 0
+
+    for path in photo_paths:
+        name = os.path.basename(path)
+        if name:
+            cleanup_photo(os.path.join(get_image_root(), name))
+
+    n = int(updated or 0)
+    if n:
+        log.info(
+            "[qrphoto] account_id=%s 有 %d 条待办已办完（列表已不返回 / 本地已完成），"
+            "清掉残留的发货扫码状态（todo_ids=%s）",
+            account_id, n, todo_ids,
+        )
+    return n
 
 
 def validate_and_store(photo: str) -> Dict[str, Any]:
@@ -234,6 +381,8 @@ async def submit_shipping_qr_photo(
         "todo_id": int(todo_id),
         "account_id": aid,
         "photo_path": stored["photo_path"],
+        # 解出来的原文随 payload 走：任务里注入煤炉扫描页用它，不再解第二遍，也不再喂照片
+        "qr_text": stored["qr_text"],
         "order_no": str(getattr(todo, "item_id", "") or "").strip(),
     }
     if req.class_text:
@@ -258,6 +407,8 @@ async def submit_shipping_qr_photo(
         raise
 
     if created:
-        mark_shipping(int(todo_id), stored["photo_path"], str(req.class_text or ""))
+        mark_shipping(
+            int(todo_id), stored["photo_path"], str(req.class_text or ""), stored["qr_text"]
+        )
 
     return {"success": True, "data": {"task": task, "created": created}}

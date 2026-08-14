@@ -89,6 +89,16 @@ class SubmitTransactionReviewRequest(PydanticModel):
     progress_job_id: Optional[str] = None
 
 
+class SubmitBuyerReceiptRequest(PydanticModel):
+    """买家侧受取評価（「确认收货」）：文本 + rating，与卖家评价字段同构
+
+    （买家/卖家共用同一套页面 input[name="fame"] 单选组件）。"""
+
+    text: str = Field("", max_length=140)
+    rating: Literal["good", "bad"] = "good"
+    progress_job_id: Optional[str] = None
+
+
 class BulkSubmitReviewsRequest(PydanticModel):
     """一键好评：对所有「評価をしてください」待办批量提交评价（不指定则全部启用账号）。"""
 

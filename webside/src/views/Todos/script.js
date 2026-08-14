@@ -40,9 +40,11 @@ export default defineComponent({
       IncomingMessage: 'todos.kind.waitReply',
       // 雅虎「取引メッセージ」＝买家来信待回复（源自通知流，非待办接口）
       YahooIncomingMessage: 'todos.kind.waitReply',
+      // 「受取評価をしてください」：本账号作为买家收到的通知——卖家已发货，等待本账号
+      // 确认收货并提交受取評価（右栏面板见 isBuyerReceiptTodo，操作见 onSubmitBuyerReceipt）
       Shipped: 'todos.kind.waitReceipt',
-      // 雅虎「発送済み」＝已发货待买家收货。无需卖家操作，故没有具名 kind，
-      // 按 Yahoo:{type} 原样透传（与后端 _WAIT_RECEIPT_COND 同口径）
+      // 雅虎「発送済み」＝同样是买家侧通知，但没有对应可驱动的页面，故没有具名 kind，
+      // 按 Yahoo:{type} 原样透传展示（与后端 _WAIT_RECEIPT_COND 同口径），不接「确认收货」动作
       'Yahoo:rsura': 'todos.kind.waitReceipt',
       // 退货的两个阶段，同属「退货」筛选但类型分开显示：
       //   买家发起（キャンセル申請）→ 申请退货
@@ -72,6 +74,18 @@ export default defineComponent({
     // 「残念だった」的评论字数下限，与页面校验（残念だった評価には10文字以上の記入が必要です）
     // 同口径；后端 REVIEW_BAD_MIN_LEN 再拦一次，避免白开一趟浏览器
     const REVIEW_BAD_MIN_LEN = 10
+
+    // 「确认收货」（买家侧受取評価）自选回复：与煤炉取引評価页上方的 5 颗 chip
+    // （取引への感謝 / 丁寧な梱包 / スムーズな対応 / 迅速な発送 / 良好な商品状態）一一对应，
+    // 点一下替换评价正文。煤炉那几颗的正文由服务端下发、拿不到，这里用等价的日文模板；
+    // 提交时后端只管把最终文本填进煤炉的评价输入框，不会去点煤炉自己的 chip（见 buyer_receipt.py）。
+    const BUYER_RECEIPT_TEMPLATES = [
+      { key: 'thanks', labelKey: 'todos.buyerReceiptTplThanks', text: 'この度はお取引ありがとうございました。' },
+      { key: 'packing', labelKey: 'todos.buyerReceiptTplPacking', text: '丁寧な梱包で商品を送っていただき、ありがとうございました。' },
+      { key: 'smooth', labelKey: 'todos.buyerReceiptTplSmooth', text: 'スムーズなご対応をいただき、ありがとうございました。' },
+      { key: 'fast', labelKey: 'todos.buyerReceiptTplFast', text: '迅速に発送していただき、ありがとうございました。' },
+      { key: 'condition', labelKey: 'todos.buyerReceiptTplCondition', text: '商品の状態も良く、満足しております。ありがとうございました。' },
+    ]
 
     // 「発送をしてください」（待发货）待办：处理时按商品 ID 反查本地库存图片与关联订单号
     const WAIT_SHIPPING_TITLE = '発送をしてください'
@@ -826,15 +840,19 @@ export default defineComponent({
         captured: { shipping_info: false, transaction_messages: false },
         // 回复草稿（默认为空，点「默认回复」按钮可一键填入模板）
         reply_draft: '',
-        // 评价草稿（仅 ReviewedSeller 用，预填默认评价）
+        // 评价草稿（ReviewedSeller / 买家确认收货共用，预填默认评价）
         review_draft: DEFAULT_REVIEW,
         // 取引評価单选，与页面 input[name="fame"] 同口径：good=良かった（页面默认）/ bad=残念だった
         review_rating: 'good',
+        // 「商品の中身を確認しました」勾选框（仅买家确认收货面板展示）：煤炉页面默认已勾选，
+        // 这里同步默认 true，仅作展示用途，不作为参数传给后端——后端始终确保该框处于勾选状态
+        buyer_receipt_checked: true,
       }
     }
 
     const replyLoading = ref(false)
     const reviewLoading = ref(false)
+    const buyerReceiptLoading = ref(false)
     const reactionLoading = ref(false)
 
     // 反应表情列表（与后端 SUPPORTED_REACTIONS / Mercari picker 顺序一一对应）
@@ -883,6 +901,18 @@ export default defineComponent({
       const title = (currentRow.value?.title || '').trim()
       return kind === 'ReviewedSeller' && title === '評価をしてください'
     })
+
+    // 「确认收货」行判定：本账号作为买家收到的通知——kind='Shipped' 且
+    // title='受取評価をしてください'（真实同步数据验证过，见 todos_query._WAIT_RECEIPT_COND
+    // 的注释）。仅煤炉：雅虎侧的 Yahoo:rsura 没有对应可驱动的页面。
+    function isBuyerReceiptRow(row) {
+      return (
+        platformOf(row) === 'mercari' &&
+        String(row?.kind || '').trim() === 'Shipped' &&
+        String(row?.title || '').trim() === '受取評価をしてください'
+      )
+    }
+    const isBuyerReceiptTodo = computed(() => isBuyerReceiptRow(currentRow.value))
 
     // 评价可否提交：良かった 的评论是任意项（页面注脚「コメントはなくてもかまいません」），
     // 残念だった 必须写够 REVIEW_BAD_MIN_LEN 字
@@ -2728,6 +2758,51 @@ export default defineComponent({
       }
     }
 
+    function onPickBuyerReceiptTemplate(tpl) {
+      detail.review_draft = tpl.text
+    }
+
+    // 「确认收货」提交：与 onSubmitReview 同构（复用 txOverlay 全屏等待覆盖），
+    // 但**没有二次确认弹窗**——点击即提交，与煤炉页面「評価を投稿する」的单次点击一致。
+    async function onSubmitBuyerReceipt() {
+      if (!currentRow.value?.id) return
+      const text = (detail.review_draft || '').trim()
+      const rating = detail.review_rating === 'bad' ? 'bad' : 'good'
+      if (rating === 'bad' && text.length < REVIEW_BAD_MIN_LEN) {
+        ElMessage.warning(t('todos.reviewBadTooShort'))
+        return
+      }
+      buyerReceiptLoading.value = true
+      try {
+        const result = await txOverlay.run({
+          title: t('todos.submittingBuyerReceipt'),
+          consoleTag: '[确认收货]',
+          pollFn: (jobId) => todosApi.getSyncProgress(jobId),
+          actionFn: (jobId) =>
+            todosApi.confirmBuyerReceipt(currentRow.value.id, {
+              text,
+              rating,
+              progress_job_id: jobId,
+            }),
+        })
+        if (result?.completed) {
+          const note = result.order_refresh_error
+            ? t('todos.orderRefreshErrorNote', { error: result.order_refresh_error })
+            : ''
+          ElMessage.success(`${t('todos.buyerReceiptCompletedDetected')}${note}`)
+          // 浏览器已由后端关闭；这里关 dialog（onDetailDialogClose 里的 closeBrowser 是幂等的）
+          detailDialogVisible.value = false
+          load({ inPlace: true }) // 刷新待办列表（todo 已软删，列表中应消失）
+        } else {
+          ElMessage.warning(t('todos.buyerReceiptNotComplete'))
+        }
+      } catch (e) {
+        if (!e?.response) ElMessage.error(e?.message || t('todos.submitFailed'))
+      } finally {
+        buyerReceiptLoading.value = false
+      }
+    }
+
     async function onSendReaction(message, reactionKey) {
       if (!currentRow.value?.id) return
       if (!message || !message.is_buyer) return
@@ -2907,6 +2982,12 @@ export default defineComponent({
       isTranslating,
       onTranslateOld,
       isReviewedSeller,
+      isBuyerReceiptRow,
+      isBuyerReceiptTodo,
+      BUYER_RECEIPT_TEMPLATES,
+      buyerReceiptLoading,
+      onPickBuyerReceiptTemplate,
+      onSubmitBuyerReceipt,
       isWaitReply,
       canReactToMessages,
       isShippedState,

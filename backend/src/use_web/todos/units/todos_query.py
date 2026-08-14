@@ -25,12 +25,16 @@ _WAIT_REPLY_COND = (
 )
 # 「待评价」类判定：卖家待评价（ReviewedSeller）。
 _WAIT_REVIEW_COND = "IFNULL(t.[kind], '') = 'ReviewedSeller'"
-# 「待收货」类判定：已发货、等买家收货（Shipped）。卖家这一步无事可做，只是要能单独看一眼，
-# 所以从「其他」里摘出来单列（见 _CATEGORY_CONDS['other']）。
+# 「待收货」类判定：已发货（Shipped）。绝大多数情况下这是**本账号作为买家**收到的通知——
+# 卖家已发货，等待本账号勾选「商品の中身を確認しました」并提交受取評価，title 固定为
+# 「受取評価をしてください」（真实同步数据验证过，见 use_mercari/get_to_du_list/
+# transaction_detail/buyer_receipt.py 的「确认收货」自动化 + 前端 script.js 的
+# isBuyerReceiptRow）。旧注释曾误判这一步「卖家无事可做」——那是没考虑到本账号也会
+# 买入商品的情形，实测数据不支持，故已改正。
 # 注意与 awaiting_feedback 不是一回事：那仍是待发货 kind 的行（已通知、煤炉数据连携确认中）。
-# 雅虎侧是 ``Yahoo:rsura``：这一步同样无需卖家操作，故沿用通知流的做法（见
-# notifications_query 的 _WAIT_REPLY_COND）——只驱动动作的 type 才在 use_yahoo/todos/
-# todo_sync.py 里给具名 ``Yahoo*`` kind，纯展示的按 ``Yahoo:{type}`` 原样匹配。
+# 雅虎侧是 ``Yahoo:rsura``：同样是买家侧通知，但没有对应可驱动的卖家页面（见 use_yahoo/todos/
+# todo_sync.py 模块说明），故只随通知流展示（只驱动动作的 type 才在该文件里给具名 ``Yahoo*``
+# kind，纯展示的按 ``Yahoo:{type}`` 原样匹配），不接「确认收货」动作。
 _WAIT_RECEIPT_COND = "IFNULL(t.[kind], '') IN ('Shipped', 'Yahoo:rsura')"
 # 「退货」类判定：买家发起取消/退货申请（キャンセル申請），以及卖家同意后需要填退货信息
 # 并确认退回商品（返品に必要な情報の入力と、返品された商品の確認 → 前端类型显示「退货地址」）。
@@ -102,6 +106,7 @@ _LIST_COLS = (
     "ship_qr_photo_path",
     "ship_qr_state",
     "ship_qr_class_text",
+    "ship_qr_text",
 )
 
 

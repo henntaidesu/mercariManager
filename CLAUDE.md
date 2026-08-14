@@ -677,6 +677,24 @@ card's 同步数据 (`account.sync_data`); and 回国模式 (`system.homecoming`
 **Batch revise is not a separate type** — the frontend
 submits N `on_sale.revise` tasks, so closing the page no longer aborts halfway.
 
+**The ゆうパケットポスト 扫码照片 never leaves this server.** Both platforms decode it with
+zxing-cpp **at enqueue time** and carry the decoded text in `payload.qr_text`; the photo is only
+kept as evidence while the row is 发货中/失败. Yahoo turns that text into the material code
+(`parse_material_code`); Mercari feeds it to its own scanner page through
+`wait_shipping/qr_inject.py`, in two layers, both fed by the same text:
+(1) a **`BarcodeDetector` stub** installed alongside `_FAKE_CAMERA_JS` — *before* page scripts run,
+via `add_init_script` + `evaluate`, because the scanner feature-detects on mount. Windows Chromium
+has no native `BarcodeDetector`, so this is an addition, not an override, and whether メルカリ
+actually uses it is **unverified** — `window.__qrInjectDetectCalls` is reported back as
+`scan.detect_calls` precisely to settle that. Its `detect()` must resolve `[]` (never throw) before
+a result is set, or the page treats it as a camera fault and ends the scan.
+(2) fallback: the same text **re-encoded** into a clean QR (`qr_photo.encode_qr_data_url`) and
+pushed through the existing virtual camera — deterministic where a photo could be blurred or
+glared. `scan.via` records which layer won. `MERCARI_QR_INJECT_RESULT=0` disables layer 1.
+Tasks queued before `qr_text` existed still fall back to feeding the original photo.
+`todo_items.ship_qr_text` keeps the decoded text **even on success**, when the photo is deleted —
+it is then the only local record of which code shipped.
+
 **Anything that runs inside the todo 处理 dialog's `__todo` browser session must be registered
 in `_BROWSER_HOLDING_TASKS`** (`todos_sync/actions.py::close_detail_browser`) — the frontend
 closes that dialog right after enqueueing, and the close call would otherwise pull the session out
@@ -850,6 +868,9 @@ lets the user choose SQLite/MySQL, test the MySQL connection, and switch backend
   fails `PRECACHE_MAX_FAILURES` (3) times in a row leaves the candidate set entirely — without that,
   a permanently unfetchable todo is retried on *every* tick forever. Manual 刷新抓取 still works, and
   a successful fetch resets the counter.
+- `MERCARI_QR_INJECT_RESULT`: Set to `0` to skip the `BarcodeDetector` result-injection layer on
+  メルカリ's QR scanner page and go straight to pushing the re-encoded code. Kill switch for a hook
+  into a third-party page that cannot be tested from here. See Task Queue above.
 - `HOMECOMING_ITEM_DELAY_MIN_SEC` / `HOMECOMING_ITEM_DELAY_MAX_SEC` (default 30 / 90): random wait
   between two items **of the same account** in a 回国模式 batch; different accounts run in parallel
   and are not paced against each other. See 回国模式 above.

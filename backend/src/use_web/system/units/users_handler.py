@@ -41,14 +41,19 @@ def _hash_password(password: str, salt_hex: str) -> str:
 
 
 def list_users(_claims: dict = Depends(require_admin)):
+    # last_active_at 为空的是本列上线前的老行，退回登录时间——那是当时能确知的最后一次活跃
     rows = db.execute_query(
         """
-        SELECT id, username, display_name, is_active, is_admin, last_login_at, created_at
+        SELECT id, username, display_name, is_active, is_admin,
+               last_login_at, COALESCE(last_active_at, last_login_at), created_at
         FROM [users]
         ORDER BY id ASC
         """
     )
-    keys = ["id", "username", "display_name", "is_active", "is_admin", "last_login_at", "created_at"]
+    keys = [
+        "id", "username", "display_name", "is_active", "is_admin",
+        "last_login_at", "last_active_at", "created_at",
+    ]
     return [dict(zip(keys, row)) for row in rows]
 
 

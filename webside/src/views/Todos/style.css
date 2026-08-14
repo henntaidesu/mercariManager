@@ -706,6 +706,11 @@
   gap: 8px;
   margin-bottom: 8px;
 }
+/* 确认收货面板顶部「商品の中身を確認しました」勾选框：独占一行，与下方单选组拉开距离 */
+.buyer-receipt-checkbox {
+  display: block;
+  margin-bottom: 12px;
+}
 .detail-msg-from {
   font-size: 11px;
   color: var(--el-text-color-secondary);
@@ -1372,6 +1377,16 @@
   margin-top: 2px;
   font-size: 11px;
   color: var(--el-color-danger);
+}
+/* 扫码结果原文：列只有 150px，截断显示，完整值在 title 上 */
+.cell-ship-qr-text {
+  margin-top: 2px;
+  font-family: var(--el-font-family-mono, monospace);
+  font-size: 10px;
+  color: #7d8aa5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 详情表单里的发货扫码照片（仅已扫码/失败期间存在） */

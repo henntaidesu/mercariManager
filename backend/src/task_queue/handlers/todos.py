@@ -309,12 +309,12 @@ async def _run_yahoo_shipping_qr(
 async def _run_mercari_shipping_qr(
     task: Dict[str, Any], todo_id: int, account_id: int, photo_path: str
 ) -> Dict[str, Any]:
-    """煤炉 ゆうパケットポスト系：一张照片跑完「选尺寸 → 扫码 → 発送通知」全程。
+    """煤炉 ゆうパケットポスト系：一次提交跑完「选尺寸 → 扫码 → 発送通知」全程。
 
     整条链路都在这一个任务里，前台点完拍照即可离开：
       1. 选尺寸/发货地点 → 完了する → 进 ``/qr_code_scanner``（``class_text`` 为空时
          视为扫描页已就绪，跳过此步）；
-      2. 把照片喂给煤炉扫描器直到读出；
+      2. 把**入队时就解出的扫码结果**送进煤炉扫描器直到它认下来（照片不进煤炉，见 qr_inject）；
       3. 抓発送確認符号/追跡番号 → **直接发送発送通知**（按用户要求取消人工确认）；
       4. 成功 → 记扫码时刻、删除照片文件并清空照片字段（成功件不留证）。
 
@@ -326,6 +326,7 @@ async def _run_mercari_shipping_qr(
     )
     from ...use_mercari.get_to_du_list.transaction_detail import (
         confirm_shipping_selection,
+        deliver_qr_result_until_scanned,
         feed_photo_until_scanned,
         finalize_post_shipping,
         read_post_shipping_confirm_info,
@@ -343,6 +344,7 @@ async def _run_mercari_shipping_qr(
     timeout_sec = float(payload.get("timeout_sec") or SCAN_TIMEOUT_SEC)
     class_text = str(payload.get("class_text") or "").strip()
     facility = payload.get("facility") or None
+    qr_text = str(payload.get("qr_text") or "").strip()
     if not class_text:
         # 没有尺寸就没法开浏览器进扫描页，直接喂图只会绕一圈报「浏览器未打开」。
         # 明确失败，提示走完整重扫流程（前端会弹尺寸选择框）。
@@ -350,7 +352,8 @@ async def _run_mercari_shipping_qr(
             "该单缺少发货尺寸信息，无法自动进入扫描页。请在详情页点「更换相片并重新扫码」重新选择尺寸后再试。"
         )
 
-    photo = load_photo_data_url(photo_path)
+    # 加 qr_text 之前入队的老任务只有照片：退回原来的喂图路径，别让它们直接失败
+    photo = "" if qr_text else load_photo_data_url(photo_path)
 
     async def _run() -> Dict[str, Any]:
         async with progress.bridge(task["id"], "sync") as jid:
@@ -372,12 +375,17 @@ async def _run_mercari_shipping_qr(
                         "请打开该待办确认当前发货状态后重试。"
                     )
 
-            scan = await feed_photo_until_scanned(
-                todo_id, photo, timeout_sec=timeout_sec, progress_job_id=jid
-            )
+            if qr_text:
+                scan = await deliver_qr_result_until_scanned(
+                    todo_id, qr_text, timeout_sec=timeout_sec, progress_job_id=jid
+                )
+            else:
+                scan = await feed_photo_until_scanned(
+                    todo_id, photo, timeout_sec=timeout_sec, progress_job_id=jid
+                )
             if not scan.get("done"):
                 raise RuntimeError(
-                    f"煤炉扫描器未能读出这张照片（已尝试 {scan.get('elapsed_sec')}s）。"
+                    f"煤炉扫描器未能认下这个二维码（已尝试 {scan.get('elapsed_sec')}s）。"
                     "请重新拍摄：让二维码占满取景框、对准焦、避开反光与阴影。"
                 )
             info = await read_post_shipping_confirm_info(todo_id)

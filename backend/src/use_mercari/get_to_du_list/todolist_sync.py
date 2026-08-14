@@ -240,26 +240,35 @@ def apply_todolist_sync(
     # 软删除：当前账号下、未在本次返回中的活跃行。
     # 抓取不完整（分页中途失败）时跳过：缺席不等于已完成。
     marked_deleted = 0
+    shipping_qr_finalized = 0
     if not complete:
         log.warning(
             "[todolist] account_id=%s 本次抓取不完整（%d 条），跳过缺席软删",
             account_id, len(incoming_uuids),
         )
-    elif incoming_uuids:
-        placeholders = ",".join(["?"] * len(incoming_uuids))
-        marked_deleted = db.execute_update(
-            f"UPDATE [todo_items] SET [is_delete] = 1 "
-            f"WHERE [account_id] = ? AND COALESCE([is_delete], 0) = 0 "
-            f"AND [uuid] NOT IN ({placeholders})",
-            tuple([account_id] + incoming_uuids),
-        )
     else:
-        # 空列表也要标全部为已删
-        marked_deleted = db.execute_update(
-            "UPDATE [todo_items] SET [is_delete] = 1 "
-            "WHERE [account_id] = ? AND COALESCE([is_delete], 0) = 0",
-            (account_id,),
-        )
+        if incoming_uuids:
+            placeholders = ",".join(["?"] * len(incoming_uuids))
+            marked_deleted = db.execute_update(
+                f"UPDATE [todo_items] SET [is_delete] = 1 "
+                f"WHERE [account_id] = ? AND COALESCE([is_delete], 0) = 0 "
+                f"AND [uuid] NOT IN ({placeholders})",
+                tuple([account_id] + incoming_uuids),
+            )
+        else:
+            # 空列表也要标全部为已删
+            marked_deleted = db.execute_update(
+                "UPDATE [todo_items] SET [is_delete] = 1 "
+                "WHERE [account_id] = ? AND COALESCE([is_delete], 0) = 0",
+                (account_id,),
+            )
+        # 上面那条软删只动 is_delete=0 的行，管不到「已扫码」筛选——它故意不套用
+        # is_delete，行只要还停在 ship_qr_state=shipping/failed 就一直挂在那里。
+        # 这里把已办完的（煤炉列表不再返回，或本地已 shipped_finalized）残留状态清掉。
+        # 传的是同一份 incoming_uuids，两处对「缺席」的判定才不会分叉。
+        from ...use_web.todos.units.todos_sync.qr_photo import finalize_absent_shipping_rows
+
+        shipping_qr_finalized = finalize_absent_shipping_rows(account_id, incoming_uuids)
 
     # 补抓：本次同步涉及、已存在(updated)、仍缺发货期限的待发货商品 → 重新抓一次。
     # 仅限本次同步出现的商品；历史静态的旧 NULL 行（本次未涉及）不动。
@@ -287,6 +296,7 @@ def apply_todolist_sync(
         "new_wait_shipping_item_ids": new_wait_shipping_item_ids,
         "backfill_wait_shipping_item_ids": backfill_wait_shipping_item_ids,
         "marked_deleted": int(marked_deleted or 0),
+        "shipping_qr_finalized": int(shipping_qr_finalized or 0),
     }
 
 

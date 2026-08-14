@@ -9,6 +9,7 @@ from ....sync.sync_progress import set_sync_progress
 from .....db_manage.models.todos.todo_item import TodoItemModel
 from .....web_drive.core.manager import get_web_drive_manager
 from .....web_drive.core.paths import mercari_todo_key
+from .qr_inject import QR_RESULT_INJECT_JS
 
 log = logging.getLogger(__name__)
 
@@ -110,17 +111,19 @@ async def _click_scan_qr_and_open_scanner(
     await asyncio.sleep(0.6)
 
     # 远程摄像头注入：服务器无摄像头 → 把「客户端推送的帧」当作本地摄像头喂给 QR スキャナ。
+    # 同时装上结果注入层（BarcodeDetector），见 qr_inject。两者都必须在页面脚本之前生效：
     # ・add_init_script: ハードナビゲーション（新ドキュメント）に効く
     # ・evaluate: SPA ソフトナビ（同一ドキュメント内でルート遷移）に効く
-    # スキャナページがマウント時に enumerateDevices を見るため、遷移「前」に仕込む。
-    try:
-        await page.add_init_script(_FAKE_CAMERA_JS)
-    except Exception as exc:
-        log.debug("[qrcam] add_init_script 失敗: %s", exc)
-    try:
-        await page.evaluate(_FAKE_CAMERA_JS)
-    except Exception as exc:
-        log.debug("[qrcam] evaluate 注入失敗: %s", exc)
+    # スキャナページがマウント時に enumerateDevices / BarcodeDetector を見るため、遷移「前」に仕込む。
+    for name, js in (("qrcam", _FAKE_CAMERA_JS), ("qrinject", QR_RESULT_INJECT_JS)):
+        try:
+            await page.add_init_script(js)
+        except Exception as exc:
+            log.debug("[%s] add_init_script 失敗: %s", name, exc)
+        try:
+            await page.evaluate(js)
+        except Exception as exc:
+            log.debug("[%s] evaluate 注入失敗: %s", name, exc)
 
     report("click_scan_qr", "正在点击「2次元コードを読み取る」…")
     scan_btn = page.get_by_role("button", name=_SCAN_QR_BUTTON_TEXT)
@@ -147,10 +150,11 @@ async def _click_scan_qr_and_open_scanner(
     # スキャナ到達後：念のため再注入（ソフトナビ後でも window に効くよう）し、
     # 撮影開始ボタン「QRコードをスキャンする」が有効なら押してカメラを起動させる。
     await asyncio.sleep(0.6)
-    try:
-        await page.evaluate(_FAKE_CAMERA_JS)
-    except Exception:
-        pass
+    for js in (_FAKE_CAMERA_JS, QR_RESULT_INJECT_JS):
+        try:
+            await page.evaluate(js)
+        except Exception:
+            pass
     try:
         start_btn = page.get_by_role("button", name=_SCAN_START_BUTTON_TEXT)
         if await start_btn.count() == 0:
@@ -227,7 +231,10 @@ async def feed_photo_until_scanned(
     interval_sec: float = 0.4,
     progress_job_id: str = "",
 ) -> Dict[str, Any]:
-    """把**一张**照片反复喂给煤炉的 QR スキャナ，直到它读出二维码（或超时）。
+    """把**一张**图反复喂给煤炉的 QR スキャナ，直到它读出二维码（或超时）。
+
+    现在只作为 ``qr_inject.deliver_qr_result_until_scanned`` 的兜底引擎，喂进来的是**用解出
+    的文本重画的标准码**；只有没记下 ``qr_text`` 的旧任务才会退回来喂原始照片。
 
     与逐帧推流的区别：客户端只拍一次，之后不需要保持页面打开。虚拟摄像头 canvas 每隔
     ``interval_sec`` 重绘同一张图，扫描器把它当作静止画面的实时视频流去解码——

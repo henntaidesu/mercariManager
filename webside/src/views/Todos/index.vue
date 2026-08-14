@@ -181,6 +181,12 @@
               <template #error><span class="thumb-fallback">-</span></template>
             </el-image>
             <span v-else class="thumb-fallback">-</span>
+            <!-- 成功后照片会被删掉，扫码结果不会：它是「这单发的是哪个码」的唯一本地记录 -->
+            <div
+              v-if="row.ship_qr_text"
+              class="cell-ship-qr-text"
+              :title="`${t('todos.shipQrText')}: ${row.ship_qr_text}`"
+            >{{ row.ship_qr_text }}</div>
             <div v-if="row.ship_qr_state === 'failed'" class="cell-ship-failed">
               {{ t('todos.shipQrFailedHint') }}
             </div>
@@ -262,6 +268,16 @@
               @click="onConfirmCancellationReceipt(row)"
             >
               {{ t('todos.confirmReceipt') }}
+            </el-button>
+            <!-- 「待收货」行（本账号作为买家，等待受取評価）：按钮改叫「确认收货」，
+                 点击仍走 onProcess 打开处理弹窗——弹窗内选评价 + 挑自选回复后再提交 -->
+            <el-button
+              v-else-if="isBuyerReceiptRow(row)"
+              type="success"
+              plain
+              @click="onProcess(row)"
+            >
+              {{ t('todos.buyerReceiptRowAction') }}
             </el-button>
             <el-button v-else type="primary" plain @click="onProcess(row)">
               {{ t('todos.process') }}
@@ -466,7 +482,7 @@
             </div>
           </section>
 
-          <section v-if="!isReviewedSeller && !isWaitReply" class="detail-section">
+          <section v-if="!isReviewedSeller && !isWaitReply && !isBuyerReceiptTodo" class="detail-section">
             <!-- 已发行二维码/条形码时：确认发送 + 修改发货方式 并排放到标题右上角 -->
             <div class="detail-section-head">
               <div class="detail-section-title">{{ t('todos.section.shipping') }}</div>
@@ -832,6 +848,55 @@
                 @click="onSubmitReview"
               >
                 {{ t('todos.submitReviewFinish') }}
+              </el-button>
+            </div>
+          </section>
+
+          <!-- 确认收货（仅 isBuyerReceiptTodo：kind=Shipped 且 title=受取評価をしてください，
+               本账号作为买家）：勾选已确认 → 单选评价 → 自选回复/自填文本 → 提交，无二次确认弹窗 -->
+          <section v-else-if="isBuyerReceiptTodo" class="detail-section detail-section-grow">
+            <div class="detail-section-title">{{ t('todos.buyerReceiptTitle') }}</div>
+            <el-checkbox
+              v-model="detail.buyer_receipt_checked"
+              disabled
+              class="buyer-receipt-checkbox"
+            >
+              {{ t('todos.buyerReceiptCheckboxLabel') }}
+            </el-checkbox>
+            <el-radio-group v-model="detail.review_rating" class="review-rating-group">
+              <el-radio value="good" border class="review-rating">
+                <span class="review-rating-face">😊</span>{{ t('todos.reviewGood') }}
+              </el-radio>
+              <el-radio value="bad" border class="review-rating review-rating-bad">
+                <span class="review-rating-face">😞</span>{{ t('todos.reviewBad') }}
+              </el-radio>
+            </el-radio-group>
+            <div class="review-templates">
+              <el-button
+                v-for="tpl in BUYER_RECEIPT_TEMPLATES"
+                :key="tpl.key"
+                size="small"
+                round
+                @click="onPickBuyerReceiptTemplate(tpl)"
+              >{{ t(tpl.labelKey) }}</el-button>
+            </div>
+            <el-input
+              v-model="detail.review_draft"
+              type="textarea"
+              :autosize="{ minRows: 5, maxRows: 10 }"
+              :placeholder="t('todos.buyerReceiptPlaceholder')"
+              maxlength="140"
+              show-word-limit
+            />
+            <div class="detail-reply-actions">
+              <el-button
+                size="small"
+                type="primary"
+                :loading="buyerReceiptLoading"
+                :disabled="!canSubmitReview"
+                @click="onSubmitBuyerReceipt"
+              >
+                {{ t('todos.submitBuyerReceipt') }}
               </el-button>
             </div>
           </section>

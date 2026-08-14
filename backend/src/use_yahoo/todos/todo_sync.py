@@ -170,6 +170,8 @@ async def sync_yahoo_todos(account_id: int) -> Dict[str, Any]:
     stats: Dict[str, Any] = {
         "account_id": aid, "platform": "yahoo",
         "api_item_count": 0, "inserted": 0, "updated": 0, "skipped": 0, "marked_deleted": 0,
+        # 已办完、但本地还停在「发货中/失败」的行：清掉残留扫码状态的条数
+        "shipping_qr_finalized": 0,
         # 本次新出现的待发货（=新成交）：供调用方决定要不要联动同步在售/订单
         "new_wait_shipping": 0, "new_wait_shipping_item_ids": [],
     }
@@ -198,15 +200,27 @@ async def sync_yahoo_todos(account_id: int) -> Dict[str, Any]:
             if item_id:
                 stats["new_wait_shipping_item_ids"].append(item_id)
 
-    # 雅虎接口一次给全量，未返回的本地雅虎待办即已处理完 → 软删除
+    # 雅虎接口一次给全量，未返回的本地雅虎待办即已处理完 → 软删除。
+    # 空列表时不做：雅虎接口没有煤炉那种完整性标志，取到空既可能是真的没待办，
+    # 也可能是会话失效，按缺席全删风险太大。
     if incoming:
         ph = ",".join(["?"] * len(incoming))
+        uuids = tuple(incoming)
         stats["marked_deleted"] = int(db.execute_update(
             f"UPDATE [todo_items] SET [is_delete] = 1 "
             f"WHERE [account_id] = ? AND TRIM(IFNULL([platform], '')) = 'yahoo' "
             f"AND COALESCE([is_delete], 0) = 0 AND [uuid] NOT IN ({ph})",
-            (aid, *incoming),
+            (aid, *uuids),
         ) or 0)
+        # 上面那条只动 is_delete=0 的行，管不到「已扫码」筛选——它故意不套用 is_delete。
+        # 投函型（ゆうパケットポスト / mini）发货与煤炉共用 ship_qr_state，同样会卡在
+        # 「发货中/失败」出不来，这里把已办完的残留状态清掉。传同一份 uuid，
+        # 两处对「缺席」的判定才不会分叉。
+        from ...use_web.todos.units.todos_sync.qr_photo import finalize_absent_shipping_rows
+
+        stats["shipping_qr_finalized"] = finalize_absent_shipping_rows(
+            aid, uuids, platform="yahoo"
+        )
 
     await _fetch_missing_shipping_durations(db, aid, stats)
     log.info("[yahoo_todos] 账号#%s 待办同步：%s", aid, stats)
