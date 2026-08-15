@@ -49,12 +49,20 @@
               :value="u.id"
             />
           </el-select>
+          <!-- 日期区间比较哪一列：购入时间（默认） / 确认时间 -->
+          <el-select
+            v-model="timeField"
+            style="width: 100%"
+            @change="onFilterChange"
+          >
+            <el-option v-for="o in timeFieldOptions" :key="o.value" :label="o.label" :value="o.value" />
+          </el-select>
           <el-date-picker
             v-model="dateRange"
             type="daterange"
             :range-separator="t('common.to')"
-            :start-placeholder="t('orders.lastTimeStart')"
-            :end-placeholder="t('orders.lastTimeEnd')"
+            :start-placeholder="t('common.startDate')"
+            :end-placeholder="t('common.endDate')"
             value-format="YYYY-MM-DD"
             style="width: 100%"
             @change="onFilterChange"

@@ -18,6 +18,7 @@ class _AggregateMixin:
         use_completed_time: bool = False,
         platform: Optional[str] = None,
         seller_id: Optional[str] = None,
+        time_field: Optional[str] = None,
     ) -> Tuple[str, List[Any]]:
         base_sql = """
             FROM [orders] o
@@ -27,7 +28,15 @@ class _AggregateMixin:
         # use_completed_time=True（结算口径）：优先取写一次不再变的 completed_at——
         # order_updated_at 会被煤炉刷新反复覆盖，用它筛选会让订单在结算区间之间漂移
         # （已结算区间的订单漂进未结算区间被二次分账，或反向永远结不到）。
-        if use_completed_time:
+        # time_field（订单页「时间字段」下拉）优先于上面两个开关，且**不回退**：选「完成时间」就只比
+        # completed_at，未完成的订单因此落选——这才是该筛选的语义；一旦回退到 order_updated_at，
+        # 待发货订单也会被算进某个「完成区间」。
+        tf = str(time_field or "").strip().lower()
+        if tf == "purchase":
+            time_col = "o.purchase_time"
+        elif tf == "completed":
+            time_col = "o.completed_at"
+        elif use_completed_time:
             time_col = "COALESCE(o.completed_at, o.order_updated_at, o.purchase_time, o.order_date)"
         elif by_purchase_time:
             time_col = "o.purchase_time"
@@ -88,6 +97,7 @@ class _AggregateMixin:
         by_purchase_time: bool = False,
         use_completed_time: bool = False,
         seller_id: Optional[str] = None,
+        time_field: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         与列表相同的筛选条件下，对全量匹配行求和（非当前页）。
@@ -107,6 +117,7 @@ class _AggregateMixin:
                 by_purchase_time=by_purchase_time,
                 use_completed_time=use_completed_time,
                 seller_id=seller_id,
+                time_field=time_field,
             )
         db = cls().db
         base_sql, params = cls._build_list_filter(
@@ -118,6 +129,7 @@ class _AggregateMixin:
             by_purchase_time=by_purchase_time,
             use_completed_time=use_completed_time,
             seller_id=seller_id,
+            time_field=time_field,
         )
         base_sql += " AND o.status != 'cancelled'"
         sql = f"""
@@ -150,6 +162,7 @@ class _AggregateMixin:
         by_purchase_time: bool = False,
         use_completed_time: bool = False,
         seller_id: Optional[str] = None,
+        time_field: Optional[str] = None,
     ) -> int:
         """
         与 aggregate_sums 相同订单筛选下，成本支出合计（quantity * unit_price，日元整数）。
@@ -173,6 +186,7 @@ class _AggregateMixin:
             by_purchase_time=by_purchase_time,
             use_completed_time=use_completed_time,
             seller_id=seller_id,
+            time_field=time_field,
         )
         joined = base_sql.replace(
             "FROM [orders] o",
@@ -227,6 +241,7 @@ class _AggregateMixin:
         by_purchase_time: bool = False,
         use_completed_time: bool = False,
         seller_id: Optional[str] = None,
+        time_field: Optional[str] = None,
     ) -> Dict[str, Any]:
         from .....use_web.orders.units.order_goods_ratio import (
             ensure_orders_ratio_stored,
@@ -243,6 +258,7 @@ class _AggregateMixin:
             by_purchase_time=by_purchase_time,
             use_completed_time=use_completed_time,
             seller_id=seller_id,
+            time_field=time_field,
         )
         base_sql += " AND o.status != 'cancelled'"
         sql = f"""

@@ -26,6 +26,9 @@ ORDER_STATUSES = frozenset(
 )
 ALL_ORDER_STATUSES = ORDER_STATUSES
 
+# 列表/统计的时间筛选可比较哪一列（与 OrderModel._build_list_filter 的 time_field 同值）
+ORDER_TIME_FIELDS = frozenset({"updated", "purchase", "completed"})
+
 
 def _encode_thumbnails(urls: Optional[List[str]]) -> Optional[str]:
     if not urls:
@@ -41,6 +44,18 @@ def _validate_status_query(status: Optional[str]) -> None:
     s = str(status).strip()
     if s not in ALL_ORDER_STATUSES:
         raise HTTPException(status_code=400, detail="订单状态错误")
+
+
+def _validate_time_field(time_field: Optional[str]) -> None:
+    """列表/统计的时间筛选字段：空 = 默认（最后更新优先）。
+
+    拼错的值必须报错而不是静默走默认——否则界面上选了「购入时间」，返回的却是按最后更新
+    筛出来的另一批订单，且没有任何地方提示口径不对。
+    """
+    if time_field is None or not str(time_field).strip():
+        return
+    if str(time_field).strip().lower() not in ORDER_TIME_FIELDS:
+        raise HTTPException(status_code=400, detail="时间筛选字段错误")
 
 
 def _validate_order_status(status: str):

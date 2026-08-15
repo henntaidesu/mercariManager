@@ -126,6 +126,7 @@ async def sync_yahoo_notifications(account_id: int) -> Dict[str, Any]:
     from ...use_mercari.get_notifications.notification.notification_sync import (
         _upsert_notification_row,
     )
+    from .order_completion import apply_yahoo_receipt_notices
 
     aid = int(account_id)
     synced_at_ms = int(time.time() * 1000)
@@ -148,5 +149,14 @@ async def sync_yahoo_notifications(account_id: int) -> Dict[str, Any]:
             stats[outcome] += 1
         else:
             stats["skipped"] += 1
+
+    # 「購入者が受取評価しました。これで取引完了です」→ 对应订单置为已完成。
+    # 放在写库之后：判定读的是 notifications 表，本次新到的通知也要算进来。
+    try:
+        stats["order_completion"] = apply_yahoo_receipt_notices()
+    except Exception as exc:  # noqa: BLE001 回写订单失败不该让通知同步整体失败
+        log.warning("[yahoo_notices] 受取評価通知回写订单失败：%s", exc)
+        stats["order_completion"] = {"error": str(exc)[:200]}
+
     log.info("[yahoo_notices] 账号#%s 通知同步：%s", aid, stats)
     return stats

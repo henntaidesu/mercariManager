@@ -140,6 +140,30 @@ async def _resolve_description(page: Any, item_id: str) -> Optional[str]:
     return await read_item_description(page, item_id)
 
 
+def _settled_order_nos() -> set:
+    """本地已经是终态（已完成/已取消/已售罄）的全部雅虎订单号。
+
+    终态订单的交易页不会再变，重读一遍纯属浪费——一件就是一次页面加载加两秒半等待。
+    终态集合直接取 ``OrderModel._STATUSES_SKIP_BATCH_INFO``：「更新状态」跳过哪些订单、
+    这里就认哪些不必再读，两处各写一份迟早会各改各的。
+
+    「待评价 → 已完成」这一步交给通知同步（``notifications/order_completion.py``），
+    所以订单一旦成交完成就会落进这个集合，不再需要靠重读交易页发现。
+    """
+    from ...db_manage.database import DatabaseManager
+    from ...db_manage.models.orders.order.model import OrderModel
+
+    settled = OrderModel._STATUSES_SKIP_BATCH_INFO
+    placeholders = ",".join(["?"] * len(settled))
+    rows = DatabaseManager().execute_query(
+        f"SELECT [order_no] FROM [orders] "
+        f"WHERE TRIM(IFNULL([platform], '')) = 'yahoo' "
+        f"AND [status] IN ({placeholders})",
+        tuple(settled),
+    ) or []
+    return {str(r[0]).strip() for r in rows if r and r[0]}
+
+
 def _thumbnails_json(url: Optional[str]) -> Optional[str]:
     """缩略图按煤炉的口径存成 **JSON 数组字符串**（``["https://…"]``）。
 
@@ -202,6 +226,7 @@ async def sync_yahoo_orders(
     stats: Dict[str, Any] = {
         "account_id": aid, "platform": "yahoo",
         "sold_count": 0, "inserted": 0, "updated": 0, "skipped": 0,
+        "skipped_settled": 0,
         "inserted_order_nos": [],
         "errors": [],
     }
@@ -243,11 +268,28 @@ async def sync_yahoo_orders(
                 break
         stats["sold_count"] = len(cards)
 
-        for idx, card in enumerate(cards, 1):
+        # 先把已到的「受取評価」通知落成订单完成状态，再据此决定哪些交易页可以不读
+        try:
+            from ..notifications.order_completion import apply_yahoo_receipt_notices
+
+            stats["order_completion"] = apply_yahoo_receipt_notices()
+        except Exception as exc:  # noqa: BLE001 回写失败只是少跳过几件，不影响同步
+            log.warning("[yahoo_orders] 受取評価通知回写订单失败：%s", exc)
+
+        settled = _settled_order_nos()
+        pending = [c for c in cards
+                   if str(c.get("id") or "").strip()
+                   and str(c.get("id")).strip() not in settled]
+        stats["skipped_settled"] = len(cards) - len(pending)
+        if stats["skipped_settled"]:
+            log.info("[yahoo_orders] 已售 %d 件，其中 %d 件本地已结清，跳过交易页",
+                     len(cards), stats["skipped_settled"])
+        if not pending:
+            report("no_pending", f"已售 {len(cards)} 件均已结清，无需读取交易详情。")
+
+        for idx, card in enumerate(pending, 1):
             iid = str(card.get("id") or "").strip()
-            if not iid:
-                continue
-            report("trade_detail", f"正在读取交易详情（{idx}/{len(cards)}）…")
+            report("trade_detail", f"正在读取交易详情（{idx}/{len(pending)}）…")
             try:
                 await page.goto(yahoo_trade_url(iid), wait_until="domcontentloaded", timeout=45000)
                 await page.wait_for_timeout(2500)

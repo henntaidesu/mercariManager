@@ -266,6 +266,13 @@ export default defineComponent({
     const page = ref(1)
     const pageSize = ref(20)
     const dateRange = ref([])
+    /** 日期区间比较哪一列：purchase=购入时间（默认） / completed=完成（确认）时间 */
+    const timeField = ref('purchase')
+    // 标签沿用各列在本页其它位置已有的叫法，同一列不要在筛选里换个名字
+    const timeFieldOptions = computed(() => [
+      { value: 'purchase', label: t('orders.purchaseTime') },
+      { value: 'completed', label: t('orders.completedTime') },
+    ])
     const dialogVisible = ref(false)
 
     // ===== 表格 / 卡片视图 =====
@@ -900,6 +907,8 @@ export default defineComponent({
         const end = localYmdToDayEndTs(dateRange.value[1])
         if (start != null) params.start_ts = start
         if (end != null) params.end_ts = end
+        // 时间字段只在真有区间时才有意义；两个取值都要显式发，缺省会退回后端的「最后更新」口径
+        if (timeField.value) params.time_field = timeField.value
       }
       return params
     }
@@ -985,6 +994,7 @@ export default defineComponent({
     async function resetFilters() {
       filters.value = { keyword: '', status: '', owner_user_id: null, platform: '', seller_id: '' }
       dateRange.value = []
+      timeField.value = 'purchase'
       page.value = 1
       await resetExpandAndCollapseRows()
       load({ fromStart: true })
@@ -1982,6 +1992,8 @@ export default defineComponent({
       page,
       pageSize,
       dateRange,
+      timeField,
+      timeFieldOptions,
       dialogVisible,
       detailRow,
       detailImageIndex,
