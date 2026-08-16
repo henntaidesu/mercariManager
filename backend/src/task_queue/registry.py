@@ -31,6 +31,7 @@ TODOS_SEND_MESSAGE = "todos.send_message"
 TODOS_SEND_REACTION = "todos.send_reaction"
 ACCOUNT_SYNC_DATA = "account.sync_data"
 SYSTEM_HOMECOMING = "system.homecoming"
+SYSTEM_SHIPPING_DURATION = "system.shipping_duration"
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,21 @@ class TaskSpec:
 def _account_scope(payload: Dict[str, Any]) -> str:
     aid = payload.get("account_id")
     return str(aid) if aid is not None else "all"
+
+
+def _shipping_duration_scope(payload: Dict[str, Any]) -> str:
+    """「一键修改发货时效」标题：目标时效 + 范围。时效名从批量模块取，避免第二份对照表。"""
+    from ..bulk_shipping_duration import TARGET_NAMES
+
+    target = str(payload.get("target") or "").strip()
+    name = TARGET_NAMES.get(target, target or "?")
+    scope = []
+    plat = str(payload.get("platform") or "").strip()
+    if plat:
+        scope.append("煤炉" if plat == "mercari" else "雅虎")
+    if payload.get("account_id") is not None:
+        scope.append(f"账号#{payload['account_id']}")
+    return f"{name}（{'、'.join(scope) if scope else '全部账号'}）"
 
 
 _SPECS: Dict[str, TaskSpec] = {
@@ -188,6 +204,13 @@ _SPECS: Dict[str, TaskSpec] = {
             "回国模式：暂停全部在售商品" if p.get("enable") else "回国模式：恢复出售暂停的商品"
         ),
     ),
+    SYSTEM_SHIPPING_DURATION: TaskSpec(
+        task_type=SYSTEM_SHIPPING_DURATION,
+        label_zh="一键修改发货时效",
+        # 改的是同一批在售商品，同时只允许排一条（重试也走这条去重位）
+        dedup_key=lambda p: SYSTEM_SHIPPING_DURATION,
+        title=lambda p: "一键修改发货时效：" + _shipping_duration_scope(p),
+    ),
 }
 
 
@@ -260,4 +283,7 @@ def resolve_handler(task_type: str) -> Callable:
     if tt == SYSTEM_HOMECOMING:
         from .handlers.homecoming import handle_homecoming
         return handle_homecoming
+    if tt == SYSTEM_SHIPPING_DURATION:
+        from .handlers.shipping_duration import handle_shipping_duration
+        return handle_shipping_duration
     raise KeyError(f"未注册的任务类型：{task_type}")

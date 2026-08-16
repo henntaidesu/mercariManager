@@ -37,6 +37,11 @@ from .units.homecoming_handler import (
     get_homecoming,
     put_homecoming,
 )
+from .units.shipping_duration_handler import (
+    ShippingDurationPreviewOut,
+    get_shipping_duration,
+    post_shipping_duration,
+)
 from .units.ai_config_handler import (
     DeepSeekConfigOut,
     get_deepseek_config,
@@ -102,6 +107,10 @@ router.add_api_route("/printer-params", put_printer_params, methods=["PUT"], res
 # 回国模式（开启=全部在售暂停出售 + 禁止上架；关闭=恢复本模式暂停的那些）
 router.add_api_route("/homecoming", get_homecoming, methods=["GET"], response_model=HomecomingStatusOut)
 router.add_api_route("/homecoming", put_homecoming, methods=["PUT"], response_model=HomecomingStatusOut)
+
+# 一键修改发货时效（把范围内在售商品的発送までの日数整批改成同一个值）
+router.add_api_route("/shipping-duration", get_shipping_duration, methods=["GET"], response_model=ShippingDurationPreviewOut)
+router.add_api_route("/shipping-duration", post_shipping_duration, methods=["POST"], response_model=ShippingDurationPreviewOut)
 
 # Cookie 注入域名（代理经 nginx 以独立域名发布时的对外基址）
 # PUT 限管理员：这个值决定用户点「Cookie 注入」会被送到哪个地址，等同于一次跳转目标的授权。

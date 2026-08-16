@@ -761,6 +761,24 @@ System 配置页的一个开关：开启后把**全部在售商品**逐件暂停
 - 两个方向都**幂等**：目标集合每次按当前 DB 状态重算，中途失败后再 PUT 一次同样的 `enable`
   就只处理剩下的（系统配置页的「重试」按钮）。开关先写后入队，入队失败即回滚开关。
 
+### 一键修改发货时效 (`src/bulk_shipping_duration.py`)
+
+系统配置页的另一个整批操作：把「平台 / 账号」范围内**全部**在售商品的 発送までの日数 改成
+同一个值。和在售页的批量修改是同一件事的两个尺度（那里一次最多勾 10 件）。执行体是任务队列的
+**一条** `system.shipping_duration` 任务，理由与回国模式相同——限速循环必须由同一个循环控制。
+
+- **不含第二份平台分支**：单件走 `revise_on_sale_item`，它已按 `shop_accounts.platform` 分派
+  煤炉 / 雅虎，并把煤炉的 `1/2/3` 映射成雅虎枚举。分组 / 并发 / 随机等待与回国模式同构
+  （`BULK_SHIPPING_DURATION_ITEM_DELAY_MIN_SEC` ~ `..._MAX_SEC`，默认 30/90 秒，按账号计）。
+- **范围含 `status='stop'`**：两个平台的编辑页在暂停出售状态下同样能改该字段，漏掉它们会让
+  「一键」名不副实。拍卖商品**一起改**（与在售页批量改价禁选拍卖的口径不同，那条限制是为改价）。
+- **幂等靠本地 `shipping_duration_id`**：目标集合每次只取「本地时效 ≠ 目标」的行，所以修改成功后
+  必须回写本地——煤炉在 `revise_order._update_local_on_sale_item`，雅虎在
+  `yahoo_item/units/item_edit.py`（原先只回写 名称/说明/价格，时效缺失，会导致每轮重跑同一批
+  雅虎商品）。`shipping_from_area_id` 在雅虎侧仍未回写，改发货地区时同样会重跑。
+- 件数由 `preview()` 纯 SQL 算（`pending` 含从未同步过详情、时效为空的行），前端改筛选即刷新；
+  `pending=0` 时 POST 不入队直接返回。
+
 ### Auxiliary Subsystems
 
 Three self-contained features that are easy to miss because nothing else depends on them:
@@ -874,6 +892,8 @@ lets the user choose SQLite/MySQL, test the MySQL connection, and switch backend
 - `HOMECOMING_ITEM_DELAY_MIN_SEC` / `HOMECOMING_ITEM_DELAY_MAX_SEC` (default 30 / 90): random wait
   between two items **of the same account** in a 回国模式 batch; different accounts run in parallel
   and are not paced against each other. See 回国模式 above.
+- `BULK_SHIPPING_DURATION_ITEM_DELAY_MIN_SEC` / `..._MAX_SEC` (default 30 / 90): the same per-account
+  pacing for the 一键修改发货时效 batch. See 一键修改发货时效 above.
 - `WEB_DRIVE_QUEUE_IDLE_CLOSE_SEC` / `WEB_DRIVE_PROFILE_RELEASE_DELAY_SEC` / `WEB_DRIVE_PROFILES_DIR` / `WEB_DRIVE_LAUNCH_RETRY_DELAYS_SEC` / `MERCARI_BROWSER_TASK_TIMEOUT_SEC`: Playwright session lifetime, profile storage and retry tuning.
 - `WEB_DRIVE_FORCE_HEADED_DEBUG`: Force **every** automation browser headed. Overrides the `WEB_DRIVE_FORCE_HEADED_DEBUG` constant at the top of `main.py`.
 - `SSL_MITM_LISTEN_PORT` / `SSL_MITM_AUTO_TRUST_WINDOWS` / `MERCARI_SSL_MITM_DIR`: mitmproxy port, cert trust and working directory.

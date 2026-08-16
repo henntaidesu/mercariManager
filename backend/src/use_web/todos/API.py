@@ -14,7 +14,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 
 from ...auth import require_auth
-from .units.todos_models import ShippingQrPhotoRequest, YahooShipQrRequest
+from .units.todos_models import (
+    ShippingQrPhotoRequest,
+    ShippingQrRetryRequest,
+    YahooShipQrRequest,
+)
 from .units.todos_query import (
     count_todos_by_chip,
     list_kinds,
@@ -37,6 +41,7 @@ from .units.todos_sync import (
     finalize_post_shipping_endpoint,
     post_shipping_info_endpoint,
     qr_scanner_frame_endpoint,
+    retry_shipping_qr,
     revise_shipping_after_qr_endpoint,
     send_message_reaction_endpoint,
     send_transaction_message_endpoint,
@@ -120,6 +125,15 @@ async def _scan_qr_photo_endpoint(
     return await submit_shipping_qr_photo(todo_id, req, claims)
 
 
+async def _retry_ship_qr_endpoint(
+    todo_id: int,
+    req: ShippingQrRetryRequest,
+    claims: dict = Depends(require_auth),
+):
+    """重新扫码：用库里那张照片 + 已解出的二维码重新入队，不必重拍。"""
+    return await retry_shipping_qr(todo_id, req, claims)
+
+
 async def _yahoo_ship_qr_endpoint(
     todo_id: int,
     req: YahooShipQrRequest,
@@ -156,6 +170,8 @@ router.add_api_route("/{todo_id}/qr-scanner-frame", qr_scanner_frame_endpoint, m
 router.add_api_route("/{todo_id}/camera-frame", camera_frame_endpoint, methods=["POST"])
 # ゆうパケットポスト系 发货扫码：提交一张含二维码的照片 → 校验 → 入队后台执行
 router.add_api_route("/{todo_id}/scan-qr-photo", _scan_qr_photo_endpoint, methods=["POST"])
+# 扫码失败后重试：照片与解出的码都还在库里，直接重新入队，不用再拍一张一模一样的
+router.add_api_route("/{todo_id}/retry-ship-qr", _retry_ship_qr_endpoint, methods=["POST"])
 router.add_api_route("/{todo_id}/post-shipping-info", post_shipping_info_endpoint, methods=["GET"])
 router.add_api_route("/{todo_id}/finalize-post-shipping", finalize_post_shipping_endpoint, methods=["POST"])
 router.add_api_route("/close-detail-browser/{account_id}", close_detail_browser, methods=["POST"])

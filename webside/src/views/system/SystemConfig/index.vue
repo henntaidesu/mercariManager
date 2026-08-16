@@ -261,6 +261,62 @@
           </div>
         </section>
 
+        <!-- 一键修改发货时效：把范围内在售商品的「発送までの日数」整批改成同一个值 -->
+        <section id="sc-shipping-duration" class="sc-panel">
+          <div class="sc-panel-head">
+            <span class="sc-ic sc-ic--sky"><el-icon :size="17"><Timer /></el-icon></span>
+            <div class="sc-head-text">
+              <div class="sc-panel-title">{{ t('shippingDurationBatch.section') }}</div>
+              <div class="sc-panel-desc">{{ t('shippingDurationBatch.desc') }}</div>
+            </div>
+          </div>
+          <div class="sc-panel-body">
+            <div class="sc-grid sc-grid--tight">
+              <div class="sc-field">
+                <div class="sc-label">{{ t('shippingDurationBatch.platform') }}</div>
+                <el-select
+                  v-model="sdForm.platform"
+                  clearable
+                  :placeholder="t('shippingDurationBatch.allPlatforms')"
+                >
+                  <el-option v-for="p in sdPlatformOptions" :key="p.value" :label="p.label" :value="p.value" />
+                </el-select>
+              </div>
+              <div class="sc-field">
+                <div class="sc-label">{{ t('shippingDurationBatch.account') }}</div>
+                <el-select
+                  v-model="sdForm.account_id"
+                  clearable
+                  :placeholder="t('shippingDurationBatch.allAccounts')"
+                >
+                  <el-option v-for="a in sdAccountOptions" :key="a.value" :label="a.label" :value="a.value" />
+                </el-select>
+              </div>
+              <div class="sc-field">
+                <div class="sc-label">{{ t('shippingDurationBatch.target') }}</div>
+                <el-select v-model="sdForm.target">
+                  <el-option v-for="s in sdTargetOptions" :key="s.value" :label="s.label" :value="s.value" />
+                </el-select>
+              </div>
+            </div>
+            <div class="sc-hc-stats" v-loading="sdLoading">
+              <span>{{ t('shippingDurationBatch.pendingCount', { n: sdPreview.pending }) }}</span>
+              <span>{{ t('shippingDurationBatch.alreadyCount', { n: sdPreview.already }) }}</span>
+            </div>
+            <div class="sc-actions">
+              <el-button
+                type="primary"
+                :loading="sdSubmitting"
+                :disabled="sdLoading || sdPreview.pending === 0"
+                @click="onSubmitShippingDuration"
+              >
+                {{ t('shippingDurationBatch.apply') }}
+              </el-button>
+              <span class="sc-note">{{ t('shippingDurationBatch.tip') }}</span>
+            </div>
+          </div>
+        </section>
+
         <!-- 数据库管理（连接 / 切换 + 备份） -->
         <section id="sc-database" class="sc-panel">
           <div class="sc-panel-head">
@@ -600,13 +656,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessageBox } from 'element-plus'
-import { Plus, User, Lock, MagicStick, Sell, Coin, Tickets, Printer, Compass, Suitcase, Link } from '@element-plus/icons-vue'
+import { Plus, User, Lock, MagicStick, Sell, Coin, Tickets, Printer, Compass, Suitcase, Timer, Link } from '@element-plus/icons-vue'
 import { ElMessage } from '@/utils/notify'
 import { setLocale, SUPPORTED_LOCALES } from '@/i18n'
-import { authApi, configApi } from '@/api/index.js'
+import { authApi, configApi, shopAccountApi } from '@/api/index.js'
 import { databaseApi } from '@/api/database'
 import {
   printTestLabel,
@@ -637,6 +693,7 @@ const SECTIONS = [
   { id: 'ai', icon: 'MagicStick', labelKey: 'systemConfig.deepseekSection' },
   { id: 'listing', icon: 'Sell', labelKey: 'system.listingDefaults' },
   { id: 'homecoming', icon: 'Suitcase', labelKey: 'homecoming.section' },
+  { id: 'shipping-duration', icon: 'Timer', labelKey: 'shippingDurationBatch.section' },
   { id: 'database', icon: 'Coin', labelKey: 'systemConfig.databaseSection' },
   { id: 'qrparams', icon: 'Tickets', labelKey: 'qrPrint.paramsSection' },
   { id: 'printer', icon: 'Printer', labelKey: 'qrPrint.connSection' },
@@ -999,6 +1056,107 @@ function retryHomecoming() {
   return submitHomecoming(homecoming.enabled)
 }
 
+// ===== 一键修改发货时效 =====
+// 后端只改「当前时效 ≠ 目标」的在售商品（出售中 + 暂停出售），所以同一组参数点两次是安全的：
+// 第二次只会处理上一次失败/没轮到的那些。件数由后端纯 SQL 算，改筛选就重新拉一次。
+const sdForm = reactive({ platform: '', account_id: null, target: '2' })
+const sdPreview = reactive({ pending: 0, already: 0 })
+const sdAccounts = ref([])
+const sdLoading = ref(false)
+const sdSubmitting = ref(false)
+
+const sdPlatformOptions = computed(() => [
+  { value: 'mercari', label: t('shippingDurationBatch.platformMercari') },
+  { value: 'yahoo', label: t('shippingDurationBatch.platformYahoo') },
+])
+
+/** 目标时效（值 = 煤炉 shipping_duration.id，雅虎侧由后端映射成自己的枚举） */
+const sdTargetOptions = computed(() => [
+  { value: '1', label: t('shippingDurationBatch.duration1') },
+  { value: '2', label: t('shippingDurationBatch.duration2') },
+  { value: '3', label: t('shippingDurationBatch.duration3') },
+])
+
+/** 账号下拉随平台收窄；只列有卖家ID的启用账号（在售表里只有 seller_id 可匹配） */
+const sdAccountOptions = computed(() =>
+  sdAccounts.value
+    .filter((a) => !sdForm.platform || a.platform === sdForm.platform)
+    .map((a) => ({ value: a.id, label: a.label }))
+)
+
+async function loadSdAccounts() {
+  try {
+    const res = await shopAccountApi.list({ page: 1, page_size: 200 })
+    sdAccounts.value = (res.items || [])
+      .filter((a) => a.status === 'active' && String(a.seller_id || '').trim())
+      .map((a) => ({
+        id: a.id,
+        platform: String(a.platform || '').trim() || 'mercari',
+        label: `${a.account_name} (${a.seller_id})`,
+      }))
+  } catch {
+    sdAccounts.value = []
+  }
+}
+
+async function loadSdPreview() {
+  sdLoading.value = true
+  try {
+    const res = await configApi.getShippingDurationPreview({
+      target: sdForm.target,
+      platform: sdForm.platform || undefined,
+      account_id: sdForm.account_id ?? undefined,
+    })
+    sdPreview.pending = Number(res?.pending) || 0
+    sdPreview.already = Number(res?.already) || 0
+  } catch {
+    sdPreview.pending = 0
+    sdPreview.already = 0
+  } finally {
+    sdLoading.value = false
+  }
+}
+
+/** 平台变了就把不属于该平台的账号选择清掉，否则会算出恒为 0 的件数 */
+watch(
+  () => sdForm.platform,
+  () => {
+    if (sdForm.account_id && !sdAccountOptions.value.some((a) => a.value === sdForm.account_id)) {
+      sdForm.account_id = null
+    }
+  }
+)
+
+watch(() => [sdForm.platform, sdForm.account_id, sdForm.target], loadSdPreview)
+
+async function onSubmitShippingDuration() {
+  const name = sdTargetOptions.value.find((o) => o.value === sdForm.target)?.label || ''
+  try {
+    await ElMessageBox.confirm(
+      t('shippingDurationBatch.confirmMsg', { n: sdPreview.pending, name }),
+      t('shippingDurationBatch.confirmTitle'),
+      { type: 'warning', confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel') }
+    )
+  } catch {
+    return
+  }
+  sdSubmitting.value = true
+  try {
+    const res = await configApi.submitShippingDuration({
+      target: sdForm.target,
+      platform: sdForm.platform || null,
+      account_id: sdForm.account_id ?? null,
+    })
+    ElMessage.success(t('shippingDurationBatch.submitted'))
+    sdPreview.pending = Number(res?.pending) || 0
+    sdPreview.already = Number(res?.already) || 0
+  } catch {
+    /* 拦截器已提示（例如已有同类任务在排队） */
+  } finally {
+    sdSubmitting.value = false
+  }
+}
+
 // ===== 数据库管理 =====
 /** 数据库卡片内的分栏：connect = 连接/切换，backup = 备份 */
 const dbPane = ref('connect')
@@ -1250,6 +1408,8 @@ onMounted(() => {
   load()
   loadListingDefaults()
   loadHomecoming()
+  loadSdAccounts()
+  loadSdPreview()
   loadDbConfig()
   loadPrinterParams()
   loadProxyBase()

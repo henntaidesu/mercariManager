@@ -60,6 +60,16 @@ __all__ = [
 
 # ── 本地回写 ─────────────────────────────────────────────────────────── #
 
+#: post_to_yahoo 的发货天数键 → 本地 ``on_sale_items`` 的 (煤炉 shipping_duration_id, 展示名)。
+#: 与 ``use_yahoo/on_sale/detail_sync._SHIPPING_DURATION_BY_YAHOO`` 同一套口径，两边显示才一致。
+#: 少了这份回写，改完时效的商品在下次详情同步前本地仍是旧值，
+#: 「一键修改发货时效」（按本地值挑目标）就会每轮都把同一批雅虎商品重跑一遍。
+_LOCAL_DURATION_BY_SHIPPING_DAYS: Dict[str, tuple] = {
+    "1_2_days": (1, "1~2日で発送"),
+    "2_3_days": (2, "2~3日で発送"),
+    "4_7_days": (3, "4~7日で発送"),
+}
+
 def _update_local_on_sale_fields(item_id: str, fields: Dict[str, Any]) -> int:
     if not fields:
         return 0
@@ -140,6 +150,10 @@ async def revise_yahoo_item(
         if shipping_days:
             await set_shipping_days(page, shipping_days, element_timeout_ms=element_timeout_ms)
             changed.append("shipping_days")
+            dur = _LOCAL_DURATION_BY_SHIPPING_DAYS.get(str(shipping_days).strip())
+            if dur:
+                local_fields["shipping_duration_id"] = dur[0]
+                local_fields["shipping_duration_name"] = dur[1]
         if shipping_from_area_id:
             await set_shipping_from(
                 page, shipping_from_area_id, element_timeout_ms=element_timeout_ms

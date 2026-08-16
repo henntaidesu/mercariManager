@@ -68,7 +68,9 @@ export default {
       shipQrFailedHint: "发货失败，请核对后重试",
       shipQrText: "扫码结果",
       shipQrPhotoTitle: "发货扫码照片",
-      shipQrRetake: "更换相片并重新扫码",
+      shipQrTail: "末5位",
+      shipQrRetry: "重新扫码",
+      shipQrRetake: "重新拍照",
       btPrint: {
         print: "打印",
         sent: "已发送到打印机",
@@ -353,7 +355,9 @@ export default {
       shipQrFailedHint: "発送に失敗しました。確認して再試行してください",
       shipQrText: "読み取り結果",
       shipQrPhotoTitle: "発送読取写真",
-      shipQrRetake: "写真を撮り直して再読取",
+      shipQrTail: "下5桁",
+      shipQrRetry: "再読取",
+      shipQrRetake: "写真を撮り直す",
       btPrint: {
         print: "印刷",
         sent: "プリンターに送信しました",
@@ -637,7 +641,9 @@ export default {
       shipQrFailedHint: "Shipping failed — check and retry",
       shipQrText: "Scan result",
       shipQrPhotoTitle: "Shipping scan photo",
-      shipQrRetake: "Retake photo & rescan",
+      shipQrTail: "Last 5",
+      shipQrRetry: "Rescan",
+      shipQrRetake: "Retake photo",
       btPrint: {
         print: "Print",
         sent: "Sent to printer",

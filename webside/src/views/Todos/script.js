@@ -509,7 +509,7 @@ export default defineComponent({
     // shipFlowHasPackaging：本次是否包含包材页（非待发货不记包材，重扫已记过账，都跳过）
     const shipFlowTarget = ref('mercari')
     const shipFlowHasPackaging = ref(true)
-    // 重扫（更换相片并重新扫码）：尺寸已经记在待办行上，向导只剩拍照这一页
+    // 重扫（重新拍照）：尺寸已经记在待办行上，向导只剩拍照这一页
     const shipFlowScanOnly = ref(false)
     // 关联订单的出库明细（发货成功后逐条出库）
     const shipOutbound = reactive({ loading: false, lines: [] })
@@ -1568,6 +1568,25 @@ export default defineComponent({
       return p ? mercariImageUrl(p) : ''
     })
     const shipQrFailed = computed(() => currentRow.value?.ship_qr_state === 'failed')
+    /** 后端从这张照片里解出来的二维码原文。发出去的就是它（注入煤炉扫描页的正是这段文本），
+     *  所以失败时它是唯一能拿来核对「当时到底读到了哪个码」的东西 —— 详情面板直接显示。 */
+    const shipQrText = computed(() => String(currentRow.value?.ship_qr_text || '').trim())
+    /** 扫码结果末 5 位：跟实物贴纸核对时眼睛只看这几位（与订单号末 4 位同一套做法）。
+     *  原文形如 PYP:01/JN2604CAAAAAA00385917175NS96JB; —— 末尾那个分隔符不是码的一部分，
+     *  不剔掉的话「末 5 位」会算成 96JB;，跟贴纸上印的对不上。 */
+    const shipQrTail = computed(() => {
+      const s = shipQrText.value.replace(/[^0-9A-Za-z]+$/, '')
+      return s.length > 5 ? s.slice(-5) : s
+    })
+    /** 原文按末 5 位切成三段，行内也把这 5 位标出来——单独那一块是给核对用的，
+     *  但原文仍要一字不差地摆在那儿，两处指的必须是同一段字符。 */
+    const shipQrTextParts = computed(() => {
+      const full = shipQrText.value
+      const tail = shipQrTail.value
+      const at = tail ? full.lastIndexOf(tail) : -1
+      if (at < 0) return { head: full, tail: '', rest: '' }
+      return { head: full.slice(0, at), tail, rest: full.slice(at + tail.length) }
+    })
     /** 发货扫码中间态（已扫码/失败）：此时包材与「发货/修改」按钮都不该再显示——
      *  这单已进入扫码流程，包材第一次提交时已记账，发货由重扫任务接管。 */
     const isShipQrActive = computed(() => {
@@ -1592,6 +1611,28 @@ export default defineComponent({
         // 浏览器又是新开且没进扫描页，必然「浏览器未打开」失败。
         // 包材在第一次提交时已记账，重扫不再走包材页。
         openShipFlow({ target: 'mercari', withPackaging: false })
+      }
+    }
+
+    /** 重新扫码：用库里那张照片 + 已解出的码重跑发货任务，不必重拍。
+     *  扫码失败其实极少是码没读出来（读不出的照片在提交时就被 400 挡回去了），断的是它后面
+     *  那一段：开浏览器、进扫描页、发通知。对着同一张贴纸再拍一次纯属白费操作。
+     *  包材与出库在首次提交时已记账（shipCommittedIds），这里不再重复记。 */
+    const shipQrRetrying = ref(false)
+    async function onRetryShipQr() {
+      const id = currentRow.value?.id
+      if (!id || shipQrRetrying.value) return
+      shipQrRetrying.value = true
+      try {
+        await todosApi.retryShipQr(id, { client_token: newClientToken() })
+        ElMessage.success(t('tasks.enqueued'))
+        // 与拍照提交同一收尾：后续全在后台任务里跑，详情页已无可操作的东西
+        detailDialogVisible.value = false
+        load({ inPlace: true })
+      } catch (e) {
+        if (!e?.response) ElMessage.error(e?.message || t('todos.submitFailed'))
+      } finally {
+        shipQrRetrying.value = false
       }
     }
 
@@ -3049,8 +3090,13 @@ export default defineComponent({
       openPrinterSettings,
       shipQrPhotoUrl,
       shipQrFailed,
+      shipQrText,
+      shipQrTail,
+      shipQrTextParts,
       isShipQrActive,
       onRetakeShipQr,
+      shipQrRetrying,
+      onRetryShipQr,
       shipRemainingText,
       shipRemainingTagType,
       purchaseTsMs,

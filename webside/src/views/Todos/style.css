@@ -1409,10 +1409,52 @@
   border-radius: 6px;
   background: #0b1220;
 }
+/* 解出的二维码原文：等宽 + 可选中，方便和实物贴纸逐字核对；长码换行不撑破面板 */
+.detail-shipqr__text {
+  margin-top: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.detail-shipqr__code {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #cfd8e6;
+  word-break: break-all;
+  user-select: text;
+}
+/* 末 5 位在原文里也标出来，与下方放大的那块指同一段字符（配色同订单号末 4 位） */
+.detail-shipqr__code-tail {
+  color: #f87171;
+  font-weight: 700;
+}
+/* 单独一块：核对贴纸时只看这里，所以字号拉到能隔着一臂看清 */
+.detail-shipqr__tail {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.detail-shipqr__tail-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: 3px;
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 6px;
+  padding: 2px 12px;
+  user-select: text;
+}
 .detail-shipqr__actions {
   margin-top: 8px;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 /* 平台筛选下拉（与同步按钮同排） */

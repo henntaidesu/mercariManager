@@ -63,6 +63,9 @@ export const todosApi = {
   /** 发货扫码：提交一张含二维码的照片 → 后端校验并入队后台执行（不阻塞页面） */
   scanQrPhoto: (todoId, body = {}, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/scan-qr-photo`, body || {}, { timeout: 60000, ...axiosConfig }),
+  /** 发货扫码失败后重试：照片与解出的码都还在库里，直接重新入队，不用重拍 */
+  retryShipQr: (todoId, body = {}, axiosConfig = {}) =>
+    http.post(`/use_web/todos/${encodeURIComponent(todoId)}/retry-ship-qr`, body || {}, { timeout: 60000, ...axiosConfig }),
   cameraFrame: (todoId, data, axiosConfig = {}) =>
     http.post(`/use_web/todos/${encodeURIComponent(todoId)}/camera-frame`, data || {}, { timeout: 15000, ...axiosConfig }),
   /** QR 读取成功后读取「発送確認符号 / 追跡番号」供二次确认 */

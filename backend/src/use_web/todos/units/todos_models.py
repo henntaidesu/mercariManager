@@ -80,6 +80,19 @@ class ShippingQrPhotoRequest(PydanticModel):
     client_token: Optional[str] = Field(default=None, max_length=128)
 
 
+class ShippingQrRetryRequest(PydanticModel):
+    """用**已存的那张照片**重跑发货扫码，不必重拍。
+
+    失败几乎从来不在识码上——照片入队时就已经解出二维码（``ship_qr_text``），
+    断掉的是后面开浏览器、进扫描页、发通知那一段。让用户为此再拍一次没有意义。
+    """
+
+    #: 喂图等待煤炉读出的超时秒数；留空用默认 90s
+    timeout_sec: Optional[float] = None
+    #: 前端一次点击生成的幂等 token
+    client_token: Optional[str] = Field(default=None, max_length=128)
+
+
 class SubmitTransactionReviewRequest(PydanticModel):
     #: 评价正文。「良かった」时可留空——页面注脚写明コメントは任意；
     #: 「残念だった」需 10 字以上，由 ``submit_transaction_review`` 与页面同口径校验

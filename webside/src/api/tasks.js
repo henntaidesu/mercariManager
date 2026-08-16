@@ -28,7 +28,8 @@ export const TASK_TYPES = {
   TODOS_SEND_MESSAGE: 'todos.send_message',
   TODOS_SEND_REACTION: 'todos.send_reaction',
   ACCOUNT_SYNC_DATA: 'account.sync_data',
-  SYSTEM_HOMECOMING: 'system.homecoming'
+  SYSTEM_HOMECOMING: 'system.homecoming',
+  SYSTEM_SHIPPING_DURATION: 'system.shipping_duration'
 }
 
 /** 每次点击生成一个 token：双击 / 网络重发时后端凭它幂等，不会重复排队 */

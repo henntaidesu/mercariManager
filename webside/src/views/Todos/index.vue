@@ -631,8 +631,8 @@
             </template>
 
             <template v-else>
-            <!-- 发货扫码照片：仅「已扫码(排队/执行中)」与「失败」期间存在（成功后已删除）。
-                 失败时可直接换一张重拍重扫，不必回列表。 -->
+            <!-- 发货扫码照片 + 解出的码：仅「已扫码(排队/执行中)」与「失败」期间存在（成功后照片已删除）。
+                 失败时可就地重扫（原照片）或换一张重拍，不必回列表。 -->
             <div v-if="shipQrPhotoUrl" class="detail-shipqr">
               <div class="detail-shipqr__head">
                 <span class="detail-label">{{ t('todos.shipQrPhotoTitle') }}</span>
@@ -651,7 +651,33 @@
               >
                 <template #error><span class="thumb-fallback">-</span></template>
               </el-image>
+              <!-- 后端从这张照片里解出来的二维码原文：发给煤炉扫描器的就是它。
+                   失败时这是唯一能核对「当时读到的是哪个码」的东西，所以直接摊开显示。
+                   末 5 位行内标红 + 下方单独放大 —— 跟贴纸核对时眼睛只找这几位。 -->
+              <div v-if="shipQrText" class="detail-shipqr__text">
+                <span class="detail-label">{{ t('todos.shipQrText') }}</span>
+                <span class="detail-shipqr__code"
+                  >{{ shipQrTextParts.head
+                  }}<span class="detail-shipqr__code-tail">{{ shipQrTextParts.tail }}</span
+                  >{{ shipQrTextParts.rest }}</span
+                >
+              </div>
+              <div v-if="shipQrTail" class="detail-shipqr__tail">
+                <span class="detail-label">{{ t('todos.shipQrTail') }}</span>
+                <span class="detail-shipqr__tail-value">{{ shipQrTail }}</span>
+              </div>
               <div class="detail-shipqr__actions">
+                <!-- 「重新扫码」用的还是这张照片与这段码：失败几乎都出在扫码之后
+                     （开浏览器/进扫描页/发通知），重拍一张一样的没有意义。 -->
+                <el-button
+                  v-if="shipQrFailed"
+                  size="default"
+                  type="primary"
+                  :loading="shipQrRetrying"
+                  @click="onRetryShipQr"
+                >
+                  {{ t('todos.shipQrRetry') }}
+                </el-button>
                 <el-button size="default" type="warning" @click="onRetakeShipQr">
                   {{ t('todos.shipQrRetake') }}
                 </el-button>
