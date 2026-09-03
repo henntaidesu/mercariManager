@@ -99,7 +99,9 @@ def save_photo(data_url: str) -> str:
     """
     from ....image_storage import get_image_root, save_base64_image
 
-    rel = save_base64_image(data_url, prefix="ship_qr")  # 形如 /imges/ship_qr_xxx.jpg
+    # local_only：这张照片解码完就删，送上图床纯属浪费；而且下面几步全是按绝对路径
+    # open() 它，转存会把本地副本删掉，那些 open() 当场就失败。
+    rel = save_base64_image(data_url, prefix="ship_qr", local_only=True)  # /imges/ship_qr_xxx.jpg
     return os.path.join(get_image_root(), os.path.basename(rel))
 
 
